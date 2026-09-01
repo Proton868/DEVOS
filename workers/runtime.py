@@ -1,8 +1,9 @@
 """
 Workers — Runtime.
 
-Human requester identity is delegated to a Worker identity. Worker trust and
-competency come from stored WorkerTrustRecord — never from client input.
+Fail-closed: WorkerTrustRecord must load successfully or execution is refused.
+Human requester identity is delegated to a Worker identity narrowed by
+persona tools ∩ requester caps ∩ competency-aware filter.
 """
 import logging
 from typing import Optional
@@ -14,6 +15,10 @@ class UnknownWorkerError(Exception):
     pass
 
 
+class WorkerTrustUnavailable(Exception):
+    """Trust store could not be resolved — execution must not proceed."""
+
+
 def resolve_worker_capabilities(tool_names: list[str]) -> set[str]:
     from governance.ucip import ACTION_TO_CAP
     caps = set()
@@ -22,9 +27,7 @@ def resolve_worker_capabilities(tool_names: list[str]) -> set[str]:
         if cap:
             caps.add(cap)
         else:
-            logger.warning(
-                "[workers] persona declares unknown tool '%s' — skipped", tool
-            )
+            logger.warning("[workers] persona declares unknown tool '%s' — skipped", tool)
     return caps
 
 
@@ -40,32 +43,43 @@ class WorkerRuntime:
         tenant_id: Optional[str] = None,
         db=None,
     ):
-        """requester_identity: calling user's AgentIdentity (HUMAN).
-
-        Worker identity is delegated and narrowed by:
-          persona tools ∩ requester caps ∩ competency-aware autonomous set
-        """
         from brain.agents import AGENT_LIBRARY
+        from governance.agency_evolution import (
+            get_or_create_trust,
+            filter_autonomous_caps,
+            TrustLoadError,
+        )
+        from core.database import AsyncSessionLocal
+
         persona = AGENT_LIBRARY.get(slug)
         if not persona:
             raise UnknownWorkerError(f"No worker persona registered for slug '{slug}'")
 
+        if not tenant_id:
+            raise WorkerTrustUnavailable(
+                "tenant_id is required for worker execution (fail-closed trust resolution)"
+            )
+
         worker_caps = resolve_worker_capabilities(persona.tools)
 
-        # Narrow by earned competency when trust record available
-        if tenant_id:
-            try:
-                from core.database import AsyncSessionLocal
-                from governance.agency_evolution import (
-                    get_or_create_trust,
-                    filter_autonomous_caps,
-                    trust_level_from_record,
-                )
-                async with AsyncSessionLocal() as tdb:
-                    row = await get_or_create_trust(tdb, tenant_id, slug)
-                    worker_caps = filter_autonomous_caps(worker_caps, row)
-            except Exception as e:
-                logger.warning("[workers] trust load failed: %s", e)
+        # FAIL CLOSED: trust must load; no silent fallback to full persona caps
+        try:
+            async with AsyncSessionLocal() as tdb:
+                row = await get_or_create_trust(tdb, tenant_id, slug)
+                worker_caps = filter_autonomous_caps(worker_caps, row)
+        except TrustLoadError as e:
+            logger.error("[workers] trust load failed closed for %s: %s", slug, e)
+            raise WorkerTrustUnavailable(str(e)) from e
+        except WorkerTrustUnavailable:
+            raise
+        except Exception as e:
+            logger.error("[workers] trust resolution error (fail closed): %s", e)
+            raise WorkerTrustUnavailable(f"trust resolution failed: {e}") from e
+
+        if not worker_caps:
+            raise WorkerTrustUnavailable(
+                f"worker '{slug}' has no permitted capabilities under current trust/competency"
+            )
 
         delegated_identity = requester_identity.delegate(sub_caps=worker_caps)
 

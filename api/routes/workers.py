@@ -20,7 +20,7 @@ from core.database import get_db
 from api.routes.auth import get_current_user
 from governance.tenant_store import ensure_personal_tenant
 from brain.agents import AGENT_LIBRARY
-from workers.runtime import WorkerRuntime, UnknownWorkerError
+from workers.runtime import WorkerRuntime, UnknownWorkerError, WorkerTrustUnavailable
 
 router = APIRouter()
 
@@ -155,7 +155,8 @@ async def _run_and_learn(slug: str, goal: str, user, tenant, session_id: str,
     )
     async with AsyncSessionLocal() as learn_db:
         trust_row = await record_outcome(
-            learn_db, tenant.id, slug, evaluation=evaluation
+            learn_db, tenant.id, slug, evaluation=evaluation,
+            owner_id=user.id, goal=goal,
         )
     return state, delegated_identity, trust_row, evaluation
 
@@ -174,6 +175,8 @@ async def run_worker_sync(slug: str, req: WorkerRunRequest, request: Request, db
         )
     except UnknownWorkerError as e:
         raise HTTPException(404, str(e))
+    except WorkerTrustUnavailable as e:
+        raise HTTPException(503, f"worker trust unavailable: {e}")
     result = state.to_dict()
     result["worker"] = slug
     result["delegated_identity"] = delegated_identity.to_dict()
