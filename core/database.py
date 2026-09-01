@@ -32,6 +32,7 @@ class User(Base):
     supabase_id: Mapped[Optional[str]] = mapped_column(String, unique=True, index=True, nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    default_tenant_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     sessions: Mapped[list["ChatSession"]] = relationship(back_populates="user")
     scripts: Mapped[list["Script"]] = relationship(back_populates="owner")
@@ -233,3 +234,42 @@ async def _migrate_missing_columns(conn):
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
+
+
+class Tenant(Base):
+    __tablename__ = "tenants"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    name: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    slug: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    tier: Mapped[str] = mapped_column(String(32), default="tenant_user")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    meta: Mapped[Optional[dict]] = mapped_column("metadata", JSON, default=dict)
+
+class Membership(Base):
+    __tablename__ = "memberships"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[str] = mapped_column(String(32), default="member")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class WorkflowRecord(Base):
+    __tablename__ = "workflow_records"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    owner_id: Mapped[str] = mapped_column(String, index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    name: Mapped[str] = mapped_column(String(256))
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    definition: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class EvidenceRecord(Base):
+    __tablename__ = "evidence_records"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    owner_id: Mapped[str] = mapped_column(String, index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    goal: Mapped[str] = mapped_column(Text, default="")
+    body: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

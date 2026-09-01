@@ -86,6 +86,9 @@ async def get_node_session(
 @router.get("/sessions/{sid}/messages")
 async def get_messages(sid: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    sr = await db.execute(select(ChatSession).where(ChatSession.id==sid, ChatSession.user_id==user.id))
+    if not sr.scalar_one_or_none():
+        raise HTTPException(404, "Session not found")
     r = await db.execute(select(Message).where(Message.session_id==sid).order_by(Message.created_at))
     return [{"role":m.role,"content":m.content,"created_at":m.created_at} for m in r.scalars().all()]
 

@@ -363,3 +363,20 @@ def register_capability(descriptor: CapabilityDescriptor) -> CapabilityDescripto
 
 def list_capabilities(category: Optional[CapabilityCategory] = None) -> list[CapabilityDescriptor]:
     return _registry.list_all(category)
+
+def authorize_capability_slug(slug: str, granted_caps: set) -> tuple:
+    """Canonical UCI enforcement: normalize action→slug, check grants + registry."""
+    from governance.ucip import ACTION_TO_CAP, ALWAYS_BLOCKED_CAPS
+    if slug in ACTION_TO_CAP:
+        slug = ACTION_TO_CAP[slug]
+    if not slug:
+        return True, "no capability required"
+    if slug in ALWAYS_BLOCKED_CAPS:
+        return False, "blocked"
+    granted = set(granted_caps or set())
+    if "*" not in granted and slug not in granted:
+        return False, "not granted"
+    reg = get_registry()
+    if reg.get(slug) is None:
+        return True, "granted-unregistered"
+    return True, "ok"

@@ -60,7 +60,7 @@ async def run_and_record(script_id: str, trigger: str = "manual", _depth: int = 
     # Use SandboxedExecutor for scheduled/webhook runs (hardened), but keep
     # ExecutionLayer for manual runs (backward compatibility with existing
     # user scripts that may need broader filesystem/env access).
-    use_sandbox = trigger in ("scheduled", "webhook", "chain")
+    use_sandbox = trigger not in ("HUMAN_TERMINAL", "human_terminal")
     if use_sandbox:
         executor = SandboxedExecutor(
             max_cpu_seconds=30,

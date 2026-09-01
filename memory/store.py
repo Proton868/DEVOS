@@ -143,7 +143,7 @@ class MemoryStore:
 
         if self._backend == "supabase":
             embedding = await self._embed(content)
-            self._sb.table("devos_memories").insert({
+            self._sb.table("caraios_memories").insert({
                 "id": mem_id, "user_id": user_id, "role": role,
                 "content": content, "session_id": session_id or "",
                 "embedding": embedding, "metadata": metadata or {},
@@ -204,11 +204,13 @@ class MemoryStore:
                         "query_embedding": embedding,
                         "match_user_id": user_id,
                         "match_count": limit,
+                        "match_kind": kind,
+                        "match_tenant_id": tenant_id,
                     }).execute()
                     return r.data or []
                 except Exception:
                     pass
-            q = (self._sb.table("devos_memories")
+            q = (self._sb.table("caraios_memories")
                  .select("*")
                  .eq("user_id", user_id)
                  .ilike("content", f"%{query}%"))
@@ -264,7 +266,7 @@ class MemoryStore:
             await self.init()
 
         if self._backend == "supabase":
-            r = (self._sb.table("devos_memories")
+            r = (self._sb.table("caraios_memories")
                  .select("role,content,created_at")
                  .eq("user_id", user_id)
                  .eq("session_id", session_id)

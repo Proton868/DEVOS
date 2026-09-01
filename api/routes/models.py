@@ -51,18 +51,38 @@ class ProviderConfigUpdate(BaseModel):
     TAVILY_API_KEY: str | None = None
 
 
+def _mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "••••••••"
+    return value[:3] + "…" + value[-4:]
+
+def _is_secret_key(key: str) -> bool:
+    k = key.upper()
+    return any(s in k for s in ("KEY", "SECRET", "TOKEN", "PASSWORD"))
+
 @router.get("/providers/config")
 async def get_provider_config(request: Request, db=Depends(get_db)):
-    """Full editable provider config for the Settings UI — includes API
-    keys (only accessible to an authenticated admin session, same trust
-    boundary as everything else behind get_current_user)."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
     from core.config import EDITABLE_PROVIDER_KEYS
-    return {k: getattr(settings, k, "") for k in EDITABLE_PROVIDER_KEYS}
+    out = {}
+    for k in EDITABLE_PROVIDER_KEYS:
+        val = getattr(settings, k, "") or ""
+        if _is_secret_key(k):
+            out[k] = {"configured": bool(val), "masked": _mask_secret(val) if val else ""}
+        else:
+            out[k] = val
+    out["_meta"] = {"is_admin": bool(getattr(user, "is_admin", False))}
+    return out
+
 
 
 @router.put("/providers/config")
 async def save_provider_config(req: ProviderConfigUpdate, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    if not getattr(user, "is_admin", False):
+        raise HTTPException(403, "Admin required to change provider configuration")
     """Persist provider/model settings edited from the Settings UI to .env
     and apply them live — no server restart required."""
     await get_current_user(request, db)

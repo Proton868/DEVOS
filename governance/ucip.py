@@ -203,7 +203,10 @@ class AgentIdentity:
         caps = set(TRUST_LEVEL_CAPS.get(trust_level, set()))
         if extra_caps:
             # Extra caps can only be granted up to delegator's trust level
-            caps |= extra_caps
+            caps = (set(extra_caps) & caps) if "*" not in caps else set(extra_caps)
+            caps -= set(ALWAYS_BLOCKED_CAPS)
+            if not caps:
+                caps = set(TRUST_LEVEL_CAPS.get(trust_level, set()))
         return cls(agent_id=agent_id, user_id=user_id, session_id=session_id,
                    trust_level=trust_level, capabilities=caps)
 
@@ -395,9 +398,11 @@ class ExecutionPermissionGuard:
         if not clean:
             return False, f"prompt injection blocked: {threat}"
 
-        if not agent.has_cap(cap_required):
+        from governance.capability_registry import authorize_capability_slug
+        _ok, _why = authorize_capability_slug(cap_required, agent.capabilities)
+        if not _ok:
             return False, (
-                f"permission denied: agent trust_level={agent.trust_level.name} lacks capability '{cap_required}'"
+                f"permission denied: {_why} (cap={cap_required})"
             )
 
         if cap_required in HITL_REQUIRED_CAPS:
