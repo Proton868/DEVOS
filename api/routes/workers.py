@@ -163,11 +163,15 @@ async def _run_and_learn(slug: str, goal: str, user, tenant, session_id: str,
         max_steps=20,
     )
     async with AsyncSessionLocal() as learn_db:
+        credit = getattr(state, "_devos_promotion_credit", True)
+        if getattr(state, "_devos_governance_state", "ok") == "degraded":
+            credit = False
         trust_row = await record_outcome(
             learn_db, tenant.id, slug, evaluation=evaluation,
             owner_id=user.id, goal=goal,
             execution_job_id=getattr(state, "_devos_execution_job_id", None),
             trust_snapshot=getattr(state, "_devos_trust_snapshot", None),
+            promotion_credit=credit,
         )
     return state, delegated_identity, trust_row, evaluation
 

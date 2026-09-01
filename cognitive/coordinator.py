@@ -101,15 +101,18 @@ class Coordinator:
                         job_id = None
                         try:
                             if tenant_id:
+                                from governance.execution_pipeline import PathClass
                                 job_id = await begin_execution_job(
                                     owner_id=owner_id or requester_identity.user_id,
                                     tenant_id=tenant_id,
                                     job_type="coordinator_generalist",
                                     payload={"subtask": subtask.description[:500]},
                                     actor_id=requester_identity.agent_id,
+                                    path_class=PathClass.DURABLE,
                                 )
-                        except Exception:
-                            pass
+                        except Exception as job_err:
+                            # Fail closed for durable coordinator path
+                            raise RuntimeError(f"coordinator job creation failed: {job_err}") from job_err
                         loop = BrainExecutionLoop(
                             user_id=requester_identity.user_id, session_id=requester_identity.session_id,
                             provider=provider, model=model, agent_identity=requester_identity,

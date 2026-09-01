@@ -146,7 +146,7 @@ Respond ONLY with JSON:
         Returns: best code found, full history, summary stats.
         """
         from governance.sandbox import SandboxedExecutor
-        sandbox = SandboxedExecutor(max_cpu_seconds=self.timeout_per_round_s)
+        sandbox = SandboxedExecutor(max_cpu_seconds=self.timeout_per_round_s, allow_network=False)  # UCI: research code has no network cap by default
 
         best_code = goal.target_code
         best_metric = goal.baseline_value

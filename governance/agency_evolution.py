@@ -528,6 +528,7 @@ async def record_outcome(
     goal: str = "",
     execution_job_id: Optional[str] = None,
     trust_snapshot: Optional[dict] = None,
+    promotion_credit: bool = True,
     **eval_kwargs,
 ):
     if evaluation is None:
@@ -547,6 +548,10 @@ async def record_outcome(
     )
     evaluation.evidence_ref = evidence_id
     evaluation.evidence_hash = evidence_hash
+    if evidence_id is None:
+        # Evidence unavailable — treat as governance degraded: still record counts
+        # but deny promotion credit unless caller already forced False
+        promotion_credit = False
 
     row = await get_or_create_trust(db, tenant_id, worker_id)
     if evaluation.success:
@@ -585,7 +590,15 @@ async def record_outcome(
         "recent": hist[-50:],
         "evidence_refs": refs[-200:],
     }
-    _propose_promotion_if_eligible(row)
+    if promotion_credit:
+        _propose_promotion_if_eligible(row)
+    else:
+        # Evidence/governance degraded — no promotion credit for this outcome
+        row.evidence = {**(row.evidence or {}), "last_no_credit": {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "execution_job_id": execution_job_id,
+            "reason": "promotion_credit_denied",
+        }}
     row.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(row)

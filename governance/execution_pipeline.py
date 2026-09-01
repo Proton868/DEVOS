@@ -3,34 +3,82 @@
 identity → UCI authorization → (worker trust snapshot) → isolation
         → evidence → learning (workers)
 
-Legacy/alternate callers should go through helpers here so nothing bypasses
-governance. Human terminal remains explicitly out of sandbox policy.
+Default posture: FAIL CLOSED on job creation and evidence write failures
+for durable/governed paths. Explicit allow_evidence_only / allow_missing_job
+only for NON_DURABLE / HUMAN_ONLY / READ_ONLY classifications.
 """
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Optional, Any, Callable, Awaitable
+from dataclasses import dataclass
+from enum import Enum
+from typing import Optional, Any
 
 logger = logging.getLogger("devos.execution_pipeline")
 
 
+class PathClass(str, Enum):
+    DURABLE = "durable"           # must have job + evidence
+    NON_DURABLE = "non_durable"   # evidence-only ok if job fails
+    HUMAN_ONLY = "human_only"     # terminal / explicit human
+    READ_ONLY = "read_only"       # no execution side effects
+
+
+class PipelineError(Exception):
+    """Fail-closed pipeline failure."""
+
+
+class JobCreationError(PipelineError):
+    pass
+
+
+class EvidenceWriteError(PipelineError):
+    pass
+
+
 @dataclass
 class PipelineContext:
-    """Authority + job context for one execution."""
     user_id: str
     tenant_id: str
     session_id: str
-    actor_kind: str = "human"  # human | worker | system
+    actor_kind: str = "human"
     worker_id: Optional[str] = None
     execution_job_id: Optional[str] = None
     trust_snapshot: Optional[dict] = None
     agent_identity: Any = None
     identity_context: Any = None
+    path_class: PathClass = PathClass.DURABLE
+    governance_state: str = "ok"  # ok | degraded
+
+
+def network_allowed_for_capability(capability: Optional[str] = None) -> bool:
+    """Network permission is derived from UCI capability metadata, never caller intent."""
+    if not capability:
+        return False
+    try:
+        from governance.capability_registry import CapabilityRegistry
+        reg = CapabilityRegistry()
+        desc = None
+        if hasattr(reg, "get"):
+            desc = reg.get(capability)
+        if desc is None and hasattr(reg, "authorize_capability_slug"):
+            # registry may only authorize, not return descriptor
+            pass
+        if desc is not None:
+            return bool(getattr(desc, "requires_network", False))
+    except Exception as e:
+        logger.warning("capability registry lookup failed (deny network): %s", e)
+    # Known network capabilities from UCIP taxonomy
+    network_caps = {
+        "ucip:network.outbound",
+        "ucip:network.exfiltrate",
+        "ucip:search.web",
+        "ucip:api.call",
+    }
+    return capability in network_caps
 
 
 async def resolve_human_identity(user, tenant_id: str, session_id: str):
-    """Canonical human requester identity (never WORKER)."""
     from governance.identity_authority import identity_from_user
     from governance.ucip import TrustLevel
     ctx = identity_from_user(
@@ -50,28 +98,38 @@ async def begin_execution_job(
     job_type: str,
     payload: dict,
     actor_id: Optional[str] = None,
-) -> str:
-    from workers.job_queue import enqueue
-    job = await enqueue(
-        owner_id=owner_id,
-        tenant_id=tenant_id,
-        job_type=job_type,
-        payload=payload,
-        actor_id=actor_id,
-        priority=50,
-    )
-    return job.id
+    path_class: PathClass = PathClass.DURABLE,
+    allow_missing_job: bool = False,
+) -> Optional[str]:
+    """Create durable job. Fail-closed for DURABLE paths unless explicitly opted out."""
+    try:
+        from workers.job_queue import enqueue
+        job = await enqueue(
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+            job_type=job_type,
+            payload=payload,
+            actor_id=actor_id,
+            priority=50,
+        )
+        return job.id
+    except Exception as e:
+        if allow_missing_job or path_class in (PathClass.NON_DURABLE, PathClass.READ_ONLY, PathClass.HUMAN_ONLY):
+            logger.warning("job enqueue failed (allowed for %s): %s", path_class, e)
+            return None
+        raise JobCreationError(f"cannot create execution job: {e}") from e
 
 
 async def complete_execution_job(
-    job_id: str, *, status: str, result: Optional[dict] = None, error: Optional[str] = None
+    job_id: Optional[str], *, status: str, result: Optional[dict] = None, error: Optional[str] = None
 ):
+    if not job_id:
+        return
     from workers.job_queue import complete
     await complete(job_id, status=status, result=result, error=error)
 
 
 async def authorize_action(agent_identity, action: str, **kwargs):
-    """UCI gate — same path BrainExecutionLoop uses."""
     from governance.ucip import UCIPGateway, BudgetPolicy
     gateway = UCIPGateway(agent_identity, BudgetPolicy())
     return gateway.request(action, **kwargs)
@@ -81,18 +139,26 @@ async def run_sandboxed_code(
     code: str,
     *,
     language: str = "python",
-    allow_network: bool = False,
+    capability: Optional[str] = None,
+    allow_network: Optional[bool] = None,  # ignored if capability set; never authoritative
     timeout: int = 60,
     inject_secrets: Optional[dict] = None,
     run_id: Optional[str] = None,
 ):
-    """Isolation path for non-HUMAN_TERMINAL code execution."""
+    """Isolation path. Network is derived from UCI capability, not caller."""
+    net = network_allowed_for_capability(capability)
+    if allow_network is True and not net:
+        logger.warning(
+            "caller requested allow_network=True but capability %r does not authorize network — denying",
+            capability,
+        )
+        net = False
     from governance.sandbox import SandboxedExecutor
     executor = SandboxedExecutor(
         max_cpu_seconds=min(30, timeout),
         max_memory_mb=256,
         max_output_bytes=512_000,
-        allow_network=allow_network,
+        allow_network=net,
         max_file_size_mb=10,
     )
     return await executor.run(
@@ -113,12 +179,16 @@ async def record_path_evidence(
     status: str,
     body: Optional[dict] = None,
     execution_job_id: Optional[str] = None,
-):
-    """Durable evidence for non-worker paths (loop, scripts, research)."""
+    path_class: PathClass = PathClass.DURABLE,
+    require_evidence: bool = True,
+) -> Optional[str]:
+    """Write durable evidence. Fail-closed for DURABLE paths when require_evidence."""
     try:
-        import hashlib, json
+        import hashlib
+        import json
         from datetime import datetime, timezone
         from core.database import AsyncSessionLocal, EvidenceRecord, gen_id
+
         payload = {
             "path": path,
             "status": status,
@@ -140,7 +210,9 @@ async def record_path_evidence(
             await db.commit()
             return rec.id
     except Exception as e:
-        logger.warning("path evidence write failed: %s", e)
+        if require_evidence and path_class == PathClass.DURABLE:
+            raise EvidenceWriteError(f"evidence write failed: {e}") from e
+        logger.warning("evidence write failed (degraded allowed): %s", e)
         return None
 
 
@@ -156,25 +228,29 @@ async def run_brain_loop(
     agent_identity=None,
     persona_prompt: Optional[str] = None,
     path: str = "brain_loop",
+    path_class: PathClass = PathClass.DURABLE,
+    allow_evidence_only: bool = False,
+    tenant_id_for_workers: Optional[str] = None,
 ):
-    """Canonical BrainExecutionLoop path with job + evidence."""
+    """Canonical BrainExecutionLoop path with fail-closed job + evidence."""
     from core.loop import BrainExecutionLoop
+
+    if allow_evidence_only:
+        path_class = PathClass.NON_DURABLE
 
     ctx, identity = await resolve_human_identity(user, tenant_id, session_id)
     if agent_identity is not None:
         identity = agent_identity
 
-    job_id = None
-    try:
-        job_id = await begin_execution_job(
-            owner_id=user.id,
-            tenant_id=tenant_id,
-            job_type=path,
-            payload={"goal": goal[:2000], "path": path},
-            actor_id=getattr(identity, "agent_id", None),
-        )
-    except Exception as e:
-        logger.warning("job enqueue failed (continuing with evidence-only): %s", e)
+    job_id = await begin_execution_job(
+        owner_id=user.id,
+        tenant_id=tenant_id,
+        job_type=path,
+        payload={"goal": goal[:2000], "path": path},
+        actor_id=getattr(identity, "agent_id", None),
+        path_class=path_class,
+        allow_missing_job=path_class != PathClass.DURABLE,
+    )
 
     loop = BrainExecutionLoop(
         user_id=user.id,
@@ -184,30 +260,48 @@ async def run_brain_loop(
         agent_identity=identity,
         persona_prompt=persona_prompt,
         on_step=on_step,
+        tenant_id=tenant_id_for_workers or tenant_id,
     )
     try:
         state = await loop.run(goal)
     except Exception as e:
-        if job_id:
-            await complete_execution_job(job_id, status="failed", error=str(e))
+        await complete_execution_job(job_id, status="failed", error=str(e))
         raise
 
     success = bool(getattr(state, "succeeded", False))
-    if job_id:
-        await complete_execution_job(
-            job_id,
-            status="succeeded" if success else "failed",
-            result={"decision": str(getattr(state, "decision", ""))},
-        )
-    await record_path_evidence(
-        tenant_id=tenant_id,
-        owner_id=user.id,
-        goal=goal,
-        path=path,
-        status="success" if success else "failed",
-        body={"decision": str(getattr(state, "decision", "")), "iterations": getattr(state, "iteration", 0)},
-        execution_job_id=job_id,
+    await complete_execution_job(
+        job_id,
+        status="succeeded" if success else "failed",
+        result={"decision": str(getattr(state, "decision", ""))},
     )
+
+    governance_state = "ok"
+    try:
+        evidence_id = await record_path_evidence(
+            tenant_id=tenant_id,
+            owner_id=user.id,
+            goal=goal,
+            path=path,
+            status="success" if success else "failed",
+            body={
+                "decision": str(getattr(state, "decision", "")),
+                "iterations": getattr(state, "iteration", 0),
+            },
+            execution_job_id=job_id,
+            path_class=path_class,
+            require_evidence=(path_class == PathClass.DURABLE),
+        )
+        if evidence_id is None and path_class == PathClass.DURABLE:
+            governance_state = "degraded"
+            state._devos_promotion_credit = False  # type: ignore
+    except EvidenceWriteError:
+        # Execution may have succeeded; governance is DEGRADED — no promotion credit
+        governance_state = "degraded"
+        logger.error("evidence unavailable after execution — governance DEGRADED (no promotion credit)")
+        state._devos_governance_state = "degraded"  # type: ignore
+        state._devos_promotion_credit = False  # type: ignore
+
     if job_id:
         state._devos_execution_job_id = job_id  # type: ignore
+    state._devos_governance_state = governance_state  # type: ignore
     return state, ctx, identity

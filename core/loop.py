@@ -126,13 +126,14 @@ class BrainExecutionLoop:
 
     def __init__(self, user_id, session_id, provider=None, model=None,
                  trust_level_str="OPERATOR", on_step=None, budget_override=None,
-                 agent_identity=None, persona_prompt=None):
+                 agent_identity=None, persona_prompt=None, tenant_id=None):
         self.user_id    = user_id
         self.session_id = session_id
         self.provider   = provider
         self.model      = model
         self.on_step    = on_step
         self.persona_prompt = persona_prompt
+        self.tenant_id  = tenant_id  # required for nested WorkerRuntime (fail-closed)
 
         from governance.ucip import AgentIdentity, BudgetPolicy, TrustLevel, UCIPGateway
         if agent_identity is not None:
@@ -345,15 +346,21 @@ class BrainExecutionLoop:
 
                 state.add_step(StepType.THINK, f"Delegating to '{worker_slug}': {sub_goal[:80]}")
                 await self._emit(state.steps[-1])
-                from workers.runtime import WorkerRuntime, UnknownWorkerError
+                from workers.runtime import WorkerRuntime, UnknownWorkerError, WorkerTrustUnavailable
                 try:
+                    if not self.tenant_id:
+                        raise WorkerTrustUnavailable(
+                            "BrainExecutionLoop.tenant_id required for spawn_agent (fail-closed)"
+                        )
                     sub_state, sub_identity = await WorkerRuntime().run(
-                        worker_slug, sub_goal, self.agent,  # self.agent, not the original requester —
-                        provider=self.provider, model=self.model,  # this is what makes delegation CHAIN,
-                    )                                              # not just fan out from one root each time
+                        worker_slug, sub_goal, self.agent,
+                        provider=self.provider, model=self.model,
+                        tenant_id=self.tenant_id,
+                        owner_id=self.user_id,
+                    )
                     sub_success = sub_state.decision == "complete"
                     obs_text = f"Worker '{worker_slug}' {'completed' if sub_success else 'did not complete'}: {sub_state.final_answer[:400]}"
-                except UnknownWorkerError as e:
+                except (UnknownWorkerError, WorkerTrustUnavailable) as e:
                     obs_text = f"spawn_agent failed: {e}"
                     sub_success = False
                 state.add_step(StepType.OBSERVE, obs_text[:400])
