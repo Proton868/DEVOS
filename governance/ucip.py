@@ -119,6 +119,8 @@ TRUST_LEVEL_CAPS: dict[TrustLevel, set[str]] = {
         "ucip:execution.node",
         "ucip:api.call",
         "ucip:secret.read",
+        "ucip:package.install",
+        "ucip:vcs.write",
     },
     TrustLevel.AUTONOMOUS: {
         "ucip:memory.read",
@@ -134,6 +136,8 @@ TRUST_LEVEL_CAPS: dict[TrustLevel, set[str]] = {
         "ucip:secret.read",
         "ucip:agent.spawn",
         "ucip:network.outbound",
+        "ucip:package.install",
+        "ucip:vcs.write",
     },
     TrustLevel.ROOT: {
         "*",  # All capabilities
@@ -169,6 +173,8 @@ ACTION_TO_CAP: dict[str, str] = {
     "call_api":      "ucip:api.call",
     "read_secret":   "ucip:secret.read",
     "spawn_agent":   "ucip:agent.spawn",
+    "install_packages": "ucip:package.install",
+    "package_install":  "ucip:package.install",
     "graph_remember": "ucip:memory.write",
     "graph_query":    "ucip:memory.read",
     "shell":         "ucip:system.shell",

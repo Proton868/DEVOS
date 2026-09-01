@@ -285,6 +285,18 @@ class CapabilityRegistry:
                 timeout_s=30, max_retries=1, is_reversible=True,
             ),
             CapabilityDescriptor(
+                slug="ucip:package.install", name="Package Install",
+                category=CapabilityCategory.SYSTEM,
+                description="Install packages into an isolated script venv or node_modules",
+                risk=CapabilityRisk.HIGH, requires_network=True, requires_hitl=False,
+                is_reversible=False,
+                input_schema={"required": ["packages"], "properties": {
+                    "packages": {"type": "array"}, "script_id": {"type": "string"}}},
+                output_schema={"required": ["installed"],
+                               "properties": {"installed": {"type": "boolean"}, "output": {"type": "string"}}},
+                timeout_s=300, max_retries=1,
+            ),
+            CapabilityDescriptor(
                 slug="ucip:vcs.push", name="VCS Push",
                 category=CapabilityCategory.VCS,
                 description="Push committed changes to remote",
