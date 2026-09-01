@@ -251,6 +251,27 @@ async def _migrate_missing_columns(conn):
         "ALTER TABLE execution_jobs ADD COLUMN locked_at DATETIME",
     )
 
+    await _add_column_if_missing(
+        "worker_trust_records", "competency",
+        "ALTER TABLE worker_trust_records ADD COLUMN competency JSON",
+    )
+    await _add_column_if_missing(
+        "worker_trust_records", "pending_promotion",
+        "ALTER TABLE worker_trust_records ADD COLUMN pending_promotion JSON",
+    )
+    await _add_column_if_missing(
+        "worker_trust_records", "promotion_expires_at",
+        "ALTER TABLE worker_trust_records ADD COLUMN promotion_expires_at DATETIME",
+    )
+    await _add_column_if_missing(
+        "worker_trust_records", "approved_by",
+        "ALTER TABLE worker_trust_records ADD COLUMN approved_by VARCHAR",
+    )
+    await _add_column_if_missing(
+        "worker_trust_records", "approved_at",
+        "ALTER TABLE worker_trust_records ADD COLUMN approved_at DATETIME",
+    )
+
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
@@ -336,6 +357,8 @@ class ExecutionJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 class WorkerTrustRecord(Base):
+    """Earned autonomy state. Promotion is never self-granted — only proposed
+    by the trust engine and applied after human approval."""
     __tablename__ = "worker_trust_records"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
     tenant_id: Mapped[str] = mapped_column(String, index=True)
@@ -346,6 +369,15 @@ class WorkerTrustRecord(Base):
     failure_count: Mapped[int] = mapped_column(Integer, default=0)
     unauthorized_attempts: Mapped[int] = mapped_column(Integer, default=0)
     granted_caps: Mapped[list] = mapped_column(JSON, default=list)
+    # capability slug -> {success, failure, competency (0-1), last_score}
+    competency: Mapped[dict] = mapped_column(JSON, default=dict)
     evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Human-gated promotion: engine proposes, human approves
+    pending_promotion: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # {"autonomy": "...", "trust_level": "...", "proposed_at": "...", "reason": "..."}
+    promotion_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # None = permanent until human demotes; set = temporary autonomy window
+    approved_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
