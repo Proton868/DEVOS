@@ -1,10 +1,21 @@
 """
 Workers — Runtime.
 
-Fail-closed: WorkerTrustRecord must load successfully or execution is refused.
-Human requester identity is delegated to a Worker identity narrowed by
-persona tools ∩ requester caps ∩ competency-aware filter.
+Consistency model:
+  create ExecutionJob
+       ↓
+  load trust → TrustSnapshot (immutable for this job)
+       ↓
+  execute under snapshot.permitted_caps
+       ↓
+  evaluate + durable evidence (linked to job id)
+       ↓
+  update trust
+
+Fail-closed: any trust/job failure refuses execution.
 """
+from __future__ import annotations
+
 import logging
 from typing import Optional
 
@@ -42,14 +53,15 @@ class WorkerRuntime:
         on_step=None,
         tenant_id: Optional[str] = None,
         db=None,
+        owner_id: Optional[str] = None,
     ):
         from brain.agents import AGENT_LIBRARY
         from governance.agency_evolution import (
-            get_or_create_trust,
-            filter_autonomous_caps,
+            snapshot_trust,
             TrustLoadError,
         )
         from core.database import AsyncSessionLocal
+        from workers.job_queue import enqueue, complete
 
         persona = AGENT_LIBRARY.get(slug)
         if not persona:
@@ -60,23 +72,42 @@ class WorkerRuntime:
                 "tenant_id is required for worker execution (fail-closed trust resolution)"
             )
 
-        worker_caps = resolve_worker_capabilities(persona.tools)
+        persona_caps = resolve_worker_capabilities(persona.tools)
+        owner = owner_id or getattr(requester_identity, "user_id", None) or "system"
 
-        # FAIL CLOSED: trust must load; no silent fallback to full persona caps
+        # 1) Durable job ties the whole operation together
+        try:
+            job = await enqueue(
+                owner_id=str(owner),
+                tenant_id=tenant_id,
+                job_type="worker_run",
+                payload={"worker": slug, "goal": goal[:2000]},
+                actor_id=getattr(requester_identity, "agent_id", None),
+                priority=50,
+            )
+            job_id = job.id
+        except Exception as e:
+            logger.error("[workers] cannot enqueue execution job: %s", e)
+            raise WorkerTrustUnavailable(f"execution job create failed: {e}") from e
+
+        # 2) Snapshot trust authority for this job (fail closed)
         try:
             async with AsyncSessionLocal() as tdb:
-                row = await get_or_create_trust(tdb, tenant_id, slug)
-                worker_caps = filter_autonomous_caps(worker_caps, row)
+                snap = await snapshot_trust(
+                    tdb, tenant_id, slug,
+                    execution_job_id=job_id,
+                    persona_caps=persona_caps,
+                )
         except TrustLoadError as e:
-            logger.error("[workers] trust load failed closed for %s: %s", slug, e)
+            await complete(job_id, status="failed", error=f"trust: {e}")
             raise WorkerTrustUnavailable(str(e)) from e
-        except WorkerTrustUnavailable:
-            raise
         except Exception as e:
-            logger.error("[workers] trust resolution error (fail closed): %s", e)
-            raise WorkerTrustUnavailable(f"trust resolution failed: {e}") from e
+            await complete(job_id, status="failed", error=f"trust: {e}")
+            raise WorkerTrustUnavailable(f"trust snapshot failed: {e}") from e
 
+        worker_caps = set(snap.permitted_caps)
         if not worker_caps:
+            await complete(job_id, status="failed", error="no permitted capabilities")
             raise WorkerTrustUnavailable(
                 f"worker '{slug}' has no permitted capabilities under current trust/competency"
             )
@@ -96,5 +127,23 @@ class WorkerRuntime:
             persona_prompt=full_prompt,
             on_step=on_step,
         )
-        state = await loop.run(goal)
+
+        try:
+            state = await loop.run(goal)
+        except Exception as e:
+            await complete(job_id, status="failed", error=str(e), result={"trust_snapshot": snap.to_dict()})
+            raise
+
+        await complete(
+            job_id,
+            status="succeeded" if getattr(state, "succeeded", False) else "failed",
+            result={
+                "worker": slug,
+                "trust_snapshot": snap.to_dict(),
+                "decision": str(getattr(state, "decision", "")),
+            },
+        )
+        # Attach snapshot + job id for the route's learning phase
+        state._devos_execution_job_id = job_id  # type: ignore[attr-defined]
+        state._devos_trust_snapshot = snap.to_dict()  # type: ignore[attr-defined]
         return state, delegated_identity

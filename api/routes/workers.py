@@ -43,13 +43,21 @@ async def get_worker(slug: str, request: Request, db=Depends(get_db)):
     # Attach trust / pending promotion for this tenant+worker
     from governance.agency_evolution import get_or_create_trust, _effective_autonomy
     row = await get_or_create_trust(db, tenant.id, slug)
+    from governance.agency_evolution import capability_autonomy_level
+    competency = row.competency or {}
+    cap_autonomy = {
+        cap: capability_autonomy_level(row, cap)
+        for cap in competency.keys()
+        if isinstance(cap, str)
+    }
     data["trust"] = {
         "trust_level": row.trust_level,
         "autonomy": _effective_autonomy(row),
         "success_count": row.success_count,
         "failure_count": row.failure_count,
         "unauthorized_attempts": row.unauthorized_attempts,
-        "competency": row.competency or {},
+        "competency": competency,
+        "capability_autonomy": cap_autonomy,
         "pending_promotion": row.pending_promotion,
         "promotion_expires_at": row.promotion_expires_at.isoformat() if row.promotion_expires_at else None,
         "approved_by": row.approved_by,
@@ -116,7 +124,7 @@ async def _run_and_learn(slug: str, goal: str, user, tenant, session_id: str,
     state, delegated_identity = await WorkerRuntime().run(
         slug, goal, requester_identity,
         provider=provider, model=model, on_step=on_step,
-        tenant_id=tenant.id, db=None,
+        tenant_id=tenant.id, db=None, owner_id=user.id,
     )
     # Close the learning loop
     from governance.agency_evolution import evaluate_execution, record_outcome
@@ -157,6 +165,8 @@ async def _run_and_learn(slug: str, goal: str, user, tenant, session_id: str,
         trust_row = await record_outcome(
             learn_db, tenant.id, slug, evaluation=evaluation,
             owner_id=user.id, goal=goal,
+            execution_job_id=getattr(state, "_devos_execution_job_id", None),
+            trust_snapshot=getattr(state, "_devos_trust_snapshot", None),
         )
     return state, delegated_identity, trust_row, evaluation
 

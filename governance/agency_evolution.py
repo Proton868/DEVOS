@@ -67,6 +67,93 @@ class TrustLoadError(Exception):
 
 
 @dataclass
+class TrustSnapshot:
+    """Immutable authority snapshot for one execution job.
+
+    load trust → snapshot → execute → evidence → update trust
+    All phases share execution_job_id for multi-node consistency.
+    """
+    execution_job_id: str
+    tenant_id: str
+    worker_id: str
+    trust_level: str
+    autonomy: str
+    competency: dict
+    permitted_caps: list
+    granted_caps: list
+    success_count: int = 0
+    failure_count: int = 0
+    unauthorized_attempts: int = 0
+    snapshot_at: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "execution_job_id": self.execution_job_id,
+            "tenant_id": self.tenant_id,
+            "worker_id": self.worker_id,
+            "trust_level": self.trust_level,
+            "autonomy": self.autonomy,
+            "competency": self.competency,
+            "permitted_caps": self.permitted_caps,
+            "granted_caps": self.granted_caps,
+            "success_count": self.success_count,
+            "failure_count": self.failure_count,
+            "unauthorized_attempts": self.unauthorized_attempts,
+            "snapshot_at": self.snapshot_at,
+        }
+
+
+def capability_autonomy_level(row, capability: str) -> str:
+    """Per-capability autonomy derived from competency + global floor."""
+    if capability in ALWAYS_HUMAN_GATED:
+        return AutonomyProfile.SUPERVISED.value
+    global_auto = _effective_autonomy(row)
+    if global_auto == AutonomyProfile.SUPERVISED.value:
+        return AutonomyProfile.SUPERVISED.value
+    if capability in SUPERVISED_CAPS:
+        # low-risk: at least global level
+        return global_auto
+    entry = {}
+    comp = row.competency if isinstance(getattr(row, "competency", None), dict) else {}
+    if isinstance(comp.get(capability), dict):
+        entry = comp[capability]
+    # explicit override on entry if human set it
+    if entry.get("autonomy_override"):
+        return str(entry["autonomy_override"])
+    high = capability in HIGH_RISK_CAPS
+    if _cap_earned(entry, high_risk=high, bounded=False):
+        return global_auto if global_auto in (
+            AutonomyProfile.AUTONOMOUS.value, AutonomyProfile.FULL_AUTONOMOUS.value
+        ) else AutonomyProfile.AUTONOMOUS.value
+    if _cap_earned(entry, high_risk=high, bounded=True):
+        return AutonomyProfile.BOUNDED.value
+    return AutonomyProfile.SUPERVISED.value
+
+
+async def snapshot_trust(
+    db, tenant_id: str, worker_id: str, *, execution_job_id: str, persona_caps: set
+) -> "TrustSnapshot":
+    """Load trust, compute permitted caps, return immutable snapshot for this job."""
+    row = await get_or_create_trust(db, tenant_id, worker_id)
+    permitted = filter_autonomous_caps(set(persona_caps or set()), row)
+    return TrustSnapshot(
+        execution_job_id=execution_job_id,
+        tenant_id=tenant_id,
+        worker_id=worker_id,
+        trust_level=row.trust_level or "supervised",
+        autonomy=_effective_autonomy(row),
+        competency=dict(row.competency or {}),
+        permitted_caps=sorted(permitted),
+        granted_caps=list(row.granted_caps or []),
+        success_count=int(row.success_count or 0),
+        failure_count=int(row.failure_count or 0),
+        unauthorized_attempts=int(row.unauthorized_attempts or 0),
+        snapshot_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+
+@dataclass
 class EvaluationResult:
     success: bool
     correctness: float = 0.0
@@ -265,28 +352,48 @@ def _update_competency(row, evaluation: EvaluationResult) -> None:
 
 
 def _avg_competency(row) -> float:
-    comp = row.competency or {}
-    if not comp:
-        return 0.0
-    vals = [float(v.get("competency", 0)) for v in comp.values() if isinstance(v, dict)]
+    comp = row.competency if isinstance(getattr(row, "competency", None), dict) else {}
+    vals = []
+    for v in comp.values():
+        if not isinstance(v, dict):
+            continue
+        try:
+            vals.append(float(v.get("competency", 0) or 0))
+        except (TypeError, ValueError):
+            continue
     return sum(vals) / len(vals) if vals else 0.0
 
 
 def _min_competency(row) -> float:
-    comp = row.competency or {}
-    vals = [
-        float(v.get("competency", 0))
-        for v in comp.values()
-        if isinstance(v, dict) and int(v.get("samples", 0)) >= 5
-    ]
+    comp = row.competency if isinstance(getattr(row, "competency", None), dict) else {}
+    vals = []
+    for v in comp.values():
+        if not isinstance(v, dict):
+            continue
+        try:
+            samples = int(v.get("samples", 0) or 0)
+            if samples < 5:
+                continue
+            vals.append(float(v.get("competency", 0) or 0))
+        except (TypeError, ValueError):
+            continue
     return min(vals) if vals else 0.0
 
 
 def _min_samples(row) -> int:
-    comp = row.competency or {}
-    if not comp:
+    """Minimum samples across well-formed competency entries. Never raises."""
+    comp = row.competency if isinstance(getattr(row, "competency", None), dict) else {}
+    samples_list = []
+    for v in comp.values():
+        if not isinstance(v, dict):
+            continue
+        try:
+            samples_list.append(int(v.get("samples", 0) or 0))
+        except (TypeError, ValueError):
+            continue
+    if not samples_list:
         return 0
-    return min(int(v.get("samples", 0)) for v in comp.values() if isinstance(v, dict)) if comp else 0
+    return min(samples_list)
 
 
 def _propose_promotion_if_eligible(row) -> None:
@@ -358,6 +465,8 @@ async def _persist_durable_evidence(
     owner_id: Optional[str],
     evaluation: EvaluationResult,
     goal: str = "",
+    execution_job_id: Optional[str] = None,
+    trust_snapshot: Optional[dict] = None,
 ) -> tuple[Optional[str], Optional[str]]:
     """Write EvidenceRecord + optional EvidenceChain node; return (id, hash)."""
     try:
@@ -367,6 +476,8 @@ async def _persist_durable_evidence(
             "tenant_id": tenant_id,
             "evaluation": evaluation.to_dict(),
             "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "execution_job_id": execution_job_id,
+            "trust_snapshot": trust_snapshot,
         }
         payload = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
         ehash = hashlib.sha256(payload.encode()).hexdigest()
@@ -412,6 +523,8 @@ async def record_outcome(
     capabilities_used: Optional[list[str]] = None,
     owner_id: Optional[str] = None,
     goal: str = "",
+    execution_job_id: Optional[str] = None,
+    trust_snapshot: Optional[dict] = None,
     **eval_kwargs,
 ):
     if evaluation is None:
@@ -426,7 +539,8 @@ async def record_outcome(
         )
 
     evidence_id, evidence_hash = await _persist_durable_evidence(
-        db, tenant_id, worker_id, owner_id, evaluation, goal=goal
+        db, tenant_id, worker_id, owner_id, evaluation, goal=goal,
+        execution_job_id=execution_job_id, trust_snapshot=trust_snapshot,
     )
     evaluation.evidence_ref = evidence_id
     evaluation.evidence_hash = evidence_hash
@@ -439,6 +553,14 @@ async def record_outcome(
     if evaluation.unauthorized_attempt:
         row.unauthorized_attempts = (row.unauthorized_attempts or 0) + 1
     _update_competency(row, evaluation)
+    # Stamp per-capability autonomy labels for observability / future gates
+    comp = dict(row.competency or {})
+    for cap, entry in list(comp.items()):
+        if isinstance(entry, dict):
+            entry = dict(entry)
+            entry["autonomy_level"] = capability_autonomy_level(row, cap)
+            comp[cap] = entry
+    row.competency = comp
 
     # Operational recent buffer (non-authoritative); durable truth is EvidenceRecord
     hist = list((row.evidence or {}).get("recent") or [])
@@ -541,39 +663,41 @@ def _cap_earned(entry: dict, *, high_risk: bool = False, bounded: bool = False) 
 
 
 def filter_autonomous_caps(caps: set[str], row=None) -> set[str]:
-    """Authority filter — fail safe.
+    """Authority filter — fail safe + per-capability autonomy.
 
-    SUPERVISED: only SUPERVISED_CAPS (low risk).
-    BOUNDED: supervised set + caps with earned bounded competency.
-    AUTONOMOUS / FULL: only caps with sufficient samples + competency;
+    SUPERVISED worker: only SUPERVISED_CAPS.
+    Otherwise each capability is gated by capability_autonomy_level():
+      SUPERVISED cap → only if in SUPERVISED_CAPS
+      BOUNDED cap → earned bounded threshold
+      AUTONOMOUS+ → earned autonomous threshold
     ALWAYS_HUMAN_GATED never included.
     """
     if row is None:
-        # No trust context → supervised only
         return set(caps) & SUPERVISED_CAPS
 
-    auto = _effective_autonomy(row)
     out: set[str] = set()
-
     for c in caps:
         if c in ALWAYS_HUMAN_GATED:
             continue
-        if auto == AutonomyProfile.SUPERVISED.value:
+        level = capability_autonomy_level(row, c)
+        if level == AutonomyProfile.SUPERVISED.value:
             if c in SUPERVISED_CAPS:
                 out.add(c)
-            continue
-        entry = (row.competency or {}).get(c) or {}
-        high = c in HIGH_RISK_CAPS
-        if auto == AutonomyProfile.BOUNDED.value:
-            if c in SUPERVISED_CAPS or _cap_earned(entry, high_risk=high, bounded=True):
+        elif level == AutonomyProfile.BOUNDED.value:
+            entry = (row.competency or {}).get(c) if isinstance(row.competency, dict) else {}
+            if not isinstance(entry, dict):
+                entry = {}
+            if c in SUPERVISED_CAPS or _cap_earned(entry, high_risk=c in HIGH_RISK_CAPS, bounded=True):
                 out.add(c)
-            continue
-        # AUTONOMOUS / FULL_AUTONOMOUS
-        if _cap_earned(entry, high_risk=high, bounded=False):
-            out.add(c)
-        elif c in SUPERVISED_CAPS and int(entry.get("samples", 0)) < CAP_AUTONOMY_MIN_SAMPLES:
-            # Still allow low-risk read paths while gathering samples
-            out.add(c)
+        else:
+            # AUTONOMOUS / FULL for this capability
+            entry = (row.competency or {}).get(c) if isinstance(row.competency, dict) else {}
+            if not isinstance(entry, dict):
+                entry = {}
+            if _cap_earned(entry, high_risk=c in HIGH_RISK_CAPS, bounded=False):
+                out.add(c)
+            elif c in SUPERVISED_CAPS:
+                out.add(c)
     return out
 
 

@@ -67,3 +67,37 @@ def test_runtime_source_fail_closed():
 
 def test_prior_is_conservative():
     assert COMPETENCY_PRIOR <= 0.5
+
+def test_min_samples_malformed_safe():
+    from governance.agency_evolution import _min_samples, _min_competency, _avg_competency
+    row = SimpleNamespace(competency=None)
+    assert _min_samples(row) == 0
+    assert _min_competency(row) == 0.0
+    assert _avg_competency(row) == 0.0
+    row = SimpleNamespace(competency={"a": "bad", "b": 1, "c": {"samples": "nope"}})
+    assert _min_samples(row) == 0  # unparsable samples skipped → empty → 0
+    row = SimpleNamespace(competency={"c": {"samples": 7, "competency": 0.8}, "d": {"samples": 2, "competency": 0.9}})
+    assert _min_samples(row) == 2
+    assert abs(_min_competency(row) - 0.8) < 1e-9  # only samples>=5
+
+def test_per_capability_autonomy_levels():
+    from governance.agency_evolution import capability_autonomy_level
+    row = SimpleNamespace(
+        autonomy="autonomous",
+        promotion_expires_at=None,
+        competency={
+            "ucip:memory.read": {"competency": 0.95, "samples": 30},
+            "ucip:execution.python": {"competency": 0.5, "samples": 5},
+        },
+    )
+    assert capability_autonomy_level(row, "ucip:system.shell") == "supervised"
+    # memory is supervised-caps and global autonomous → autonomous
+    assert capability_autonomy_level(row, "ucip:memory.read") == "autonomous"
+    # python not earned enough → supervised
+    assert capability_autonomy_level(row, "ucip:execution.python") == "supervised"
+
+def test_runtime_uses_job_snapshot():
+    src = open("workers/runtime.py").read()
+    assert "snapshot_trust" in src
+    assert "execution_job_id" in src or "job_id" in src
+    assert "enqueue" in src
