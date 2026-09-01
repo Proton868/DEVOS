@@ -13,3 +13,14 @@ async def current_user(request: Request, db: AsyncSession = Depends(get_db)) -> 
 async def tenant_ctx(request: Request, db: AsyncSession = Depends(get_db),
     user: User = Depends(current_user)) -> TenantContext:
     return await get_tenant_context(request, db, user, trust=TrustLevel.OPERATOR)
+
+
+def assert_safe_client_payload(payload: dict | None) -> None:
+    """Raise HTTP 400 if client tries to inject authority fields."""
+    from fastapi import HTTPException
+    from governance.reliability import reject_authority_forgery
+    if not payload:
+        return
+    hits = reject_authority_forgery(payload)
+    if hits:
+        raise HTTPException(400, f"forbidden authority fields in request: {hits}")

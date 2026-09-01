@@ -80,3 +80,26 @@ def test_execution_job_model_reliability_columns():
     assert "lease_expires_at" in src
     assert "request_id" in src
     assert "correlation" in src
+
+
+def test_complete_is_terminal_for_succeeded():
+    src = open("workers/job_queue.py").read()
+    assert 'job.status == "succeeded"' in src
+    assert "complete ignored" in src or "already-succeeded" in src
+
+
+def test_begin_job_enforces_quota():
+    src = open("governance/execution_pipeline.py").read()
+    assert "check_quota_async" in src
+    assert "JobCreationError" in src
+
+
+def test_assert_no_secrets_helper():
+    from governance.reliability import assert_no_secrets_in_text
+    leaks = assert_no_secrets_in_text("token ghp_abcdefghijklmnopqrstuvwx rest")
+    assert leaks
+    assert not assert_no_secrets_in_text("hello world")
+
+
+def test_production_checklist_script_exists():
+    assert open("scripts/production_checklist.py").read().count("RESULT") >= 1

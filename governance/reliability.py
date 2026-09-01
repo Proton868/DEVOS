@@ -1,5 +1,5 @@
 """Production reliability primitives — Governance v1 is frozen; this layer
-supports persistence, idempotency, secrets hygiene, and correlation.
+supports persistence, idempotency, secrets hygiene, correlation, and quotas.
 
 Does NOT grant authority. Authority remains Identity + UCI + PathClass.
 """
@@ -8,7 +8,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -16,7 +18,6 @@ from typing import Any, Optional
 
 logger = logging.getLogger("devos.reliability")
 
-# Keys / patterns that must never enter durable evidence, job payloads, snapshots, logs
 _SECRET_KEY_RE = re.compile(
     r"(password|secret|token|api[_-]?key|authorization|credential|private[_-]?key|"
     r"jwt|bearer|access[_-]?key|session[_-]?key|client[_-]?secret)",
@@ -27,6 +28,8 @@ _SECRET_VALUE_RE = re.compile(
     re.I,
 )
 REDACTED = "***REDACTED***"
+
+REDIS_URL = os.environ.get("DEVOS_REDIS_URL") or os.environ.get("REDIS_URL") or ""
 
 
 def new_request_id() -> str:
@@ -41,10 +44,7 @@ def new_idempotency_key(
     operation: str,
     body: Optional[dict] = None,
 ) -> str:
-    """Stable operation identity for side-effecting work.
-
-    Same logical operation → same key → at most one durable effect.
-    """
+    """Stable operation identity for side-effecting work."""
     canonical = {
         "tenant_id": tenant_id,
         "actor_id": actor_id,
@@ -57,10 +57,7 @@ def new_idempotency_key(
 
 
 def scrub_secrets(obj: Any, *, depth: int = 0) -> Any:
-    """Recursively redact secret-like keys and values from structures.
-
-    Safe for evidence bodies, job payloads, trust snapshots, logs.
-    """
+    """Recursively redact secret-like keys/values from durable structures."""
     if depth > 12:
         return REDACTED
     if obj is None or isinstance(obj, (bool, int, float)):
@@ -69,7 +66,6 @@ def scrub_secrets(obj: Any, *, depth: int = 0) -> Any:
         if _SECRET_VALUE_RE.search(obj):
             return REDACTED
         if len(obj) > 40 and obj.isascii() and any(c in obj for c in ("=", "/", "+")):
-            # Heuristic: long opaque tokens
             low = obj.lower()
             if any(x in low for x in ("key-", "token", "secret")):
                 return REDACTED
@@ -90,7 +86,6 @@ def scrub_secrets(obj: Any, *, depth: int = 0) -> Any:
 
 @dataclass
 class CorrelationChain:
-    """request → job → authority → worker → capability → evidence → trust."""
     request_id: str = field(default_factory=new_request_id)
     execution_job_id: Optional[str] = None
     authority_snapshot_id: Optional[str] = None
@@ -127,7 +122,6 @@ class CorrelationChain:
         return self
 
 
-# AI effect invariant checklist (documented for freeze tests / auditors)
 AI_EFFECT_REQUIREMENTS = (
     "identity",
     "capability_authority",
@@ -138,7 +132,7 @@ AI_EFFECT_REQUIREMENTS = (
 )
 
 
-# ── Quotas / abuse controls (tenant-scoped, in-process + overridable) ─────────
+# ── Quotas ────────────────────────────────────────────────────────────────────
 
 DEFAULT_QUOTAS = {
     "max_concurrent_jobs": 10,
@@ -155,38 +149,83 @@ class QuotaDecision:
     allowed: bool
     reason: str = ""
     remaining: Optional[int] = None
+    backend: str = "memory"
 
 
 _tenant_counters: dict[str, dict] = {}
+_redis_quota = None
+
+
+async def _redis():
+    global _redis_quota
+    if not REDIS_URL:
+        return None
+    if _redis_quota is not None:
+        return _redis_quota
+    try:
+        import redis.asyncio as redis
+        _redis_quota = redis.from_url(REDIS_URL, decode_responses=True)
+        await _redis_quota.ping()
+        return _redis_quota
+    except Exception as e:
+        logger.warning("quota redis unavailable: %s", e)
+        _redis_quota = None
+        return None
 
 
 def check_quota(tenant_id: str, kind: str, *, increment: int = 1) -> QuotaDecision:
-    """Lightweight in-process quota gate. Replace with Redis for multi-node."""
+    """Sync in-process quota gate (tests + single-node)."""
     limits = DEFAULT_QUOTAS
     key = f"{tenant_id}:{kind}"
-    bucket = _tenant_counters.setdefault(key, {"count": 0, "window_start": datetime.now(timezone.utc)})
-    # simple hourly window for rate-ish quotas
-    if kind.endswith("_per_hour"):
-        if (datetime.now(timezone.utc) - bucket["window_start"]).total_seconds() > 3600:
+    bucket = _tenant_counters.setdefault(
+        key, {"count": 0, "window_start": datetime.now(timezone.utc)}
+    )
+    if kind.endswith("_per_hour") or kind.endswith("_per_day"):
+        window = 3600 if kind.endswith("_per_hour") else 86400
+        if (datetime.now(timezone.utc) - bucket["window_start"]).total_seconds() > window:
             bucket["count"] = 0
             bucket["window_start"] = datetime.now(timezone.utc)
     limit = limits.get(kind)
     if limit is None:
-        return QuotaDecision(True, "no_limit")
+        return QuotaDecision(True, "no_limit", backend="memory")
     if bucket["count"] + increment > limit:
-        return QuotaDecision(False, f"quota exceeded: {kind}>={limit}", remaining=0)
+        return QuotaDecision(False, f"quota exceeded: {kind}>={limit}", remaining=0, backend="memory")
     bucket["count"] += increment
-    return QuotaDecision(True, "ok", remaining=max(0, limit - bucket["count"]))
+    return QuotaDecision(True, "ok", remaining=max(0, limit - bucket["count"]), backend="memory")
+
+
+async def check_quota_async(tenant_id: str, kind: str, *, increment: int = 1) -> QuotaDecision:
+    """Multi-node quota via Redis INCR when available; falls back to memory."""
+    limit = DEFAULT_QUOTAS.get(kind)
+    if limit is None:
+        return QuotaDecision(True, "no_limit", backend="none")
+    r = await _redis()
+    if r is None:
+        return check_quota(tenant_id, kind, increment=increment)
+    window = 3600 if kind.endswith("_per_hour") else (86400 if kind.endswith("_per_day") else 60)
+    slot = int(time.time() // window)
+    key = f"devos:quota:{tenant_id}:{kind}:{slot}"
+    try:
+        count = await r.incrby(key, increment)
+        if count == increment:
+            await r.expire(key, window + 60)
+        if count > limit:
+            # roll back this increment for fairness
+            await r.decrby(key, increment)
+            return QuotaDecision(False, f"quota exceeded: {kind}>={limit}", remaining=0, backend="redis")
+        return QuotaDecision(True, "ok", remaining=max(0, limit - count), backend="redis")
+    except Exception as e:
+        logger.warning("redis quota failed, memory fallback: %s", e)
+        return check_quota(tenant_id, kind, increment=increment)
 
 
 def reset_quota_counters():
     _tenant_counters.clear()
 
 
-# ── Adversarial / integrity helpers ───────────────────────────────────────────
+# ── Adversarial / integrity ───────────────────────────────────────────────────
 
 def validate_tenant_scope(claimed_tenant_id: Optional[str], authenticated_tenant_id: Optional[str]) -> bool:
-    """Reject client-supplied tenant_id that does not match auth context."""
     if not authenticated_tenant_id:
         return False
     if claimed_tenant_id and claimed_tenant_id != authenticated_tenant_id:
@@ -195,7 +234,6 @@ def validate_tenant_scope(claimed_tenant_id: Optional[str], authenticated_tenant
 
 
 def reject_authority_forgery(payload: dict) -> list[str]:
-    """Flag hostile fields that must never be accepted from clients."""
     banned = (
         "trust_level", "autonomy", "capability_token", "extra_caps",
         "actor_kind", "is_admin", "root", "AGENCY_OP", "authority_snapshot",
@@ -203,9 +241,18 @@ def reject_authority_forgery(payload: dict) -> list[str]:
     hits = []
     if not isinstance(payload, dict):
         return ["payload_not_object"]
+    banned_l = {b.lower() for b in banned}
     for k in payload.keys():
-        if str(k).lower() in {b.lower() for b in banned}:
+        kl = str(k).lower()
+        if kl in banned_l:
             hits.append(str(k))
-        if str(k).lower().endswith("_override") and "autonomy" in str(k).lower():
+        if kl.endswith("_override") and "autonomy" in kl:
             hits.append(str(k))
     return hits
+
+
+def assert_no_secrets_in_text(text: str) -> list[str]:
+    """Return list of leaked secret patterns found in log/evidence text."""
+    if not text:
+        return []
+    return [m.group(0)[:12] + "…" for m in _SECRET_VALUE_RE.finditer(text)]

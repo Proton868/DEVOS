@@ -107,7 +107,11 @@ async def begin_execution_job(
     """Create durable job. Fail-closed for DURABLE paths unless explicitly opted out."""
     try:
         from workers.job_queue import enqueue
-        from governance.reliability import new_idempotency_key, new_request_id
+        from governance.reliability import new_idempotency_key, new_request_id, check_quota_async
+        # Abuse control before durable work is created
+        q = await check_quota_async(tenant_id or owner_id, "max_jobs_per_hour")
+        if not q.allowed:
+            raise JobCreationError(q.reason)
         rid = request_id or new_request_id()
         ikey = idempotency_key
         if not ikey and path_class == PathClass.DURABLE:

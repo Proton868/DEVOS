@@ -267,6 +267,7 @@ async def heartbeat(job_id: str, worker: Optional[str] = None) -> bool:
 
 
 async def complete(job_id, *, status, result=None, error=None, isolation=None):
+    """Mark job finished. Idempotent for terminal success — never reopens succeeded jobs."""
     from governance.reliability import scrub_secrets
 
     async with AsyncSessionLocal() as db:
@@ -274,9 +275,13 @@ async def complete(job_id, *, status, result=None, error=None, isolation=None):
         job = r.scalar_one_or_none()
         if not job:
             return
-        job.result = scrub_secrets(result) if result is not None else None
-        job.error = (error or "")[:4000] if error else None
-        job.isolation = isolation
+        # Terminal success is final (crash-retry must not rewrite outcomes)
+        if job.status == "succeeded":
+            logger.info("complete ignored for already-succeeded job %s", job_id)
+            return
+        job.result = scrub_secrets(result) if result is not None else job.result
+        job.error = (error or "")[:4000] if error else job.error
+        job.isolation = isolation if isolation is not None else job.isolation
         job.finished_at = datetime.now(timezone.utc)
         job.worker_id = None
         job.locked_at = None
