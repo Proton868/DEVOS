@@ -102,4 +102,42 @@ def test_assert_no_secrets_helper():
 
 
 def test_production_checklist_script_exists():
-    assert open("scripts/production_checklist.py").read().count("RESULT") >= 1
+    assert "DEPLOYMENT: BLOCKED" in open("scripts/production_checklist.py").read()
+
+
+def test_side_effect_unknown_not_retried():
+    from governance.side_effects import (
+        EffectOutcome, SideEffectRecord, should_retry_job_after_effect,
+    )
+    unk = SideEffectRecord("email", "t", "u", "k", outcome=EffectOutcome.UNKNOWN)
+    fail = SideEffectRecord("email", "t", "u", "k", outcome=EffectOutcome.FAILED)
+    ok = SideEffectRecord("email", "t", "u", "k", outcome=EffectOutcome.SUCCEEDED)
+    assert should_retry_job_after_effect(unk) is False
+    assert should_retry_job_after_effect(fail) is True
+    assert should_retry_job_after_effect(ok) is False
+
+
+def test_multi_node_quota_fail_closed_without_redis(monkeypatch):
+    import governance.reliability as rel
+    monkeypatch.setenv("DEVOS_MULTI_NODE", "1")
+    # force reload flags
+    rel.MULTI_NODE = True
+    rel.REDIS_URL = ""
+    rel._redis_quota = None
+    import asyncio
+    d = asyncio.run(rel.check_quota_async("t1", "max_jobs_per_hour"))
+    assert d.allowed is False
+    assert d.backend == "degraded"
+
+
+def test_failure_injection_points_defined():
+    from governance.failure_injection import _POINTS, injection_active
+    assert "after_job_create" in _POINTS
+    assert "after_evidence" in _POINTS
+    assert injection_active() is False
+
+
+def test_checklist_has_blocked_outcome():
+    src = open("scripts/production_checklist.py").read()
+    assert "DEPLOYMENT: BLOCKED" in src
+    assert "PASS" in src and "WARN" in src and "FAIL" in src

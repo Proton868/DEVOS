@@ -194,14 +194,52 @@ def check_quota(tenant_id: str, kind: str, *, increment: int = 1) -> QuotaDecisi
     return QuotaDecision(True, "ok", remaining=max(0, limit - bucket["count"]), backend="memory")
 
 
+# When multi-node is expected, Redis down must not multiply per-node memory quotas
+MULTI_NODE = os.environ.get("DEVOS_MULTI_NODE", "").lower() in ("1", "true", "yes")
+# Expensive operations fail closed if distributed quota is required but Redis is down
+EXPENSIVE_QUOTA_KINDS = {
+    "max_jobs_per_hour",
+    "max_worker_spawns_per_hour",
+    "max_tokens_per_day",
+    "max_concurrent_jobs",
+}
+
+
 async def check_quota_async(tenant_id: str, kind: str, *, increment: int = 1) -> QuotaDecision:
-    """Multi-node quota via Redis INCR when available; falls back to memory."""
+    """Multi-node quota via Redis INCR when available.
+
+    Redis unavailable + DEVOS_MULTI_NODE:
+      expensive kinds → fail closed (degraded)
+    else → conservative memory with reduced limits
+    """
     limit = DEFAULT_QUOTAS.get(kind)
     if limit is None:
         return QuotaDecision(True, "no_limit", backend="none")
     r = await _redis()
     if r is None:
-        return check_quota(tenant_id, kind, increment=increment)
+        if MULTI_NODE and kind in EXPENSIVE_QUOTA_KINDS:
+            return QuotaDecision(
+                False,
+                f"quota degraded: redis unavailable for {kind} (multi-node fail-closed)",
+                remaining=0,
+                backend="degraded",
+            )
+        # Single-node: memory with tighter effective limit
+        tight = max(1, limit // 2) if kind in EXPENSIVE_QUOTA_KINDS else limit
+        # temporarily use tighter limit via counter
+        key = f"{tenant_id}:{kind}"
+        bucket = _tenant_counters.setdefault(
+            key, {"count": 0, "window_start": datetime.now(timezone.utc)}
+        )
+        if kind.endswith("_per_hour") or kind.endswith("_per_day"):
+            window = 3600 if kind.endswith("_per_hour") else 86400
+            if (datetime.now(timezone.utc) - bucket["window_start"]).total_seconds() > window:
+                bucket["count"] = 0
+                bucket["window_start"] = datetime.now(timezone.utc)
+        if bucket["count"] + increment > tight:
+            return QuotaDecision(False, f"quota exceeded (conservative): {kind}>={tight}", remaining=0, backend="memory-conservative")
+        bucket["count"] += increment
+        return QuotaDecision(True, "ok", remaining=max(0, tight - bucket["count"]), backend="memory-conservative")
     window = 3600 if kind.endswith("_per_hour") else (86400 if kind.endswith("_per_day") else 60)
     slot = int(time.time() // window)
     key = f"devos:quota:{tenant_id}:{kind}:{slot}"

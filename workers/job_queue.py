@@ -126,6 +126,8 @@ async def enqueue(
 
     if _redis and not scheduled_at:
         await _redis.push(jid, pri)
+    from governance.failure_injection import maybe_crash
+    maybe_crash("after_job_create")
     return job
 
 
@@ -201,6 +203,8 @@ async def _claim_sql(db, worker):
         if result.rowcount == 0:
             return None
         await db.refresh(job)
+        from governance.failure_injection import maybe_crash
+        maybe_crash("after_job_claim")
         return job
     except Exception as e:
         logger.warning("claim failed: %s", e)
@@ -241,6 +245,8 @@ async def claim_next(worker=None):
                     await db.commit()
                     if result.rowcount == 1:
                         await db.refresh(job)
+                        from governance.failure_injection import maybe_crash
+                        maybe_crash("after_job_claim")
                         return job
     async with AsyncSessionLocal() as db:
         return await _claim_sql(db, wid)

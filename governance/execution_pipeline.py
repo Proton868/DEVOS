@@ -230,6 +230,8 @@ async def record_path_evidence(
             )
             db.add(rec)
             await db.commit()
+            from governance.failure_injection import maybe_crash
+            maybe_crash("after_evidence")
             return rec.id
     except Exception as e:
         if require_evidence and path_class == PathClass.DURABLE:
