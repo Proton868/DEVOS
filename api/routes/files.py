@@ -11,6 +11,9 @@ from typing import Optional
 
 from core.database import get_db
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from execution.files import FileService, PathViolation
 
 router = APIRouter()
@@ -23,12 +26,14 @@ def _service(user_id: str, project_id: str) -> FileService:
 @router.get("/{project_id}/tree")
 async def get_tree(project_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return {"files": _service(user.id, project_id).tree()}
 
 
 @router.get("/{project_id}/read")
 async def read_file(project_id: str, path: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     try:
         return _service(user.id, project_id).read(path)
     except FileNotFoundError:
@@ -42,6 +47,7 @@ async def read_file(project_id: str, path: str, request: Request, db=Depends(get
 @router.get("/{project_id}/download")
 async def download_file(project_id: str, path: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     try:
         file_path = _service(user.id, project_id)._resolve(path)
     except PathViolation as e:
@@ -59,6 +65,7 @@ class WriteReq(BaseModel):
 @router.post("/{project_id}/write")
 async def write_file(project_id: str, req: WriteReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     try:
         return _service(user.id, project_id).write(req.path, req.content)
     except PathViolation as e:
@@ -78,6 +85,7 @@ class CreateReq(BaseModel):
 @router.post("/{project_id}/create")
 async def create_file(project_id: str, req: CreateReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     try:
         return _service(user.id, project_id).create(req.path, req.is_dir)
     except FileExistsError:
@@ -94,6 +102,7 @@ class RenameReq(BaseModel):
 @router.post("/{project_id}/rename")
 async def rename_file(project_id: str, req: RenameReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     try:
         return _service(user.id, project_id).rename(req.path, req.new_path)
     except FileNotFoundError:
@@ -108,6 +117,7 @@ async def delete_file(project_id: str, path: str, request: Request, db=Depends(g
     delete_file tool contract uses, so a human deleting via the IDE and
     an agent deleting autonomously are held to the same standard."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from governance.hitl import HITLQueue
     queue = HITLQueue()
     hitl_req = await queue.submit(

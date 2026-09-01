@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from core.database import get_db
 
 router = APIRouter(prefix="/api/enterprise", tags=["enterprise"])
@@ -24,11 +27,13 @@ async def rbac_check(
     db=Depends(get_db),
 ):
     """Check if the current user can perform a capability."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from governance.identity_context import IdentityContext, TenantTier
     from governance.rbac import evaluate_rbac
 
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     # Read the user's actual trust tier from the database, defaulting to TENANT_USER
     actual_tier = TenantTier.TENANT_USER
     try:
@@ -49,7 +54,8 @@ async def rbac_check(
 @router.get("/rbac/tiers")
 async def rbac_tiers(request: Request, db=Depends(get_db)):
     """List all tiers and their capabilities."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from governance.identity_context import TenantTier
     from governance.rbac import RBACEngine
 
@@ -78,7 +84,8 @@ async def audit_query(
     db=Depends(get_db),
 ):
     """Query audit log entries."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from governance.audit import get_audit_logger, AuditEventType
 
     et = None
@@ -106,7 +113,8 @@ async def audit_stats(
     db=Depends(get_db),
 ):
     """Get audit statistics."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from governance.audit import get_audit_logger
     return get_audit_logger().stats(tenant_id=tenant_id)
 
@@ -120,7 +128,8 @@ async def billing_usage(
     db=Depends(get_db),
 ):
     """Get current billing usage for a tenant."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from governance.billing import get_billing
     usage = get_billing().get_usage(tenant_id)
     return {"usage": usage.to_dict()}
@@ -134,7 +143,8 @@ async def billing_events(
     db=Depends(get_db),
 ):
     """List recent billing events."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from governance.billing import get_billing
     return {"events": get_billing().list_events(tenant_id=tenant_id, limit=limit)}
 
@@ -152,7 +162,8 @@ async def marketplace_list(
     db=Depends(get_db),
 ):
     """List marketplace capabilities."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from governance.marketplace import get_marketplace
     entries = get_marketplace().list(
         category=category,
@@ -170,7 +181,8 @@ async def marketplace_list(
 @router.get("/marketplace/categories")
 async def marketplace_categories(request: Request, db=Depends(get_db)):
     """List all marketplace categories."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from governance.marketplace import get_marketplace
     return {"categories": get_marketplace().categories()}
 
@@ -178,7 +190,8 @@ async def marketplace_categories(request: Request, db=Depends(get_db)):
 @router.get("/marketplace/{slug}")
 async def marketplace_get(slug: str, request: Request, db=Depends(get_db)):
     """Get a marketplace entry by slug."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from governance.marketplace import get_marketplace
     entry = get_marketplace().get(slug)
     if not entry:

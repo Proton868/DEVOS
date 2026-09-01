@@ -13,6 +13,8 @@ defines them. This is the single source of truth for "what can this system do?"
 from __future__ import annotations
 
 import hashlib
+import hmac
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -20,6 +22,9 @@ from enum import Enum
 from typing import Optional
 
 logger = logging.getLogger("devos.capabilities")
+
+def _canonical_json(obj: dict) -> str:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
 
 
 class CapabilityCategory(str, Enum):
@@ -89,29 +94,24 @@ class CapabilityDescriptor:
         }
 
     def sign(self, secret_key: str) -> str:
-        """Cryptographically sign this capability manifest."""
+        """HMAC-SHA256 sign this capability manifest."""
         payload = self._signable_payload()
-        self.signature = hashlib.sha256(
-            f"{payload}:{secret_key}".encode()
-        ).hexdigest()
+        key = secret_key.encode("utf-8") if isinstance(secret_key, str) else secret_key
+        self.signature = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
         return self.signature
 
     def verify(self, secret_key: str) -> bool:
-        """Verify the signature matches."""
         if not self.signature:
             return False
         payload = self._signable_payload()
-        expected = hashlib.sha256(
-            f"{payload}:{secret_key}".encode()
-        ).hexdigest()
-        return self.signature == expected
+        key = secret_key.encode("utf-8") if isinstance(secret_key, str) else secret_key
+        expected = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(self.signature, expected)
 
     def _signable_payload(self) -> str:
-        """Build the payload string for signing, excluding the signature itself
-        to avoid a circular dependency where the hash includes the hash."""
         d = self.to_dict()
         d.pop("signature", None)
-        return f"{self.slug}:{self.version}:{d}"
+        return f"{self.slug}:{self.version}:{_canonical_json(d)}"
 
 
 class CapabilityRegistry:

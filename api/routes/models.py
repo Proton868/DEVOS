@@ -3,6 +3,9 @@ from pydantic import BaseModel
 from typing import Optional
 from core.database import get_db
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from core.config import settings
 import asyncio
 
@@ -10,14 +13,16 @@ router = APIRouter()
 
 @router.get("")
 async def list_all(request: Request, db=Depends(get_db)):
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
     results = await asyncio.gather(*[BrainLLM(provider=p).list_models(p) for p in settings.available_providers], return_exceptions=True)
     return {"models": [m for r in results if isinstance(r,list) for m in r], "providers": settings.available_providers}
 
 @router.get("/settings")
 async def get_settings(request: Request, db=Depends(get_db)):
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from memory.store import MemoryStore
     return {"providers": settings.available_providers, "default_provider": settings.DEFAULT_PROVIDER,
             "ollama_host": settings.OLLAMA_HOST, "has_tavily": settings.has_tavily,
@@ -65,6 +70,7 @@ def _is_secret_key(key: str) -> bool:
 @router.get("/providers/config")
 async def get_provider_config(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from core.config import EDITABLE_PROVIDER_KEYS
     out = {}
     for k in EDITABLE_PROVIDER_KEYS:
@@ -81,11 +87,13 @@ async def get_provider_config(request: Request, db=Depends(get_db)):
 @router.put("/providers/config")
 async def save_provider_config(req: ProviderConfigUpdate, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     if not getattr(user, "is_admin", False):
         raise HTTPException(403, "Admin required to change provider configuration")
     """Persist provider/model settings edited from the Settings UI to .env
     and apply them live — no server restart required."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from core.config import update_env_settings
     updates = req.model_dump(exclude_none=True)
     if not updates:
@@ -105,7 +113,8 @@ class TestConnectionReq(BaseModel):
 async def test_provider_connection(req: TestConnectionReq, request: Request, db=Depends(get_db)):
     """Send a trivial 1-token completion to verify a provider's credentials
     and connectivity actually work, rather than just checking a key is set."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
     try:
         brain = BrainLLM(provider=req.provider)
@@ -138,6 +147,7 @@ async def complete(req: CompleteReq, request: Request, db=Depends(get_db)):
     fences, no explanation -- since this gets inserted directly as ghost
     text with no post-processing beyond a fence-strip safety net below."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
     brain = BrainLLM(provider=req.providerId, model=req.model, user_id=user.id)
     system = (

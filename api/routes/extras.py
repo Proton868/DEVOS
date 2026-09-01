@@ -5,6 +5,9 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from core.database import get_db
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 
 router = APIRouter()
 
@@ -55,6 +58,7 @@ class BuildRequest(BaseModel):
 @router.post("/build")
 async def build_project(req: BuildRequest, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.builder import ProjectBuilder, ProjectSpec
     spec = ProjectSpec(name=req.name, description=req.description, stack=req.stack,
                        language=req.language, features=req.features, user_id=user.id,
@@ -65,12 +69,14 @@ async def build_project(req: BuildRequest, request: Request, db=Depends(get_db))
 @router.get("/projects")
 async def list_projects(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.builder import ProjectBuilder
     return {"projects": ProjectBuilder().list_projects(user.id)}
 
 @router.get("/projects/{pid}/files")
 async def project_files(pid: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.builder import ProjectBuilder
     files = ProjectBuilder().get_project_files(user.id, pid)
     if not files: raise HTTPException(404)
@@ -82,6 +88,7 @@ async def delete_project(pid: str, request: Request, db=Depends(get_db)):
     then removes the project directory from disk. Gated through HITL like
     all other destructive filesystem actions."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
 
     # Verify project exists before going through HITL
     from brain.builder import ProjectBuilder
@@ -142,54 +149,63 @@ class DecisionReq(BaseModel):
 @router.get("/workspace")
 async def get_workspace(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from workspace.workspace import Workspace
     return Workspace(user.id).to_dict()
 
 @router.post("/workspace/onboard")
 async def onboard(req: OnboardReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from workspace.workspace import Workspace
     return await Workspace(user.id).run_onboard(req.model_dump())
 
 @router.get("/workspace/context")
 async def workspace_context(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from workspace.workspace import Workspace
     return Workspace(user.id).get_context()
 
 @router.get("/workspace/connections")
 async def workspace_connections(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from workspace.workspace import Workspace
     return {"connections": Workspace(user.id).get_connections()}
 
 @router.post("/workspace/connections")
 async def add_connection(req: ConnectionReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from workspace.workspace import Workspace
     return Workspace(user.id).add_connection(req.name, req.description, req.status, req.mechanism, req.api_key_env)
 
 @router.post("/workspace/audit")
 async def run_audit(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from workspace.workspace import Workspace
     return await Workspace(user.id).run_audit()
 
 @router.post("/workspace/level-up")
 async def run_level_up(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from workspace.workspace import Workspace
     return await Workspace(user.id).run_level_up()
 
 @router.get("/workspace/decisions")
 async def get_decisions(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from workspace.workspace import Workspace
     return {"decisions": Workspace(user.id).get_decisions()}
 
 @router.post("/workspace/decisions")
 async def log_decision(req: DecisionReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from workspace.workspace import Workspace
     return Workspace(user.id).log_decision(req.decision, req.reasoning, req.alternatives)
 
@@ -212,18 +228,21 @@ class EndpointCreate(BaseModel):
 @router.get("/endpoints")
 async def list_endpoints(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.endpoints import EndpointRegistry
     return {"endpoints": [e.to_dict() for e in EndpointRegistry().list_for_user(user.id)]}
 
 @router.post("/endpoints")
 async def add_endpoint(req: EndpointCreate, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.endpoints import EndpointRegistry
     return {"id": EndpointRegistry().add(user.id, req.name, req.base_url, req.api_key, req.api_format, req.default_model)}
 
 @router.post("/endpoints/{eid}/test")
 async def test_endpoint(eid: str, request: Request, db=Depends(get_db)):
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.endpoints import EndpointRegistry, CustomEndpointClient
     ep = EndpointRegistry().get(eid)
     if not ep: raise HTTPException(404)
@@ -233,7 +252,8 @@ async def test_endpoint(eid: str, request: Request, db=Depends(get_db)):
 
 @router.get("/endpoints/{eid}/models")
 async def endpoint_models(eid: str, request: Request, db=Depends(get_db)):
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.endpoints import EndpointRegistry, CustomEndpointClient
     ep = EndpointRegistry().get(eid)
     if not ep: raise HTTPException(404)
@@ -244,6 +264,7 @@ async def endpoint_models(eid: str, request: Request, db=Depends(get_db)):
 @router.delete("/endpoints/{eid}")
 async def delete_endpoint(eid: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.endpoints import EndpointRegistry
     if not EndpointRegistry().delete(eid, user.id): raise HTTPException(404)
     return {"status": "deleted"}
@@ -255,6 +276,7 @@ class AutoresearchReq(BaseModel):
 @router.post("/autoresearch/start")
 async def start_autoresearch(req: AutoresearchReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.autoresearch import AutoresearchSession
     session = AutoresearchSession(user_id=user.id, max_rounds=req.max_rounds)
     goal = await session.parse_goal(req.goal, req.code)
@@ -262,6 +284,7 @@ async def start_autoresearch(req: AutoresearchReq, request: Request, db=Depends(
 
 @router.get("/autoresearch/sessions")
 async def list_autoresearch(request: Request, db=Depends(get_db)):
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.autoresearch import AutoresearchSession
     return {"sessions": AutoresearchSession.list_sessions()}

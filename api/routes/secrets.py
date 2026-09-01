@@ -12,6 +12,9 @@ from typing import Optional
 from sqlalchemy import select
 from core.database import get_db, Secret
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from governance.secrets_vault import encrypt
 from core.sanitize import sanitize_freeform
 
@@ -55,6 +58,7 @@ def _to_dict(s: Secret) -> dict:
 @router.get("")
 async def list_secrets(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(select(Secret).where(Secret.owner_id == user.id))
     return {"secrets": [_to_dict(s) for s in r.scalars().all()]}
 
@@ -62,6 +66,7 @@ async def list_secrets(request: Request, db=Depends(get_db)):
 @router.post("")
 async def create_secret(req: SecretCreate, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     if not req.value:
         raise HTTPException(400, "Both name and value are required")
     try:
@@ -79,6 +84,7 @@ async def create_secret(req: SecretCreate, request: Request, db=Depends(get_db))
 @router.delete("/{sid}")
 async def delete_secret(sid: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(select(Secret).where(Secret.id == sid, Secret.owner_id == user.id))
     s = r.scalar_one_or_none()
     if not s:

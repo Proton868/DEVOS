@@ -7,6 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db, UserSettings, WorkspaceLayout
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 
 logger = logging.getLogger("devos.settings")
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -21,6 +24,7 @@ class SettingsUpdate(BaseModel):
 @router.get("")
 async def get_settings(request: Request, db: AsyncSession = Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(
         select(UserSettings).where(UserSettings.user_id == user.id)
     )
@@ -33,6 +37,7 @@ async def put_settings(req: SettingsUpdate, request: Request, db: AsyncSession =
     """Merge the provided key-value pairs into the user's settings. Existing
     keys not mentioned in the request are preserved."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(
         select(UserSettings).where(UserSettings.user_id == user.id)
     )
@@ -64,6 +69,7 @@ class LayoutUpdate(BaseModel):
 @router.get("/workspace-layouts")
 async def list_layouts(request: Request, db: AsyncSession = Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(
         select(WorkspaceLayout)
         .where(WorkspaceLayout.user_id == user.id)
@@ -82,6 +88,7 @@ async def list_layouts(request: Request, db: AsyncSession = Depends(get_db)):
 @router.get("/workspace-layouts/{layout_id}")
 async def get_layout(layout_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(
         select(WorkspaceLayout).where(
             WorkspaceLayout.id == layout_id,
@@ -102,6 +109,7 @@ async def get_layout(layout_id: str, request: Request, db: AsyncSession = Depend
 @router.post("/workspace-layouts")
 async def create_layout(req: LayoutCreate, request: Request, db: AsyncSession = Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
 
     # If this layout is marked as default, clear any existing default
     if req.is_default:
@@ -134,6 +142,7 @@ async def create_layout(req: LayoutCreate, request: Request, db: AsyncSession = 
 @router.put("/workspace-layouts/{layout_id}")
 async def update_layout(layout_id: str, req: LayoutUpdate, request: Request, db: AsyncSession = Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(
         select(WorkspaceLayout).where(
             WorkspaceLayout.id == layout_id,
@@ -177,6 +186,7 @@ async def update_layout(layout_id: str, req: LayoutUpdate, request: Request, db:
 @router.delete("/workspace-layouts/{layout_id}")
 async def delete_layout(layout_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     result = await db.execute(
         sa_delete(WorkspaceLayout).where(
             WorkspaceLayout.id == layout_id,

@@ -2,6 +2,9 @@ from fastapi import APIRouter, Depends, Request, HTTPException, Query
 from pydantic import BaseModel
 from core.database import get_db
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from execution.files import FileService
 
 router = APIRouter()
@@ -17,13 +20,15 @@ class FileSearchReq(BaseModel):
 
 @router.post("")
 async def web_search(req: SearchReq, request: Request, db=Depends(get_db)):
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from execution.search import search_web
     return await search_web(req.query, req.max_results, req.search_depth, req.topic)
 
 @router.post("/files")
 async def search_files(req: FileSearchReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     service = FileService(user.id, req.project_id)
     tree = service.tree()
     query = req.query.strip()
@@ -77,6 +82,7 @@ async def search_files(req: FileSearchReq, request: Request, db=Depends(get_db))
 @router.get("/index/status")
 async def get_index_status(request: Request, db=Depends(get_db), project_id: str = Query("default")):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     service = FileService(user.id, project_id)
     tree = service.tree()
     files = sum(1 for item in tree if item["type"] == "file")
@@ -87,6 +93,7 @@ async def get_index_status(request: Request, db=Depends(get_db), project_id: str
 @router.post("/index/reindex")
 async def reindex(request: Request, db=Depends(get_db), project_id: str = Query("default")):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     service = FileService(user.id, project_id)
     tree = service.tree()
     files = sum(1 for item in tree if item["type"] == "file")

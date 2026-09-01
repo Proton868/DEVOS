@@ -159,50 +159,61 @@ class SandboxedExecutor:
 
         start_ns = time.perf_counter_ns()
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-                cwd=str(work_dir),
-                # POSIX: set process group so we can kill entire tree
-                start_new_session=True,
-            )
-
-            # Apply resource limits in the process (best-effort on non-Linux)
-            self._apply_ulimits(proc)
-
-            try:
-                stdout_b, stderr_b = await asyncio.wait_for(
-                    proc.communicate(), timeout=min(timeout, self.max_cpu_seconds + 5)
+            use_isolation = not self.allow_network
+            if use_isolation:
+                from execution.isolation import run_isolated
+                iso = await run_isolated(
+                    cmd, cwd=str(work_dir), env=env,
+                    timeout_s=min(timeout, self.max_cpu_seconds + 5),
+                    language=language, require_isolation=True,
                 )
-                exit_code = proc.returncode or 0
-                status = "success" if exit_code == 0 else "failed"
-            except asyncio.TimeoutError:
-                # Kill entire process group
+                if iso.status == "isolation_unavailable":
+                    violations.append(f"[ISOLATION] {iso.stderr}")
+                    try:
+                        shutil.rmtree(work_dir, ignore_errors=True)
+                    except Exception:
+                        pass
+                    return SandboxResult(
+                        run_id=run_id, status="sandbox_denied", stdout="",
+                        stderr=iso.stderr, exit_code=126, duration_ms=iso.duration_ms,
+                        sandbox_violations=violations,
+                    )
+                stdout_b = iso.stdout.encode("utf-8", errors="replace")
+                stderr_b = iso.stderr.encode("utf-8", errors="replace")
+                exit_code = iso.exit_code
+                if iso.status == "timeout":
+                    status = "timeout"
+                    violations.append(f"[TIMEOUT] after {timeout}s ({iso.isolation})")
+                else:
+                    status = "success" if exit_code == 0 else "failed"
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    env=env, cwd=str(work_dir), start_new_session=True,
+                )
+                self._apply_ulimits(proc)
                 try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except Exception:
-                    proc.kill()
-                await proc.communicate()
-                stdout_b = b""
-                stderr_b = f"Execution killed: timeout after {timeout}s".encode()
-                exit_code = -1
-                status = "timeout"
-                violations.append(f"[TIMEOUT] Killed after {timeout}s")
-
+                    stdout_b, stderr_b = await asyncio.wait_for(
+                        proc.communicate(), timeout=min(timeout, self.max_cpu_seconds + 5)
+                    )
+                    exit_code = proc.returncode or 0
+                    status = "success" if exit_code == 0 else "failed"
+                except asyncio.TimeoutError:
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    except Exception:
+                        proc.kill()
+                    await proc.communicate()
+                    stdout_b = b""
+                    stderr_b = f"Execution killed: timeout after {timeout}s".encode()
+                    exit_code = -1
+                    status = "timeout"
+                    violations.append(f"[TIMEOUT] Killed after {timeout}s")
         except FileNotFoundError as e:
-            stdout_b = b""
-            stderr_b = f"Runtime not found: {e}".encode()
-            exit_code = -1
-            status = "failed"
+            stdout_b = b""; stderr_b = f"Runtime not found: {e}".encode(); exit_code = -1; status = "failed"
         except Exception as e:
-            stdout_b = b""
-            stderr_b = str(e).encode()
-            exit_code = -1
-            status = "failed"
+            stdout_b = b""; stderr_b = str(e).encode(); exit_code = -1; status = "failed"
         finally:
-            # Always clean up the sandbox dir
             try:
                 shutil.rmtree(work_dir, ignore_errors=True)
             except Exception:

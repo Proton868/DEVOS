@@ -9,6 +9,9 @@ from typing import Optional
 from sqlalchemy import select, desc
 from core.database import get_db, ChatSession, Message
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 
 router = APIRouter()
 
@@ -25,6 +28,7 @@ class ChatReq(BaseModel):
 @router.get("/sessions")
 async def list_sessions(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(
         select(ChatSession)
         .where(ChatSession.user_id == user.id, ChatSession.node_id == None)  # noqa: E711
@@ -40,6 +44,7 @@ async def list_sessions(request: Request, db=Depends(get_db)):
 @router.delete("/sessions/{sid}")
 async def del_session(sid: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(select(ChatSession).where(ChatSession.id==sid, ChatSession.user_id==user.id))
     s = r.scalar_one_or_none()
     if not s: from fastapi import HTTPException; raise HTTPException(404)
@@ -55,6 +60,7 @@ async def get_node_session(
 ):
     """Get or create a chat session scoped to a specific workflow node."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(
         select(ChatSession).where(
             ChatSession.user_id == user.id,
@@ -86,6 +92,7 @@ async def get_node_session(
 @router.get("/sessions/{sid}/messages")
 async def get_messages(sid: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     sr = await db.execute(select(ChatSession).where(ChatSession.id==sid, ChatSession.user_id==user.id))
     if not sr.scalar_one_or_none():
         raise HTTPException(404, "Session not found")
@@ -108,6 +115,7 @@ async def edit(req: EditReq, request: Request, db=Depends(get_db)):
     being present or not. Uses the exact same fake-chunking SSE pattern as
     /send above (brain.stream_chat has no true token streaming)."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
     brain = BrainLLM(provider=req.providerId, model=req.model, user_id=user.id)
 
@@ -164,6 +172,7 @@ async def explain(req: ExplainReq, request: Request, db=Depends(get_db)):
     """Streams a plain-English explanation of the given code snippet, using
     the same fake-chunking SSE pattern as /send and /edit."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
     brain = BrainLLM(provider=req.providerId, model=req.model, user_id=user.id)
 
@@ -198,6 +207,7 @@ async def explain(req: ExplainReq, request: Request, db=Depends(get_db)):
 @router.post("/send")
 async def send(req: ChatReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     session = None
     # If node_id is provided, look up an existing node-scoped session first
     if req.node_id and req.workflow_id:

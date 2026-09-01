@@ -26,6 +26,9 @@ from pydantic import BaseModel
 
 from core.database import get_db
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from execution.files import FileService, PathViolation
 
 router = APIRouter()
@@ -80,6 +83,7 @@ async def plan(req: PlanReq, request: Request, db=Depends(get_db)):
     {summary, notes, files: [{path, change, risk}]} — the exact shape
     ComposerPanel.jsx expects for its review UI."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
     brain = BrainLLM(provider=req.providerId, model=req.model, user_id=user.id)
 
@@ -188,6 +192,7 @@ async def execute(req: ExecuteReq, request: Request, db=Depends(get_db)):
     content) or `file_skip` (if generation failed for that file), followed by
     a final `compose_done`. Nothing is written to disk here -- see /apply."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
     brain = BrainLLM(provider=req.providerId, model=req.model, user_id=user.id)
     fs = FileService(user.id, req.projectId or "default")
@@ -263,6 +268,7 @@ async def apply(req: ApplyReq, request: Request, db=Depends(get_db)):
     the same write path the IDE's own file editor uses, so applied Composer
     changes are indistinguishable from manual edits afterward."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     fs = FileService(user.id, req.projectId or "default")
     written = []
     errors = []

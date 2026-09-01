@@ -230,6 +230,26 @@ async def _migrate_missing_columns(conn):
         "chat_sessions", "workflow_id",
         "ALTER TABLE chat_sessions ADD COLUMN workflow_id VARCHAR",
     )
+    await _add_column_if_missing(
+        "users", "default_tenant_id",
+        "ALTER TABLE users ADD COLUMN default_tenant_id VARCHAR",
+    )
+    await _add_column_if_missing(
+        "workflow_records", "tenant_id",
+        "ALTER TABLE workflow_records ADD COLUMN tenant_id VARCHAR",
+    )
+    await _add_column_if_missing(
+        "evidence_records", "tenant_id",
+        "ALTER TABLE evidence_records ADD COLUMN tenant_id VARCHAR",
+    )
+    await _add_column_if_missing(
+        "execution_jobs", "worker_id",
+        "ALTER TABLE execution_jobs ADD COLUMN worker_id VARCHAR",
+    )
+    await _add_column_if_missing(
+        "execution_jobs", "locked_at",
+        "ALTER TABLE execution_jobs ADD COLUMN locked_at DATETIME",
+    )
 
 async def get_db():
     async with AsyncSessionLocal() as session:
@@ -272,4 +292,60 @@ class EvidenceRecord(Base):
     tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
     goal: Mapped[str] = mapped_column(Text, default="")
     body: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class DurableCapability(Base):
+    __tablename__ = "durable_capabilities"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    owner_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    slug: Mapped[str] = mapped_column(String(256), index=True)
+    version: Mapped[str] = mapped_column(String(32), default="1.0.0")
+    name: Mapped[str] = mapped_column(String(256))
+    category: Mapped[str] = mapped_column(String(64), default="system")
+    description: Mapped[str] = mapped_column(Text, default="")
+    risk: Mapped[str] = mapped_column(String(32), default="medium")
+    body: Mapped[dict] = mapped_column(JSON, default=dict)
+    signature: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    approval_state: Mapped[str] = mapped_column(String(32), default="approved")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class ExecutionJob(Base):
+    __tablename__ = "execution_jobs"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    owner_id: Mapped[str] = mapped_column(String, index=True)
+    actor_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    job_type: Mapped[str] = mapped_column(String(64), default="script")
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=100)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    isolation: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    worker_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class WorkerTrustRecord(Base):
+    __tablename__ = "worker_trust_records"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    tenant_id: Mapped[str] = mapped_column(String, index=True)
+    worker_id: Mapped[str] = mapped_column(String, index=True)
+    trust_level: Mapped[str] = mapped_column(String(32), default="supervised")
+    autonomy: Mapped[str] = mapped_column(String(32), default="supervised")
+    success_count: Mapped[int] = mapped_column(Integer, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    unauthorized_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    granted_caps: Mapped[list] = mapped_column(JSON, default=list)
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

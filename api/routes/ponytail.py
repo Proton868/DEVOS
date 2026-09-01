@@ -11,6 +11,9 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from core.database import get_db
 
 router = APIRouter(prefix="/api/ponytail", tags=["ponytail"])
@@ -29,7 +32,8 @@ class PonytailRequest(BaseModel):
 @router.post("/run")
 async def start_pipeline(req: PonytailRequest, request: Request, db=Depends(get_db)):
     """Start a Ponytail pipeline run. Returns immediately with a run_id."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
 
     run_id = str(uuid.uuid4())
     _pipeline_runs[run_id] = {
@@ -52,7 +56,8 @@ async def start_pipeline(req: PonytailRequest, request: Request, db=Depends(get_
 @router.get("/runs/{run_id}")
 async def get_run(run_id: str, request: Request, db=Depends(get_db)):
     """Poll a pipeline run by ID."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     run = _pipeline_runs.get(run_id)
     if not run:
         return {"error": f"Pipeline run not found: {run_id}"}
@@ -67,7 +72,8 @@ async def list_runs(
     db=Depends(get_db),
 ):
     """List pipeline runs, newest first."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     runs = list(_pipeline_runs.values())
     if status:
         runs = [r for r in runs if r["status"] == status]
@@ -78,7 +84,8 @@ async def list_runs(
 @router.get("/stages")
 async def list_stages(request: Request, db=Depends(get_db)):
     """List all Ponytail pipeline stages with descriptions."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from cognitive.ponytail import PipelineStage, STAGE_DESCRIPTIONS
     return {
         "stages": [

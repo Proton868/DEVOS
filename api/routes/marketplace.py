@@ -15,6 +15,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from pydantic import BaseModel
 from core.database import get_db
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 
 logger = logging.getLogger("devos.marketplace")
 router = APIRouter()
@@ -327,7 +330,8 @@ AUTOMATION_TEMPLATES = [
 @router.get("/templates")
 async def list_templates(request: Request, category: str = Query(None), db=Depends(get_db)):
     """List curated automation templates (ready-to-import Flow scripts)."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     items = AUTOMATION_TEMPLATES
     if category:
         items = [t for t in items if t["category"] == category]
@@ -336,14 +340,16 @@ async def list_templates(request: Request, category: str = Query(None), db=Depen
 
 @router.get("/templates/categories")
 async def template_categories(request: Request, db=Depends(get_db)):
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     cats = sorted({t["category"] for t in AUTOMATION_TEMPLATES})
     return {"categories": cats}
 
 
 @router.get("/templates/{template_id}")
 async def get_template(template_id: str, request: Request, db=Depends(get_db)):
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     for t in AUTOMATION_TEMPLATES:
         if t["id"] == template_id:
             return t
@@ -359,7 +365,8 @@ async def search_packages(
     db=Depends(get_db),
 ):
     """Search the real npm or PyPI registries for installable packages."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     import httpx
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -416,6 +423,7 @@ async def install_packages(req: InstallReq, request: Request, db=Depends(get_db)
     node_modules (Node), delegating to the ExecutionLayer's existing
     dependency installer. Bash scripts have no package manager here."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from sqlalchemy import select
     from core.database import Script
     r = await db.execute(select(Script).where(Script.id == req.script_id, Script.owner_id == user.id))

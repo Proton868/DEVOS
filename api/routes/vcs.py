@@ -6,6 +6,9 @@ from typing import Optional
 
 from core.database import get_db
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from execution.vcs import GitService
 
 router = APIRouter()
@@ -18,12 +21,14 @@ def _service(user_id: str, project_id: str) -> GitService:
 @router.get("/{project_id}/status")
 async def status(project_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return await _service(user.id, project_id).status()
 
 
 @router.post("/{project_id}/init")
 async def init(project_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return await _service(user.id, project_id).init()
 
 
@@ -34,12 +39,14 @@ class PathsReq(BaseModel):
 @router.post("/{project_id}/stage")
 async def stage(project_id: str, req: PathsReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return await _service(user.id, project_id).stage(req.paths)
 
 
 @router.post("/{project_id}/unstage")
 async def unstage(project_id: str, req: PathsReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return await _service(user.id, project_id).unstage(req.paths)
 
 
@@ -51,6 +58,7 @@ class CommitReq(BaseModel):
 @router.post("/{project_id}/commit")
 async def commit(project_id: str, req: CommitReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return await _service(user.id, project_id).commit(req.message, req.author)
 
 
@@ -62,12 +70,14 @@ class RemoteReq(BaseModel):
 @router.post("/{project_id}/push")
 async def push(project_id: str, req: RemoteReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return await _service(user.id, project_id).push(req.remote, req.branch)
 
 
 @router.post("/{project_id}/pull")
 async def pull(project_id: str, req: RemoteReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return await _service(user.id, project_id).pull(req.remote, req.branch)
 
 
@@ -79,12 +89,14 @@ class CheckoutReq(BaseModel):
 @router.post("/{project_id}/checkout")
 async def checkout(project_id: str, req: CheckoutReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return await _service(user.id, project_id).checkout(req.branch, req.create)
 
 
 @router.get("/{project_id}/log")
 async def log(project_id: str, limit: int = 20, request: Request = None, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return await _service(user.id, project_id).log(limit)
 
 
@@ -92,6 +104,7 @@ async def log(project_id: str, limit: int = 20, request: Request = None, db=Depe
 async def diff(project_id: str, path: Optional[str] = None, staged: bool = False,
                 request: Request = None, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return await _service(user.id, project_id).diff(path, staged)
 
 
@@ -105,6 +118,7 @@ async def discard(project_id: str, req: DiscardReq, request: Request, db=Depends
     delete_file uses, same trust-model reasoning: destructive is destructive
     regardless of whether a human or an agent triggered it."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from governance.hitl import HITLQueue
     queue = HITLQueue()
     hitl_req = await queue.submit(

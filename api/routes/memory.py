@@ -3,6 +3,9 @@ from pydantic import BaseModel, field_validator
 from typing import Optional
 from core.database import get_db
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from core.sanitize import sanitize_freeform, sanitize_name
 
 router = APIRouter()
@@ -31,6 +34,7 @@ class SearchReq(BaseModel):
 @router.post("/save")
 async def save(req: SaveReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from memory.store import MemoryStore
     mid = await MemoryStore().save(user.id, req.role, req.content, req.session_id, req.metadata)
     return {"id": mid}
@@ -38,6 +42,7 @@ async def save(req: SaveReq, request: Request, db=Depends(get_db)):
 @router.post("/search")
 async def search(req: SearchReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from memory.store import MemoryStore
     results = await MemoryStore().recall(user.id, req.query, req.limit, req.session_id)
     return {"results": results, "count": len(results)}
@@ -73,13 +78,15 @@ class AddRelationshipReq(BaseModel):
 @router.post("/graph/entity")
 async def add_entity(req: AddEntityReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from memory.graph import KnowledgeGraph
     entity_id = KnowledgeGraph().add_entity(user.id, req.entity_type, req.name, req.properties)
     return KnowledgeGraph().get_entity(entity_id)
 
 @router.get("/graph/entity/{entity_id}")
 async def get_entity(entity_id: str, request: Request, db=Depends(get_db)):
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from memory.graph import KnowledgeGraph
     entity = KnowledgeGraph().get_entity(entity_id)
     if not entity:
@@ -90,12 +97,14 @@ async def get_entity(entity_id: str, request: Request, db=Depends(get_db)):
 async def find_entities(entity_type: Optional[str] = None, name_contains: Optional[str] = None,
                         request: Request = None, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from memory.graph import KnowledgeGraph
     return {"entities": KnowledgeGraph().find_entities(user.id, entity_type, name_contains)}
 
 @router.post("/graph/relationship")
 async def add_relationship(req: AddRelationshipReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from memory.graph import KnowledgeGraph
     try:
         rel_id = KnowledgeGraph().add_relationship(
@@ -108,12 +117,14 @@ async def add_relationship(req: AddRelationshipReq, request: Request, db=Depends
 async def get_related(entity_id: str, relation_type: Optional[str] = None,
                       direction: str = "both", depth: int = 1,
                       request: Request = None, db=Depends(get_db)):
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from memory.graph import KnowledgeGraph
     return {"related": KnowledgeGraph().get_related(entity_id, relation_type, direction, depth)}
 
 @router.get("/graph/stats")
 async def graph_stats(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from memory.graph import KnowledgeGraph
     return KnowledgeGraph().stats(user.id)

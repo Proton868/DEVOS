@@ -10,6 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from core.database import get_db
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 
 logger = logging.getLogger("devos.mcp")
 router = APIRouter()
@@ -73,7 +76,8 @@ def _discovery():
 @router.get("/presets")
 async def list_presets(request: Request, db=Depends(get_db)):
     """Known one-click MCP server presets the UI can offer."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     from core.config import settings
     presets = []
     for p in MCP_PRESETS:
@@ -85,7 +89,8 @@ async def list_presets(request: Request, db=Depends(get_db)):
 @router.get("/servers")
 async def list_servers(request: Request, db=Depends(get_db)):
     """List currently connected MCP servers and how many tools each ingested."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     disc = _discovery()
     counts: dict[str, int] = {}
     for t in disc.list_all_tools():
@@ -104,6 +109,7 @@ async def connect_server(req: ConnectReq, request: Request, db=Depends(get_db)):
     """Connect to an external MCP server by spawning its stdio process and
     ingesting its tool list into the unified registry."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     if not req.name or not req.command:
         raise HTTPException(400, "name and command are required")
     disc = _discovery()
@@ -119,7 +125,8 @@ async def connect_server(req: ConnectReq, request: Request, db=Depends(get_db)):
 
 @router.post("/disconnect/{name}")
 async def disconnect_server(name: str, request: Request, db=Depends(get_db)):
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     disc = _discovery()
     if name not in disc._clients:
         raise HTTPException(404, f"MCP server '{name}' is not connected")
@@ -130,7 +137,8 @@ async def disconnect_server(name: str, request: Request, db=Depends(get_db)):
 @router.get("/tools")
 async def list_tools(request: Request, db=Depends(get_db)):
     """All tools discovered across all connected MCP servers."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return {"tools": _discovery().list_all_tools()}
 
 
@@ -138,7 +146,8 @@ async def list_tools(request: Request, db=Depends(get_db)):
 async def call_tool(req: CallToolReq, request: Request, db=Depends(get_db)):
     """Invoke a tool exposed by any connected MCP server. Tool names are
     prefixed as `mcp:<server>:<tool>`."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     disc = _discovery()
     try:
         result = await disc.call_tool(req.name, req.arguments)

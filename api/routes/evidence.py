@@ -7,6 +7,9 @@ Every execution run produces an EvidenceChain that can be walked and replayed.
 from fastapi import APIRouter, Depends, Request, Query
 
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from core.database import get_db
 from governance.evidence import EvidenceChainManager
 
@@ -20,7 +23,8 @@ async def list_chains(
     db=Depends(get_db),
 ):
     """List recent evidence chains."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     chains = EvidenceChainManager.list_recent(limit)
     return {"chains": chains, "count": len(chains)}
 
@@ -28,7 +32,8 @@ async def list_chains(
 @router.get("/chains/{chain_id}")
 async def get_chain(chain_id: str, request: Request, db=Depends(get_db)):
     """Get a single evidence chain by ID."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     chain = EvidenceChainManager.load(chain_id)
     if not chain:
         return {"error": f"Evidence chain not found: {chain_id}"}
@@ -38,7 +43,8 @@ async def get_chain(chain_id: str, request: Request, db=Depends(get_db)):
 @router.get("/chains/{chain_id}/replay")
 async def replay_chain(chain_id: str, request: Request, db=Depends(get_db)):
     """Full replay of a chain — every node in topological order."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     result = EvidenceChainManager.replay(chain_id)
     if not result:
         return {"error": f"Evidence chain not found: {chain_id}"}
@@ -48,7 +54,8 @@ async def replay_chain(chain_id: str, request: Request, db=Depends(get_db)):
 @router.get("/chains/{chain_id}/stats")
 async def chain_stats(chain_id: str, request: Request, db=Depends(get_db)):
     """Get statistics for a chain."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     chain = EvidenceChainManager.load(chain_id)
     if not chain:
         return {"error": f"Evidence chain not found: {chain_id}"}

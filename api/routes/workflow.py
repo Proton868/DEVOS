@@ -10,6 +10,9 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from core.database import get_db
 from core.sanitize import sanitize_name, sanitize_freeform, sanitize_name_list
 from brain.workflow import (
@@ -118,7 +121,8 @@ async def list_workflows(
     db=Depends(get_db),
 ):
     """List all workflows, optionally filtered."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     engine = get_workflow_engine()
     tags = [tag] if tag else None
     workflows = engine.list_all(status=status, tags=tags)
@@ -131,7 +135,8 @@ async def list_workflows(
 @router.post("")
 async def create_workflow_route(req: WorkflowCreate, request: Request, db=Depends(get_db)):
     """Create a new workflow."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
 
     workflow = create_workflow(
         name=req.name,
@@ -179,7 +184,8 @@ async def create_workflow_route(req: WorkflowCreate, request: Request, db=Depend
 @router.get("/{workflow_id}")
 async def get_workflow(workflow_id: str, request: Request, db=Depends(get_db)):
     """Get a workflow by ID."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     engine = get_workflow_engine()
     workflow = engine.load(workflow_id)
     if not workflow:
@@ -191,7 +197,8 @@ async def get_workflow(workflow_id: str, request: Request, db=Depends(get_db)):
 async def update_workflow(workflow_id: str, req: WorkflowUpdate,
                           request: Request, db=Depends(get_db)):
     """Update an existing workflow."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     engine = get_workflow_engine()
     workflow = engine.load(workflow_id)
     if not workflow:
@@ -247,7 +254,8 @@ async def update_workflow(workflow_id: str, req: WorkflowUpdate,
 @router.delete("/{workflow_id}")
 async def delete_workflow(workflow_id: str, request: Request, db=Depends(get_db)):
     """Delete a workflow."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     engine = get_workflow_engine()
     if not engine.delete(workflow_id):
         raise HTTPException(404, f"Workflow not found: {workflow_id}")
@@ -259,7 +267,8 @@ async def export_workflow(workflow_id: str, request: Request,
                           format: str = Query("yaml"),
                           db=Depends(get_db)):
     """Export a workflow as YAML or JSON."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     engine = get_workflow_engine()
     workflow = engine.load(workflow_id)
     if not workflow:
@@ -273,7 +282,8 @@ async def export_workflow(workflow_id: str, request: Request,
 @router.get("/{workflow_id}/ucip")
 async def workflow_ucip(workflow_id: str, request: Request, db=Depends(get_db)):
     """Get the UCIP ExecutionPlan for a workflow."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     engine = get_workflow_engine()
     workflow = engine.load(workflow_id)
     if not workflow:
@@ -284,7 +294,8 @@ async def workflow_ucip(workflow_id: str, request: Request, db=Depends(get_db)):
 @router.post("/import")
 async def import_workflow(req: WorkflowImport, request: Request, db=Depends(get_db)):
     """Import a workflow from YAML or JSON."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
 
     if req.format == "yaml":
         workflow = Workflow.from_yaml(req.content)

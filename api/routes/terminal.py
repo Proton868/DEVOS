@@ -96,6 +96,9 @@ async def terminal_ws(websocket: WebSocket, project_id: str):
 from pydantic import BaseModel
 from core.database import get_db
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from execution.terminal import TerminalService, DeniedCommand
 
 
@@ -107,6 +110,7 @@ class RunReq(BaseModel):
 @router.post("/{project_id}/run")
 async def run_command(project_id: str, req: RunReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     try:
         return await TerminalService(user.id, project_id).run(req.command, req.timeout)
     except DeniedCommand as e:

@@ -11,6 +11,9 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from core.database import get_db
 
 router = APIRouter(prefix="/api/research", tags=["research"])
@@ -30,7 +33,8 @@ class ResearchRequest(BaseModel):
 @router.post("/start")
 async def start_research(req: ResearchRequest, request: Request, db=Depends(get_db)):
     """Start a deep research job. Returns immediately with a job_id for polling."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
 
     job_id = str(uuid.uuid4())
     _research_jobs[job_id] = {
@@ -55,7 +59,8 @@ async def start_research(req: ResearchRequest, request: Request, db=Depends(get_
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str, request: Request, db=Depends(get_db)):
     """Poll a research job by ID."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     job = _research_jobs.get(job_id)
     if not job:
         return {"error": f"Research job not found: {job_id}"}
@@ -65,7 +70,8 @@ async def get_job(job_id: str, request: Request, db=Depends(get_db)):
 @router.get("/jobs")
 async def list_jobs(request: Request, db=Depends(get_db)):
     """List all research jobs."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return {
         "jobs": [
             {"job_id": k, "question": v["question"], "status": v["status"]}
@@ -78,7 +84,8 @@ async def list_jobs(request: Request, db=Depends(get_db)):
 @router.post("/quick")
 async def quick_research(req: ResearchRequest, request: Request, db=Depends(get_db)):
     """Run research synchronously (returns when done). Best for short queries."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
 
     from brain.research import DeepResearchAgent
     agent = DeepResearchAgent(provider=req.provider, model=req.model)

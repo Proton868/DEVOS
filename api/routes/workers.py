@@ -10,6 +10,9 @@ from typing import Optional
 
 from core.database import get_db
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from brain.agents import AGENT_LIBRARY
 from workers.runtime import WorkerRuntime, UnknownWorkerError
 
@@ -18,13 +21,15 @@ router = APIRouter()
 
 @router.get("")
 async def list_workers(request: Request, db=Depends(get_db)):
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     return {"workers": [p.to_dict() for p in AGENT_LIBRARY.values()]}
 
 
 @router.get("/{slug}")
 async def get_worker(slug: str, request: Request, db=Depends(get_db)):
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     persona = AGENT_LIBRARY.get(slug)
     if not persona:
         raise HTTPException(404, f"No worker persona '{slug}'")
@@ -40,8 +45,11 @@ class WorkerRunRequest(BaseModel):
 
 
 def _build_requester_identity(user_id: str, session_id: str, trust_level_str: str):
-    from governance.ucip import AgentIdentity, TrustLevel
-    return AgentIdentity.create(user_id, session_id, TrustLevel.from_str(trust_level_str))
+    from governance.ucip import TrustLevel
+    from governance.identity_authority import identity_from_worker
+    ctx = identity_from_worker(user_id, session_id or "worker", tenant_id=f"user:{user_id}",
+                             trust=TrustLevel.from_str(trust_level_str))
+    return ctx.to_agent_identity()
 
 
 class PlanRunRequest(BaseModel):
@@ -67,6 +75,7 @@ async def run_coordinated_plan(req: PlanRunRequest, request: Request, db=Depends
     the same shape in FastAPI/Starlette, not just declared anywhere in
     the file."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     session_id = req.session_id or str(uuid.uuid4())
     requester_identity = _build_requester_identity(user.id, session_id, req.trust_level)
 
@@ -89,6 +98,7 @@ async def run_coordinated_plan(req: PlanRunRequest, request: Request, db=Depends
 @router.post("/{slug}/run/sync")
 async def run_worker_sync(slug: str, req: WorkerRunRequest, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     if slug not in AGENT_LIBRARY:
         raise HTTPException(404, f"No worker persona '{slug}'")
     session_id = req.session_id or str(uuid.uuid4())
@@ -110,6 +120,7 @@ async def run_worker_stream(slug: str, req: WorkerRunRequest, request: Request, 
     """Streaming variant, same SSE shape as /api/loop/run, for a Worker
     instead of the raw generalist Brain."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     if slug not in AGENT_LIBRARY:
         raise HTTPException(404, f"No worker persona '{slug}'")
     session_id = req.session_id or str(uuid.uuid4())

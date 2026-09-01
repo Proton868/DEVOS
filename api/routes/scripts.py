@@ -6,6 +6,9 @@ from typing import Optional
 from sqlalchemy import select, desc
 from core.database import get_db, Script, ScriptRun, ScriptChain
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from core.sanitize import sanitize_name, sanitize_freeform, sanitize_name_list
 
 router = APIRouter()
@@ -62,12 +65,14 @@ class ScriptUpdate(BaseModel):
 @router.get("")
 async def list_scripts(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(select(Script).where(Script.owner_id==user.id).order_by(desc(Script.created_at)))
     return [{"id":s.id,"name":s.name,"language":s.language,"schedule_type":s.schedule_type,"is_active":s.is_active,"tags":s.tags,"retry_policy":s.retry_policy,"notify_on_success":s.notify_on_success,"notify_on_failure":s.notify_on_failure} for s in r.scalars().all()]
 
 @router.post("")
 async def create_script(req: ScriptCreate, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     s = Script(owner_id=user.id, **req.model_dump())
     db.add(s); await db.commit()
     if s.schedule_type in ("cron", "interval") and s.is_active:
@@ -81,6 +86,7 @@ async def create_script(req: ScriptCreate, request: Request, db=Depends(get_db))
 @router.get("/{sid}")
 async def get_script(sid: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(select(Script).where(Script.id==sid, Script.owner_id==user.id))
     s = r.scalar_one_or_none()
     if not s: raise HTTPException(404)
@@ -92,6 +98,7 @@ async def get_script(sid: str, request: Request, db=Depends(get_db)):
 @router.patch("/{sid}")
 async def update_script(sid: str, req: ScriptUpdate, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(select(Script).where(Script.id==sid, Script.owner_id==user.id))
     s = r.scalar_one_or_none()
     if not s: raise HTTPException(404)
@@ -107,6 +114,7 @@ async def update_script(sid: str, req: ScriptUpdate, request: Request, db=Depend
 @router.delete("/{sid}")
 async def delete_script(sid: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(select(Script).where(Script.id==sid, Script.owner_id==user.id))
     s = r.scalar_one_or_none()
     if not s: raise HTTPException(404)
@@ -118,6 +126,7 @@ async def delete_script(sid: str, request: Request, db=Depends(get_db)):
 @router.post("/{sid}/run")
 async def run_script(sid: str, request: Request, background_tasks: BackgroundTasks, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(select(Script).where(Script.id==sid, Script.owner_id==user.id))
     s = r.scalar_one_or_none()
     if not s: raise HTTPException(404)
@@ -151,6 +160,7 @@ async def rotate_webhook_token(sid: str, request: Request, db=Depends(get_db)):
     """Issue a new webhook token for a script, invalidating the old one --
     the standard "rotate a leaked credential" action for webhook-style auth."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(select(Script).where(Script.id==sid, Script.owner_id==user.id))
     s = r.scalar_one_or_none()
     if not s: raise HTTPException(404)
@@ -163,12 +173,14 @@ async def rotate_webhook_token(sid: str, request: Request, db=Depends(get_db)):
 @router.get("/{sid}/runs")
 async def get_runs(sid: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(select(ScriptRun).where(ScriptRun.script_id==sid).order_by(desc(ScriptRun.started_at)).limit(20))
     return [{"id":r.id,"status":r.status,"exit_code":r.exit_code,"duration_ms":r.duration_ms,"trigger":r.trigger,"started_at":r.started_at,"stdout":r.stdout,"stderr":r.stderr} for r in r.scalars().all()]
 
 @router.post("/{sid}/ai-debug")
 async def ai_debug(sid: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     sr = await db.execute(select(Script).where(Script.id==sid, Script.owner_id==user.id))
     s = sr.scalar_one_or_none()
     if not s: raise HTTPException(404)
@@ -222,6 +234,7 @@ async def _own_script_or_404(db, user_id: str, script_id: str) -> Script:
 @router.get("/chains/all")
 async def list_chains(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(
         select(ScriptChain, Script)
         .join(Script, Script.id == ScriptChain.parent_script_id)
@@ -239,6 +252,7 @@ async def list_chains(request: Request, db=Depends(get_db)):
 @router.post("/chains")
 async def create_chain(req: ChainCreate, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     await _own_script_or_404(db, user.id, req.parent_script_id)
     await _own_script_or_404(db, user.id, req.child_script_id)
     if req.condition not in ("on_success", "on_failure"):
@@ -256,6 +270,7 @@ async def create_chain(req: ChainCreate, request: Request, db=Depends(get_db)):
 @router.patch("/chains/{chain_id}")
 async def update_chain(chain_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(
         select(ScriptChain, Script)
         .join(Script, Script.id == ScriptChain.parent_script_id)
@@ -273,6 +288,7 @@ async def update_chain(chain_id: str, request: Request, db=Depends(get_db)):
 @router.delete("/chains/{chain_id}")
 async def delete_chain(chain_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     r = await db.execute(
         select(ScriptChain, Script)
         .join(Script, Script.id == ScriptChain.parent_script_id)

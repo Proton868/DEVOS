@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from core.database import get_db
 
 logger = logging.getLogger("devos.nodes")
@@ -93,6 +96,7 @@ PROMPT_BUILDERS = {
 async def ai_action(node_id: str, req: AIActionRequest, request: Request, db=Depends(get_db)):
     """Run an AI analysis action on a specific workflow node."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
 
     if req.action not in PROMPT_BUILDERS:
         raise HTTPException(400, f"Unknown action '{req.action}'. Valid: {', '.join(PROMPT_BUILDERS)}")

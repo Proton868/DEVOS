@@ -8,6 +8,9 @@ they require, and what their input/output schemas look like.
 from fastapi import APIRouter, Depends, Request, Query
 
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 from core.database import get_db
 from governance.capability_registry import (
     get_registry, CapabilityCategory, CapabilityRisk,
@@ -25,7 +28,8 @@ async def list_capabilities(
     db=Depends(get_db),
 ):
     """List all registered capabilities with optional filtering."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     registry = get_registry()
 
     caps = registry.list_all()
@@ -55,7 +59,8 @@ async def list_capabilities(
 @router.get("/categories")
 async def list_categories(request: Request, db=Depends(get_db)):
     """List capability categories with counts."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     registry = get_registry()
     return {"categories": registry.categories()}
 
@@ -63,9 +68,29 @@ async def list_categories(request: Request, db=Depends(get_db)):
 @router.get("/{slug}")
 async def get_capability(slug: str, request: Request, db=Depends(get_db)):
     """Get a single capability by slug."""
-    await get_current_user(request, db)
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     registry = get_registry()
     cap = registry.get(slug)
     if not cap:
         return {"error": f"Capability not found: {slug}"}
     return {"capability": cap.to_dict()}
+
+@router.get("/export")
+async def export_uci_manifest(request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from governance.uci_interop import export_manifest
+    return export_manifest()
+
+@router.post("/import")
+async def import_uci_manifest(request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    if not getattr(user, "is_admin", False):
+        from fastapi import HTTPException
+        raise HTTPException(403, "admin required")
+    body = await request.json()
+    from governance.uci_interop import import_manifest
+    imported = import_manifest(body, require_signature=True)
+    return {"imported": len(imported), "slugs": [c.slug for c in imported]}

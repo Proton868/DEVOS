@@ -130,6 +130,21 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 DevOS v3 starting...")
     _validate_startup_env()
     await init_db()
+    try:
+        from core.database import AsyncSessionLocal
+        from governance.durable_capabilities import load_tenant_capabilities
+        async with AsyncSessionLocal() as _db:
+            await load_tenant_capabilities(_db)
+    except Exception as _e:
+        import logging; logging.getLogger("devos").warning("durable caps: %s", _e)
+    try:
+        import os
+        if os.environ.get("DEVOS_JOB_WORKER", "1").lower() in ("1", "true", "yes"):
+            from workers.job_queue import JobWorker
+            app.state.job_worker = JobWorker()
+            app.state.job_worker_task = app.state.job_worker.start()
+    except Exception as _e:
+        import logging; logging.getLogger("devos").warning("job worker: %s", _e)
     await _create_admin()
     await _init_memory()
     await _start_scheduler()
@@ -466,3 +481,10 @@ async def spa(request: Request, full_path: str):
     if os.path.exists(index_path):
         return FileResponse(index_path)
     return HTMLResponse(content="<html><body><h1>DevOS</h1><p>Frontend not found.</p></body></html>")
+
+try:
+    from api.routes.jobs import router as jobs_router
+    app.include_router(jobs_router)
+except Exception as _jobs_err:
+    import logging
+    logging.getLogger("devos").warning("jobs router: %s", _jobs_err)

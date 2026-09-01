@@ -11,6 +11,9 @@ from pydantic import BaseModel
 from typing import Optional
 from core.database import get_db
 from api.routes.auth import get_current_user
+from governance.tenant_store import ensure_personal_tenant
+from api.deps import tenant_ctx
+
 
 router = APIRouter()
 
@@ -24,6 +27,7 @@ class LoopRequest(BaseModel):
 async def run_loop(req: LoopRequest, request: Request,
                    db=Depends(get_db)):
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     import uuid
     session_id = req.session_id or str(uuid.uuid4())
 
@@ -73,6 +77,7 @@ async def run_loop(req: LoopRequest, request: Request,
 async def run_loop_sync(req: LoopRequest, request: Request, db=Depends(get_db)):
     """Non-streaming version for simple clients."""
     user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
     import uuid
     from core.loop import BrainExecutionLoop
     loop = BrainExecutionLoop(user_id=user.id,
