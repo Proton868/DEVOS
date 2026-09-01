@@ -1,4 +1,5 @@
-> **Sync note:** Preferred local path is `./install.sh` then `python3 cli.py start`. Docker build targets use **Python 3.13** and **Node 22** for the frontend stage. Runtime UI is the prebuilt `frontend/` directory.
+> **Local default:** `./install.sh` then `python3 cli.py start` (SQLite + prebuilt UI). Governance v1 and Reliability architecture v1 are frozen; see docs/STAGING_DRILLS.md for live chaos.
+
 
 # DevOS Deployment Guide
 

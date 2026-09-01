@@ -1,45 +1,61 @@
-# DevOS — current codebase status
+# DevOS — current status
 
-_Last aligned with the tree that ships install.sh + prebuilt `frontend/` + Python 3.13 / Node 22 tooling targets._
+Aligned with **Governance v1 + Reliability v1** freeze (`main` tip including chaos harness).
 
-## Install & packaging
+## Install (self-contained)
 
-- [x] Single-step `./install.sh` (Python deps + `.env` + prebuilt UI check)
-- [x] Prebuilt SPA in `frontend/` (no Node required to run)
-- [x] Docker multi-stage: `python:3.13-slim`, frontend build `node:22-slim`
-- [x] CLI: `python3 cli.py start|build|doctor|…`
+| Item | Status |
+|------|--------|
+| `./install.sh` | One step: pip + `.env` + JWT + frontend check |
+| Prebuilt `frontend/` | No Node required to run |
+| Default DB | SQLite (`./data/devos.db`) |
+| Docker | Optional (`docker compose up --build`) |
+| Redis / Postgres | Optional (multi-node / enterprise) |
 
-## Backend
+```bash
+./install.sh && python3 cli.py start   # → http://localhost:8000
+```
 
-- [x] FastAPI app (`app.py`) serves `/api/*` and SPA fallback
-- [x] Auth: local / supabase / dual
-- [x] Brain router + multi-provider LLM config
-- [x] Workflow engine + `/api/workflows` CRUD / execute / runs
-- [x] Scripts / PyRunner routes (`/api/scripts`)
-- [x] Research routes (Hermes-oriented research module)
-- [x] Ponytail cognitive pipeline routes
-- [x] Workers, capabilities, evidence, governance, memory, terminal, files, VCS
-- [x] MCP, marketplace, composer endpoints present
+## Backend capabilities
+
+| Area | Status |
+|------|--------|
+| FastAPI (`app.py`) + CLI | ✓ |
+| Auth local / supabase / dual | ✓ |
+| Brain multi-provider LLM | ✓ |
+| UCIP gateway + capability registry | ✓ (includes `ucip:package.install`) |
+| Workers + earned autonomy (human-gated promotion) | ✓ |
+| Execution pipeline (PathClass, jobs, evidence) | ✓ |
+| Sandbox isolation + fail-closed trust | ✓ |
+| Scripts (durable job + evidence parity) | ✓ |
+| Marketplace install (governed) | ✓ |
+| Autoresearch (job + authority envelope) | ✓ |
+| Job queue: idempotency, leases, recovery | ✓ |
+| Side effects: SUCCEEDED / FAILED / UNKNOWN | ✓ |
+| Secret scrubbing on durable payloads | ✓ |
+| Chaos pure-logic drills | ✓ `scripts/run_chaos_drills.py` |
+| Production checklist gate | ✓ `scripts/production_checklist.py` |
 
 ## Frontend
 
-- [x] React app under `frontend-src/`; production assets under `frontend/`
-- [x] Automation Hub: Graph + Matrix toggle
-- [x] Layout: sidebar workspaces + right DevOS IDE dock
-- [x] First-run onboarding wizard (`localStorage` key `devos_onboarded`)
-- [x] Settings, chat, terminal, workers panels
+| Area | Status |
+|------|--------|
+| Prebuilt SPA in `frontend/` | ✓ |
+| Automation Hub (Graph + Matrix) | ✓ |
+| IDE dock, agents, files, terminal | ✓ |
+| Onboarding wizard | ✓ |
 
 ## Honest limits
 
-- Live LLM quality depends on configured provider keys / Ollama; not proven offline in CI without keys.
-- Graph canvas may show demo topology when no saved workflows exist; Matrix prefers live `/api/scripts`.
-- Full visual parity with design mocks is iterative; core routes and install path are the source of truth.
-- Historical plan docs under `plans/` and long `record.md` may mention older names (e.g. Odysseus) or stage checklists that lag this snapshot — prefer this file + README for “what runs today.”
+- LLM quality depends on Ollama or cloud keys (not exercised in CI without keys).
+- Pure-logic chaos drills **do not** replace live Postgres/Redis/process-kill staging.
+- Multi-node quotas need Redis when `DEVOS_MULTI_NODE=true`.
+- Plan docs under `plans/` may lag; this file + README are authoritative for “what runs.”
 
-## Operator checklist
+## Operator path
 
 1. `./install.sh`
-2. Set provider keys in `.env` if not using local Ollama only
+2. Optional: start Ollama or set a provider key in `.env`
 3. `python3 cli.py start`
-4. Open http://localhost:8000 — complete or skip setup wizard
-5. `python3 cli.py doctor` if something fails
+4. Open http://localhost:8000
+5. `python3 cli.py doctor` if issues

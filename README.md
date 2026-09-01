@@ -1,21 +1,12 @@
 # DevOS — Agency Operating System
 
-Production-oriented AI OS for autonomous and human-in-the-loop work. Goals route through a multi-provider Brain, specialized workers, sandboxed execution, and UCIP governance (identity, RBAC, audit, approvals).
+Self-contained AI operating system for human-in-the-loop and autonomous work.
+
+Goals go through a multi-provider **Brain**, **Workers**, **sandboxed execution**, and **UCIP governance** (identity, capabilities, evidence, human-approved autonomy). Defaults use **SQLite** and a **prebuilt web UI** — no Node, Docker, Redis, or cloud DB required to start.
 
 ---
 
-## Supported runtimes
-
-| Runtime | Minimum | Recommended / Docker / CI |
-|---------|---------|---------------------------|
-| **Python** | 3.11 | **3.13** (3.12 fine) |
-| **Node** (UI *rebuild* only) | 20 | **22 LTS** |
-
-**Running the app does not require Node** — releases ship a prebuilt `frontend/` tree.
-
----
-
-## Install (one step)
+## Quick start (2 commands)
 
 ```bash
 chmod +x install.sh && ./install.sh
@@ -24,115 +15,178 @@ python3 cli.py start
 
 Open **http://localhost:8000**
 
-- First launch shows a **setup wizard** (Skip / Finish; “Don’t show again” by default).
-- Replay: Settings → UI → Replay setup wizard (when available), or clear `localStorage.devos_onboarded`.
+That’s it. `install.sh` installs Python deps, creates `.env` with a secure `JWT_SECRET`, and verifies the prebuilt frontend.
 
-Optional Docker:
-
-```bash
-docker compose --profile micro up --build
-# Images use python:3.13-slim; frontend build stage uses node:22-slim
-```
-
-Manual alternative:
-
-```bash
-cp .env.example .env   # set JWT_SECRET for non-DEBUG
-pip install -r requirements-lite.txt   # or requirements.txt
-python3 cli.py start
-```
+| Check | Command |
+|-------|---------|
+| Health | `python3 cli.py doctor` |
+| API health | http://localhost:8000/api/health |
+| Chaos drills (optional) | `python scripts/run_chaos_drills.py` |
 
 ---
 
-## What ships in this tree
+## Requirements
 
-| Area | Path | Role |
-|------|------|------|
-| App entry | `app.py`, `cli.py` | FastAPI app + CLI (`start`, `build`, `doctor`, …) |
-| Brain | `brain/` | LLM router, research, workflow definitions, builder |
-| Cognitive | `cognitive/` | Intent, decomposer, reflector, Ponytail pipeline |
-| Workers | `workers/` | Persona runtime / capability dispatch |
-| Execution | `execution/` | Sandboxed code, files, terminal helpers |
-| Governance | `governance/` | UCIP, RBAC, audit, billing, secrets |
-| Memory | `memory/` | Episodic / semantic / working stores |
-| API | `api/routes/` | Auth, chat, scripts, workflow, research, workers, … |
-| UI source | `frontend-src/` | React (Midnight Obsidian + Neon Mint) |
-| UI **runtime** | `frontend/` | Prebuilt SPA served at `/` and `/static` |
-| Install | `install.sh` | Single-step Python install + UI check |
+| Need | Minimum |
+|------|---------|
+| **Python** | **3.11+** (3.12 / 3.13 recommended) |
+| **Node** | Not required to run (only to rebuild UI) |
+| **Docker** | Optional |
+| **Redis / Postgres** | Optional (multi-node / enterprise) |
 
-### Main API surface (prefix `/api`)
-
-Auth, chat, loop, scripts (PyRunner), memory, search, models, health, governance, files, vcs, terminal, workers, secrets, capabilities, evidence, research, ponytail, workflows, enterprise, mcp, marketplace, composer, user settings, nodes.
-
-### Frontend highlights
-
-- **Flow / Automation Hub** — Graph (workflow canvas) + PyRunner Matrix  
-- **DevOS IDE** (right dock) — editor + AI chat  
-- **Agents, Files, Terminal, Git** — left-rail workspaces  
-- **Onboarding wizard** — first-run tour of these surfaces  
+LLM: local **Ollama** (default) or any configured cloud provider key in `.env`.
 
 ---
 
-## Authentication
+## What you get
 
-| `AUTH_MODE` | Behavior |
-|-------------|----------|
-| `local` | bcrypt + HS256 JWT |
-| `supabase` | Supabase tokens |
-| `dual` (default) | Local JWT, then Supabase |
+### Governance (v1 — frozen)
 
-Bootstrap admin is printed on first boot when using local/dual mode. See `core/config.py` and `api/routes/auth.py`.
+```
+Identity → UCI/UCIP capability → PathClass → Isolation
+         → ExecutionJob (durable) → Evidence → Learning / trust
+```
+
+- Workers earn autonomy via competency; **humans approve** promotions  
+- Dangerous caps stay human-gated (`shell`, secrets, financial, etc.)  
+- Fail-closed trust load and durable job creation  
+
+### Reliability (v1 — frozen)
+
+- Idempotent jobs, lease recovery, secret scrubbing  
+- External side effects: **SUCCEEDED / FAILED / UNKNOWN** (no blind retry on UNKNOWN)  
+- Chaos pure-logic drills: `python scripts/run_chaos_drills.py`  
+- Staging matrix: [docs/STAGING_DRILLS.md](docs/STAGING_DRILLS.md)  
+
+### Product surfaces
+
+| Area | Role |
+|------|------|
+| Brain + Loop | Plan/execute goals under UCIP |
+| Workers | Specialized personas + earned autonomy |
+| Scripts / Flow | Sandboxed or human-terminal runs |
+| Memory / Evidence | Durable audit and learning |
+| Terminal / Files / Git | IDE-style tools in the UI |
+
+---
+
+## Repository layout
+
+```
+app.py, cli.py          Entry points
+api/routes/             HTTP API
+brain/                  LLM router & research
+cognitive/              Decomposer, coordinator, Ponytail
+workers/                WorkerRuntime + job queue
+execution/              Sandbox, scripts, search, terminal
+governance/             UCIP, identity, reliability, side effects
+chaos/                  Pure-logic chaos drills
+memory/                 Memory stores
+frontend/               Prebuilt SPA (served as-is)
+frontend-src/           React sources (optional rebuild)
+scripts/                install helpers, migrate, checklist, chaos
+docs/                   Status, staging drills, hardening
+```
 
 ---
 
 ## Configuration
 
-Copy `.env.example` → `.env`. Important keys:
+`./install.sh` creates `.env` from [`.env.example`](.env.example).
 
-- `JWT_SECRET` — required when `DEBUG=false`
-- `DEFAULT_PROVIDER` — e.g. `ollama`, `openrouter`, `openai`
-- Provider keys: `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …
-- `OLLAMA_HOST` — default `http://127.0.0.1:11434`
-- `ENABLE_API_DOCS` — OpenAPI UI when true
+| Variable | Purpose |
+|----------|---------|
+| `JWT_SECRET` | Auth + secrets vault seed (auto-generated on install) |
+| `DEFAULT_PROVIDER` | `ollama` (default), `openrouter`, `openai`, … |
+| `OLLAMA_HOST` | Default `http://127.0.0.1:11434` |
+| `DATABASE_URL` | Default SQLite under `./data/` |
+| `AUTH_MODE` | `local` / `supabase` / `dual` |
+| `REDIS_URL` | Optional multi-node queue/quotas |
+| `DEVOS_MULTI_NODE` | `true` → Redis required for expensive quotas |
+
+---
+
+## Other ways to run
+
+**Manual pip**
 
 ```bash
-python3 cli.py doctor    # environment check
+cp .env.example .env   # then set JWT_SECRET or run install.sh
+pip install -r requirements-lite.txt   # or requirements.txt
+python3 cli.py start
+```
+
+**Docker**
+
+```bash
+docker compose up --build
+# http://localhost:8000
+```
+
+Profiles (`micro` / `standard` / `enterprise`): see [DEPLOYMENT.md](DEPLOYMENT.md).
+
+**Rebuild UI** (optional)
+
+```bash
+cd frontend-src && npm install && npm run build
+cd .. && python3 cli.py build
 ```
 
 ---
 
-## Developing the UI
-
-Not required to run the product:
+## CLI
 
 ```bash
-cd frontend-src
-npm install          # Node 20+ / 22 recommended
-npm run build
-cd .. && python3 cli.py build   # sync into frontend/
+python3 cli.py start      # API + UI on :8000
+python3 cli.py doctor     # environment check
+python3 cli.py version
+python3 cli.py audit      # UCIP audit tail
 ```
 
 ---
 
-## Research naming
+## Tests & quality gates
 
-Deep multi-step research in this codebase is the **Hermes-style** research path (`brain/research.py` and related routes). Older “Odysseus” wording in historical notes refers to prior naming; runtime and current docs use **Hermes / research** APIs.
+```bash
+# Core unit tests (no live LLM required)
+python -m pytest tests/test_governance_freeze.py tests/test_reliability.py \
+  tests/test_failure_drills.py tests/test_chaos_harness.py -q
+
+# Chaos pure-logic matrix + report
+python scripts/run_chaos_drills.py --out data/chaos/latest_report.json
+
+# Deploy checklist (needs DB; set JWT_SECRET)
+python scripts/production_checklist.py
+```
 
 ---
 
-## Docs map
+## Documentation
 
-| Doc | Purpose |
-|-----|---------|
-| [README.md](README.md) | This file — install & overview |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Deploy profiles, env, reverse proxy |
-| [PRODUCTION_PLAN.md](PRODUCTION_PLAN.md) | Staged production roadmap & status |
-| [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) | Snapshot of what is implemented now |
+| Doc | Contents |
+|-----|----------|
+| **[README.md](README.md)** | Install & overview (this file) |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Docker profiles, env, production deploy |
+| [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) | What is implemented now |
+| [docs/STAGING_DRILLS.md](docs/STAGING_DRILLS.md) | Production readiness / chaos matrix |
+| [docs/HARDENING.md](docs/HARDENING.md) | Security hardening notes |
+| [PRODUCTION_PLAN.md](PRODUCTION_PLAN.md) | Longer production roadmap |
 | [plans/AGENCY_OS_MASTER_ARCHITECTURE.md](plans/AGENCY_OS_MASTER_ARCHITECTURE.md) | Architecture reference |
-| [plans/GAP_ANALYSIS.md](plans/GAP_ANALYSIS.md) | Historical gap notes (may lag code) |
+
+Historical plans under `plans/` and `record.md` may lag the code — prefer **README + CURRENT_STATUS** for “what runs today.”
 
 ---
 
-## License / project
+## Design freeze
 
-See repository license file if present. Upstream development tracked against the Agency OS organ map (cognitive, workers, memory, governance, workflow, packaging).
+| Layer | Status |
+|-------|--------|
+| Governance v1 | Frozen |
+| Reliability architecture v1 | Frozen |
+| Next focus | Live staging drills on real Postgres/Redis when scaling out |
+
+---
+
+## License
+
+See repository license if present.
