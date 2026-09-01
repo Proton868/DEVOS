@@ -108,7 +108,8 @@ async def run_coordinated_plan(req: PlanRunRequest, request: Request, db=Depends
     planning_brain = BrainLLM(req.provider, req.model, user_id=user.id)
     subtasks = await GoalDecomposer().decompose(req.goal, planning_brain)
     results = await Coordinator().run_plan(
-        subtasks, requester_identity, provider=req.provider, model=req.model
+        subtasks, requester_identity, provider=req.provider, model=req.model,
+        tenant_id=tenant.id, owner_id=user.id,
     )
     return {
         "goal": req.goal,

@@ -47,7 +47,8 @@ class SubtaskResult:
 
 class Coordinator:
     async def run_plan(self, subtasks: list, requester_identity,
-                       provider=None, model=None, on_subtask_done=None) -> list[SubtaskResult]:
+                       provider=None, model=None, on_subtask_done=None,
+                       tenant_id=None, owner_id=None) -> list[SubtaskResult]:
         """subtasks: cognitive.decomposer.Subtask list (already validated —
         no cycles, no dangling deps — by GoalDecomposer itself).
         Runs subtasks in dependency-respecting waves: everything with no
@@ -80,9 +81,12 @@ class Coordinator:
                 persona = get_best_agent_for_goal(subtask.description)
                 try:
                     if persona:
+                        if not tenant_id:
+                            raise RuntimeError("coordinator requires tenant_id for WorkerRuntime (fail-closed)")
                         state, delegated = await WorkerRuntime().run(
                             persona.slug, subtask.description, requester_identity,
                             provider=provider, model=model,
+                            tenant_id=tenant_id, owner_id=owner_id or requester_identity.user_id,
                         )
                         result = SubtaskResult(subtask.id, persona.slug,
                                                success=(state.decision == "complete"),
@@ -92,11 +96,39 @@ class Coordinator:
                         # No persona is a good fit — fall back to the
                         # generalist Brain under the requester's own
                         # identity rather than forcing a mismatched Worker.
+                        # Generalist fallback still under UCIP via BrainExecutionLoop
+                        from governance.execution_pipeline import begin_execution_job, complete_execution_job, record_path_evidence
+                        job_id = None
+                        try:
+                            if tenant_id:
+                                job_id = await begin_execution_job(
+                                    owner_id=owner_id or requester_identity.user_id,
+                                    tenant_id=tenant_id,
+                                    job_type="coordinator_generalist",
+                                    payload={"subtask": subtask.description[:500]},
+                                    actor_id=requester_identity.agent_id,
+                                )
+                        except Exception:
+                            pass
                         loop = BrainExecutionLoop(
                             user_id=requester_identity.user_id, session_id=requester_identity.session_id,
                             provider=provider, model=model, agent_identity=requester_identity,
                         )
                         state = await loop.run(subtask.description)
+                        if job_id:
+                            await complete_execution_job(
+                                job_id,
+                                status="succeeded" if state.decision == "complete" else "failed",
+                            )
+                        if tenant_id:
+                            await record_path_evidence(
+                                tenant_id=tenant_id,
+                                owner_id=owner_id or requester_identity.user_id,
+                                goal=subtask.description,
+                                path="coordinator_generalist",
+                                status="success" if state.decision == "complete" else "failed",
+                                execution_job_id=job_id,
+                            )
                         result = SubtaskResult(subtask.id, worker_slug="generalist-brain",
                                                success=(state.decision == "complete"),
                                                output=state.final_answer,

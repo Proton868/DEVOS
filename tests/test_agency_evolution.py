@@ -1,5 +1,5 @@
 from governance.agency_evolution import (
-    evaluate_execution, filter_autonomous_caps, ALWAYS_HUMAN_GATED, SUPERVISED_CAPS,
+    evaluate_execution, filter_autonomous_caps, ALWAYS_HUMAN_GATED, BASELINE_CAPS,
     CAP_AUTONOMY_MIN_SAMPLES, CAP_AUTONOMY_THRESHOLD, COMPETENCY_PRIOR,
     _cap_earned, AutonomyProfile,
 )
@@ -30,7 +30,7 @@ def test_supervised_only_low_risk_caps():
     assert "ucip:memory.read" in f
     assert "ucip:execution.python" not in f
     assert "ucip:system.shell" not in f
-    assert f <= SUPERVISED_CAPS | {"ucip:general"}
+    assert f <= BASELINE_CAPS | {"ucip:general"}
 
 def test_no_row_means_supervised_only():
     caps = {"ucip:memory.read", "ucip:execution.python"}

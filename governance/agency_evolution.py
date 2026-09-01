@@ -43,13 +43,17 @@ HIGH_RISK_CAPS = {
     "ucip:vcs.write",
 }
 
-# Supervised workers may only use these (read-ish / low risk) until promoted
-SUPERVISED_CAPS = {
+# Low-risk baseline capabilities: safe to run at the worker's global autonomy
+# level without separate per-cap proof. Name is intentional — NOT "must be
+# supervised"; these are baseline-safe under the current autonomy floor.
+BASELINE_CAPS = {
     "ucip:memory.read",
     "ucip:search.web",
     "ucip:filesystem.read",
     "ucip:general",
 }
+# Back-compat alias (deprecated)
+SUPERVISED_CAPS = BASELINE_CAPS
 
 CAP_AUTONOMY_THRESHOLD = 0.80
 CAP_AUTONOMY_MIN_SAMPLES = 25
@@ -110,16 +114,15 @@ def capability_autonomy_level(row, capability: str) -> str:
     global_auto = _effective_autonomy(row)
     if global_auto == AutonomyProfile.SUPERVISED.value:
         return AutonomyProfile.SUPERVISED.value
-    if capability in SUPERVISED_CAPS:
-        # low-risk: at least global level
+    if capability in BASELINE_CAPS:
+        # Baseline-safe caps track the worker's global autonomy floor
         return global_auto
     entry = {}
     comp = row.competency if isinstance(getattr(row, "competency", None), dict) else {}
     if isinstance(comp.get(capability), dict):
         entry = comp[capability]
-    # explicit override on entry if human set it
-    if entry.get("autonomy_override"):
-        return str(entry["autonomy_override"])
+    # Note: competency["x"]["autonomy_level"] is DERIVED observability only —
+    # never authoritative. Authority is recomputed here each time.
     high = capability in HIGH_RISK_CAPS
     if _cap_earned(entry, high_risk=high, bounded=False):
         return global_auto if global_auto in (
@@ -553,12 +556,14 @@ async def record_outcome(
     if evaluation.unauthorized_attempt:
         row.unauthorized_attempts = (row.unauthorized_attempts or 0) + 1
     _update_competency(row, evaluation)
-    # Stamp per-capability autonomy labels for observability / future gates
+    # Stamp derived autonomy_level for observability ONLY — not an authority source.
+    # Callers must use capability_autonomy_level(row, cap), never entry["autonomy_level"].
     comp = dict(row.competency or {})
     for cap, entry in list(comp.items()):
         if isinstance(entry, dict):
             entry = dict(entry)
             entry["autonomy_level"] = capability_autonomy_level(row, cap)
+            entry["autonomy_level_derived"] = True
             comp[cap] = entry
     row.competency = comp
 
@@ -665,15 +670,15 @@ def _cap_earned(entry: dict, *, high_risk: bool = False, bounded: bool = False) 
 def filter_autonomous_caps(caps: set[str], row=None) -> set[str]:
     """Authority filter — fail safe + per-capability autonomy.
 
-    SUPERVISED worker: only SUPERVISED_CAPS.
+    SUPERVISED worker: only BASELINE_CAPS.
     Otherwise each capability is gated by capability_autonomy_level():
-      SUPERVISED cap → only if in SUPERVISED_CAPS
+      SUPERVISED cap → only if in BASELINE_CAPS
       BOUNDED cap → earned bounded threshold
       AUTONOMOUS+ → earned autonomous threshold
     ALWAYS_HUMAN_GATED never included.
     """
     if row is None:
-        return set(caps) & SUPERVISED_CAPS
+        return set(caps) & BASELINE_CAPS
 
     out: set[str] = set()
     for c in caps:
@@ -681,13 +686,13 @@ def filter_autonomous_caps(caps: set[str], row=None) -> set[str]:
             continue
         level = capability_autonomy_level(row, c)
         if level == AutonomyProfile.SUPERVISED.value:
-            if c in SUPERVISED_CAPS:
+            if c in BASELINE_CAPS:
                 out.add(c)
         elif level == AutonomyProfile.BOUNDED.value:
             entry = (row.competency or {}).get(c) if isinstance(row.competency, dict) else {}
             if not isinstance(entry, dict):
                 entry = {}
-            if c in SUPERVISED_CAPS or _cap_earned(entry, high_risk=c in HIGH_RISK_CAPS, bounded=True):
+            if c in BASELINE_CAPS or _cap_earned(entry, high_risk=c in HIGH_RISK_CAPS, bounded=True):
                 out.add(c)
         else:
             # AUTONOMOUS / FULL for this capability
@@ -696,7 +701,7 @@ def filter_autonomous_caps(caps: set[str], row=None) -> set[str]:
                 entry = {}
             if _cap_earned(entry, high_risk=c in HIGH_RISK_CAPS, bounded=False):
                 out.add(c)
-            elif c in SUPERVISED_CAPS:
+            elif c in BASELINE_CAPS:
                 out.add(c)
     return out
 

@@ -98,6 +98,31 @@ async def run_and_record(script_id: str, trigger: str = "manual", _depth: int = 
                                         env_vars=None)
         if result["status"] == "success":
             break
+
+    # Durable evidence for non-HUMAN_TERMINAL script paths
+    if use_sandbox:
+        try:
+            from governance.execution_pipeline import record_path_evidence, begin_execution_job, complete_execution_job
+            from core.database import AsyncSessionLocal as _ASL
+            from core.database import User
+            from sqlalchemy import select as _sel
+            async with _ASL() as _db:
+                _u = (await _db.execute(_sel(User).where(User.id == s.owner_id))).scalar_one_or_none()
+                _tid = getattr(_u, "default_tenant_id", None) if _u else None
+            if _tid:
+                _jid = await begin_execution_job(
+                    owner_id=s.owner_id, tenant_id=_tid, job_type="script_run",
+                    payload={"script_id": script_id, "trigger": trigger},
+                )
+                await complete_execution_job(_jid, status=result.get("status") or "failed", result=result)
+                await record_path_evidence(
+                    tenant_id=_tid, owner_id=s.owner_id, goal=f"script:{s.name}",
+                    path="script_runner", status=result.get("status") or "failed",
+                    body={"script_id": script_id, "trigger": trigger, "exit_code": result.get("exit_code")},
+                    execution_job_id=_jid,
+                )
+        except Exception as _ev_err:
+            logger.warning("script evidence skipped: %s", _ev_err)
         logger.info(f"Script {s.id} ({s.name}) attempt {attempt}/{attempts} failed")
 
     async with AsyncSessionLocal() as db2:
