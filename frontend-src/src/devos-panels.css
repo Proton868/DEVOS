@@ -1,0 +1,852 @@
+/**
+ * DevOS AI Operating System — Panel System Styles
+ * All styles use CSS custom properties from the theme engine.
+ * This is the visual foundation for the dockable panel system.
+ */
+
+/* ══════════════════════════════════════════════════════════
+   Root Theme Variables (defaults — overridden by themeStore)
+   ══════════════════════════════════════════════════════════ */
+:root {
+  /* Colors (overridden by active theme) */
+  --bg-0: #0d1117;
+  --bg-1: #161b22;
+  --bg-2: #1c2128;
+  --bg-3: #21262d;
+  --bg-4: #30363d;
+  --border: #30363d;
+  --text-0: #e6edf3;
+  --text-1: #c9d1d9;
+  --text-2: #8b949e;
+  --text-3: #6e7681;
+  --accent: #58a6ff;
+  --accent-rgb: 88, 166, 255;
+  --accent-2: #1f6feb;
+  --green: #3fb950;
+  --green-rgb: 63, 185, 80;
+  --red: #f85149;
+  --red-rgb: 248, 81, 73;
+  --yellow: #d29922;
+  --purple: #bc8cff;
+
+  /* Theme flags */
+  --theme-glass: 0;
+  --theme-dark: 1;
+
+  /* Customization tokens */
+  --radius-sm: 4px;
+  --radius-base: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --glow-intensity: 0.4;
+  --blur: 12px;
+  --border-width: 1px;
+  --space-unit: 6px;
+  --control-h: 32px;
+  --control-h-lg: 38px;
+  --pad: 12px;
+  --pad-lg: 16px;
+  --font-size: 13px;
+  --line-height: 1.5;
+  --anim-speed: 1;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.2), 0 2px 4px rgba(0,0,0,0.1);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.3), 0 4px 8px rgba(0,0,0,0.15);
+  --shadow-glow: 0 0 20px rgba(var(--accent-rgb), var(--glow-intensity));
+
+  /* Motion */
+  --motion-fast: calc(150ms / var(--anim-speed));
+  --motion-normal: calc(240ms / var(--anim-speed));
+  --motion-slow: calc(360ms / var(--anim-speed));
+  --ease-standard: cubic-bezier(0.4, 0.0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ══════════════════════════════════════════════════════════
+   App Shell
+   ══════════════════════════════════════════════════════════ */
+.devos-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg-0);
+  color: var(--text-0);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: var(--font-size);
+  line-height: var(--line-height);
+}
+
+.devos-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.devos-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ══════════════════════════════════════════════════════════
+   Mission Bar (Top Bar)
+   ══════════════════════════════════════════════════════════ */
+.devos-mission-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  background: var(--bg-1);
+  border-bottom: var(--border-width) solid var(--border);
+  user-select: none;
+  flex-shrink: 0;
+  gap: 12px;
+  height: 40px;
+}
+
+.devos-mission-left,
+.devos-mission-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.devos-mission-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-base);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--ease-standard);
+  background: transparent;
+  border: none;
+  font-size: var(--font-size);
+}
+.devos-mission-btn:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+.devos-workspace-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-base);
+  background: var(--bg-3);
+  color: var(--text-1);
+  cursor: pointer;
+  border: var(--border-width) solid var(--border);
+  transition: all var(--motion-fast) var(--ease-standard);
+}
+.devos-workspace-btn:hover {
+  background: var(--bg-4);
+}
+.devos-workspace-name {
+  font-weight: 600;
+  font-size: var(--font-size);
+}
+
+/* Command palette trigger */
+.devos-palette-trigger {
+  flex: 1;
+  max-width: 480px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: var(--bg-2);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--ease-standard);
+}
+.devos-palette-trigger:hover {
+  background: var(--bg-3);
+  border-color: var(--accent);
+}
+.devos-palette-trigger-text {
+  flex: 1;
+  font-size: var(--font-size);
+}
+.devos-kbd {
+  background: var(--bg-4);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+}
+
+/* Status indicators */
+.devos-status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-3);
+  border-radius: var(--radius-base);
+  color: var(--text-2);
+  font-size: 11px;
+}
+.devos-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.devos-status-dot.online {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(var(--green-rgb), 0.5);
+}
+
+.devos-notif-btn {
+  position: relative;
+}
+.devos-notif-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(var(--accent-rgb), 0.6);
+}
+
+.devos-save-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--green);
+  font-size: 11px;
+  padding: 4px 8px;
+  animation: devos-fade-in var(--motion-fast) var(--ease-standard);
+}
+
+/* ══════════════════════════════════════════════════════════
+   Dropdowns
+   ══════════════════════════════════════════════════════════ */
+.devos-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  background: var(--bg-2);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  min-width: 200px;
+  z-index: 300;
+  animation: devos-scale-in var(--motion-fast) var(--ease-spring);
+}
+.devos-workspace-menu,
+.devos-preset-menu {
+  min-width: 240px;
+}
+.devos-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: var(--radius-base);
+  color: var(--text-1);
+  cursor: pointer;
+  transition: background var(--motion-fast);
+  background: transparent;
+  border: none;
+  font-size: var(--font-size);
+  text-align: left;
+}
+.devos-dropdown-item:hover {
+  background: var(--bg-3);
+}
+.devos-dropdown-item.active {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.1);
+}
+.devos-dropdown-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+.devos-preset-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.devos-preset-item-name {
+  font-weight: 500;
+}
+.devos-preset-item-desc {
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+/* ══════════════════════════════════════════════════════════
+   Three-State Sidebar
+   ══════════════════════════════════════════════════════════ */
+.devos-sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1);
+  border-right: var(--border-width) solid var(--border);
+  flex-shrink: 0;
+  transition: width var(--motion-normal) var(--ease-standard);
+  position: relative;
+  z-index: 20;
+}
+
+.devos-sidebar-expanded {
+  width: 240px;
+}
+
+.devos-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  height: 48px;
+  flex-shrink: 0;
+}
+.devos-sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.devos-sidebar-logo-text {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+}
+.devos-sidebar-toggle,
+.devos-sidebar-toggle-compact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-base);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all var(--motion-fast);
+  background: transparent;
+  border: none;
+}
+.devos-sidebar-toggle:hover,
+.devos-sidebar-toggle-compact:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+.devos-sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 8px;
+}
+.devos-sidebar-search-icon {
+  color: var(--text-3);
+}
+.devos-sidebar-search-input {
+  flex: 1;
+  background: var(--bg-2);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-base);
+  padding: 5px 8px;
+  color: var(--text-1);
+  font-size: 12px;
+  outline: none;
+}
+.devos-sidebar-search-input:focus {
+  border-color: var(--accent);
+}
+
+.devos-sidebar-items {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px;
+}
+.devos-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: var(--radius-base);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--ease-standard);
+  background: transparent;
+  border: none;
+  font-size: var(--font-size);
+  text-align: left;
+}
+.devos-sidebar-item:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+.devos-sidebar-item.active {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.1);
+}
+.devos-sidebar-item-label {
+  flex: 1;
+}
+.devos-sidebar-badge {
+  background: var(--accent);
+  color: var(--bg-0);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.devos-sidebar-footer {
+  padding: 8px;
+  border-top: var(--border-width) solid var(--border);
+}
+
+/* Compact sidebar */
+.devos-sidebar-compact {
+  width: 56px;
+  align-items: center;
+  padding: 8px 0;
+}
+.devos-sidebar-items-compact {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+}
+.devos-sidebar-item-compact {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--ease-standard);
+  background: transparent;
+  border: none;
+}
+.devos-sidebar-item-compact:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+.devos-sidebar-item-compact.active {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.1);
+}
+.devos-sidebar-badge-compact {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg-0);
+  font-size: 9px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.devos-sidebar-tooltip {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-4);
+  color: var(--text-0);
+  padding: 4px 10px;
+  border-radius: var(--radius-base);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 50;
+  box-shadow: var(--shadow-md);
+}
+
+/* Hidden state strip */
+.devos-sidebar-hidden-strip {
+  width: 4px;
+  height: 100%;
+  background: transparent;
+  flex-shrink: 0;
+  position: relative;
+}
+.devos-sidebar-hover-reveal {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  z-index: 25;
+  box-shadow: var(--shadow-lg);
+  animation: devos-slide-right var(--motion-normal) var(--ease-standard);
+}
+
+/* ══════════════════════════════════════════════════════════
+   Panel Container & Dock Zones
+   ══════════════════════════════════════════════════════════ */
+.devos-panel-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+  background: var(--bg-0);
+}
+
+.devos-dock-row {
+  flex-shrink: 0;
+}
+.devos-dock-top {
+  border-bottom: var(--border-width) solid var(--border);
+}
+.devos-dock-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.devos-dock-zone {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+}
+.devos-dock-zone.drop-active {
+  background: rgba(var(--accent-rgb), 0.05);
+}
+.devos-dock-indicator {
+  position: absolute;
+  inset: 4px;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-md);
+  pointer-events: none;
+  z-index: 10;
+  animation: devos-fade-in var(--motion-fast);
+}
+.devos-dock-indicator-inner {
+  position: absolute;
+  inset: 8px;
+  background: rgba(var(--accent-rgb), 0.05);
+  border-radius: var(--radius-base);
+}
+
+.devos-floating-dock-zone {
+  height: 100%;
+  position: relative;
+}
+.devos-floating-dock-zone.active {
+  /* captures drops */
+}
+
+/* Resize handles */
+.devos-resize-handle {
+  width: 4px;
+  background: transparent;
+  cursor: col-resize;
+  transition: background var(--motion-fast);
+  flex-shrink: 0;
+  position: relative;
+}
+.devos-resize-handle:hover,
+.devos-resize-handle[data-resize-handle-active] {
+  background: var(--accent);
+}
+.devos-resize-handle.horizontal {
+  height: 4px;
+  width: 100%;
+  cursor: row-resize;
+}
+
+/* ══════════════════════════════════════════════════════════
+   Panel Component
+   ══════════════════════════════════════════════════════════ */
+.devos-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-1);
+  border: var(--border-width) solid var(--border);
+  overflow: hidden;
+}
+
+.devos-panel-docked {
+  border: none;
+  border-right: var(--border-width) solid var(--border);
+}
+.devos-panel-docked.active {
+  background: var(--bg-1);
+}
+
+.devos-panel-floating {
+  position: absolute;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  animation: devos-scale-in var(--motion-normal) var(--ease-spring);
+}
+.devos-panel-floating.dragging {
+  opacity: 0.8;
+  box-shadow: var(--shadow-lg), var(--shadow-glow);
+}
+
+.devos-panel-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  border-radius: 0;
+}
+
+.devos-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 8px 0 12px;
+  background: var(--bg-2);
+  border-bottom: var(--border-width) solid var(--border);
+  user-select: none;
+  flex-shrink: 0;
+  cursor: grab;
+}
+.devos-panel-floating .devos-panel-header {
+  cursor: move;
+}
+.devos-panel-header.active {
+  background: var(--bg-3);
+}
+
+.devos-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.devos-panel-badge {
+  background: var(--accent);
+  color: var(--bg-0);
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 8px;
+}
+
+.devos-panel-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.devos-panel-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all var(--motion-fast);
+  background: transparent;
+  border: none;
+}
+.devos-panel-btn:hover {
+  background: var(--bg-4);
+  color: var(--text-0);
+}
+.devos-panel-btn.active {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.1);
+}
+.devos-panel-btn.close:hover {
+  background: var(--red);
+  color: white;
+}
+
+.devos-panel-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  position: relative;
+}
+
+.devos-panel-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.devos-placeholder-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+}
+.devos-placeholder-content {
+  text-align: center;
+}
+
+/* ══════════════════════════════════════════════════════════
+   Floating & Fullscreen Layers
+   ══════════════════════════════════════════════════════════ */
+.devos-floating-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+}
+.devos-floating-layer > * {
+  pointer-events: auto;
+}
+
+.devos-fullscreen-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+}
+
+/* ══════════════════════════════════════════════════════════
+   Shortcut Cheatsheet Overlay
+   ══════════════════════════════════════════════════════════ */
+.devos-shortcut-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  z-index: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: devos-fade-in var(--motion-fast);
+}
+.devos-shortcut-modal {
+  background: var(--bg-1);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  width: 480px;
+  max-height: 70vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: devos-scale-in var(--motion-normal) var(--ease-spring);
+}
+.devos-shortcut-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: var(--border-width) solid var(--border);
+}
+.devos-shortcut-header h2 {
+  font-size: 14px;
+  font-weight: 600;
+}
+.devos-shortcut-close {
+  color: var(--text-2);
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-size: 16px;
+}
+.devos-shortcut-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+.devos-shortcut-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: var(--radius-base);
+}
+.devos-shortcut-item:hover {
+  background: var(--bg-2);
+}
+.devos-shortcut-desc {
+  color: var(--text-1);
+  font-size: 12px;
+}
+.devos-shortcut-key {
+  background: var(--bg-3);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-2);
+}
+
+/* ══════════════════════════════════════════════════════════
+   Glass Theme (transparent with blur)
+   ══════════════════════════════════════════════════════════ */
+[data-theme="glass"] .devos-panel,
+[data-theme="glass"] .devos-sidebar,
+[data-theme="glass"] .devos-mission-bar {
+  backdrop-filter: blur(var(--blur));
+  background: rgba(22, 27, 34, 0.7);
+}
+
+/* ══════════════════════════════════════════════════════════
+   Reduced Motion
+   ══════════════════════════════════════════════════════════ */
+[data-reduced-motion="true"] *,
+[data-reduced-motion="true"] *::before,
+[data-reduced-motion="true"] *::after {
+  animation-duration: 0.01ms !important;
+  transition-duration: 0.01ms !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   Mobile Responsive
+   ══════════════════════════════════════════════════════════ */
+[data-mobile="true"] .devos-palette-trigger-text {
+  display: none;
+}
+[data-mobile="true"] .devos-preset-name,
+[data-mobile="true"] .devos-workspace-name {
+  display: none;
+}
+[data-mobile="true"] .devos-status-text {
+  display: none;
+}
+
+/* ══════════════════════════════════════════════════════════
+   Scrollbar
+   ══════════════════════════════════════════════════════════ */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg-4);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}

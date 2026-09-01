@@ -1,0 +1,27 @@
+# Full requirements for Standard/Enterprise profiles
+# Includes everything from requirements.txt plus Supabase, ChromaDB, Redis, Postgres
+
+-r requirements.txt
+
+# Supabase (already in requirements.txt)
+supabase==2.5.0
+supafunc==0.4.7
+gotrue==2.11.4
+postgrest==0.16.11
+realtime==1.0.6
+storage3==0.7.7
+
+# ChromaDB (already in requirements.txt)
+chromadb==0.5.0
+chroma-hnswlib==0.7.3
+
+# Redis
+redis==5.2.1
+
+# PostgreSQL / pgvector
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+
+# Additional production dependencies
+gunicorn==23.0.0
+prometheus-client==0.20.0

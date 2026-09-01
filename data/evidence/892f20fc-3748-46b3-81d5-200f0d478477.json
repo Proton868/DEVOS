@@ -1,0 +1,26 @@
+{
+  "chain_id": "892f20fc-3748-46b3-81d5-200f0d478477",
+  "goal": "Test persistence",
+  "identity_context": {},
+  "root_id": "9b547392-1c72-4325-9773-5661be9ad483",
+  "nodes": {
+    "9b547392-1c72-4325-9773-5661be9ad483": {
+      "node_id": "9b547392-1c72-4325-9773-5661be9ad483",
+      "chain_id": "892f20fc-3748-46b3-81d5-200f0d478477",
+      "action": "write_python",
+      "actor_id": "user-1",
+      "delegation_chain": [],
+      "input_hash": null,
+      "output_hash": null,
+      "status": "success",
+      "decision": "",
+      "latency_ms": 0,
+      "tokens_used": 0,
+      "error": null,
+      "predecessor_ids": [],
+      "successor_ids": [],
+      "timestamp": "2026-07-26T10:43:35.820998+00:00",
+      "metadata": {}
+    }
+  }
+}

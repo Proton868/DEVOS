@@ -1,0 +1,663 @@
+/**
+ * DevOS Workflow Canvas Styles
+ * Styles for the infinite canvas, nodes, edges, and living animations.
+ */
+
+/* ══════════════════════════════════════════════════════════
+   Infinite Canvas
+   ══════════════════════════════════════════════════════════ */
+.devos-canvas-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-0);
+  user-select: none;
+}
+
+.devos-canvas-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+  pointer-events: none;
+}
+
+.devos-canvas-transform {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.devos-canvas-controls {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg-2);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  box-shadow: var(--shadow-md);
+  z-index: 10;
+}
+.devos-canvas-controls button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-1);
+  cursor: pointer;
+  transition: background var(--motion-fast);
+  font-size: 14px;
+  font-weight: 600;
+}
+.devos-canvas-controls button:hover {
+  background: var(--bg-3);
+}
+.devos-canvas-zoom-label {
+  min-width: 48px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   Workflow Node
+   ══════════════════════════════════════════════════════════ */
+.devos-node {
+  position: absolute;
+  min-width: 180px;
+  background: var(--bg-1);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  cursor: move;
+  transition: box-shadow var(--motion-fast), border-color var(--motion-fast);
+  z-index: 1;
+}
+.devos-node:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--node-color, var(--accent));
+}
+.devos-node.selected {
+  border-color: var(--node-color, var(--accent));
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.3), var(--shadow-md);
+  z-index: 5;
+}
+.devos-node:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.devos-node-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: var(--border-width) solid var(--border);
+  border-left: 3px solid var(--node-color, var(--accent));
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+.devos-node-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.devos-node-actions {
+  display: flex;
+  gap: 2px;
+}
+.devos-node-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all var(--motion-fast);
+}
+.devos-node-btn:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+.devos-node-body {
+  padding: 8px 10px;
+}
+.devos-node-desc {
+  font-size: 11px;
+  color: var(--text-2);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+.devos-node-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.devos-node-metric {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-2);
+  background: var(--bg-2);
+  padding: 2px 5px;
+  border-radius: var(--radius-sm);
+}
+.devos-node-metric-value {
+  font-family: var(--font-mono, monospace);
+}
+.devos-node-owner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-3);
+}
+.devos-node-last-run {
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+/* Node ports */
+.devos-node-port {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bg-4);
+  border: 2px solid var(--node-color, var(--accent));
+  cursor: crosshair;
+  z-index: 2;
+}
+.devos-node-port:hover {
+  background: var(--accent);
+  transform: scale(1.3);
+}
+.devos-node-port-in {
+  left: -5px;
+  top: 24px;
+}
+.devos-node-port-out {
+  right: -5px;
+  top: 24px;
+}
+
+/* ══════════════════════════════════════════════════════════
+   Edge
+   ══════════════════════════════════════════════════════════ */
+.devos-edge-container {
+  z-index: 0;
+}
+.devos-edge {
+  transition: opacity var(--motion-fast), stroke-width var(--motion-fast);
+}
+.devos-edge.animated {
+  filter: drop-shadow(0 0 4px rgba(var(--accent-rgb), 0.5));
+}
+
+/* ══════════════════════════════════════════════════════════
+   Living Node Animation States
+   Motion should explain, never decorate.
+   ══════════════════════════════════════════════════════════ */
+.devos-living-node {
+  position: relative;
+}
+
+/* Idle: soft breathing */
+.devos-living-idle .devos-node {
+  animation: devos-node-idle 3s ease-in-out infinite alternate;
+}
+@keyframes devos-node-idle {
+  0% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0.92; transform: scale(0.995); }
+}
+
+/* Thinking: gentle pulse */
+.devos-living-thinking .devos-node {
+  animation: devos-node-thinking 1.2s ease-in-out infinite alternate;
+}
+.devos-node-pulse-ring {
+  position: absolute;
+  inset: -4px;
+  border: 2px solid rgba(var(--accent-rgb), 0.3);
+  border-radius: var(--radius-md);
+  pointer-events: none;
+  animation: devos-node-pulse-ring 1.2s ease-out infinite;
+}
+@keyframes devos-node-thinking {
+  0% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.2); }
+  100% { opacity: 0.95; transform: scale(1.005); box-shadow: 0 0 12px 4px rgba(var(--accent-rgb), 0.15); }
+}
+@keyframes devos-node-pulse-ring {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.1); opacity: 0; }
+}
+
+/* Executing: data flowing — handled via edge animation */
+.devos-living-executing .devos-node {
+  border-color: var(--accent);
+  box-shadow: 0 0 12px 2px rgba(var(--accent-rgb), 0.2);
+}
+
+/* Waiting: dim */
+.devos-living-waiting .devos-node {
+  opacity: 0.5;
+}
+
+/* Success: green ripple */
+.devos-living-success .devos-node {
+  border-color: var(--green);
+  box-shadow: 0 0 12px 2px rgba(var(--green-rgb), 0.3);
+}
+.devos-node-ripple {
+  position: absolute;
+  inset: -4px;
+  border: 2px solid rgba(var(--green-rgb), 0.6);
+  border-radius: var(--radius-md);
+  pointer-events: none;
+  animation: devos-node-ripple 0.8s cubic-bezier(0.0, 0.0, 0.2, 1) forwards;
+}
+@keyframes devos-node-ripple {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.4); opacity: 0; }
+}
+
+/* Failed: red glow */
+.devos-living-failed .devos-node {
+  border-color: var(--red);
+  animation: devos-node-failed 0.6s ease-in-out infinite alternate;
+}
+.devos-node-glow-ring {
+  position: absolute;
+  inset: -4px;
+  border: 2px solid rgba(var(--red-rgb), 0.4);
+  border-radius: var(--radius-md);
+  pointer-events: none;
+  animation: devos-node-glow 0.6s ease-in-out infinite alternate;
+}
+@keyframes devos-node-failed {
+  0% { box-shadow: 0 0 0 0 rgba(var(--red-rgb), 0); }
+  100% { box-shadow: 0 0 12px 2px rgba(var(--red-rgb), 0.3); }
+}
+@keyframes devos-node-glow {
+  0% { opacity: 0.3; }
+  100% { opacity: 0.8; }
+}
+
+/* Reduced motion */
+.devos-living-node.reduced-motion .devos-node,
+.devos-living-node.reduced-motion * {
+  animation: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   Node Logs
+   ══════════════════════════════════════════════════════════ */
+.devos-node-logs {
+  border-top: var(--border-width) solid var(--border);
+  background: var(--bg-2);
+}
+.devos-logs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  gap: 8px;
+}
+.devos-logs-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 11px;
+}
+.devos-logs-toggle:hover { color: var(--text-0); }
+.devos-logs-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.devos-logs-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-3);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  color: var(--text-3);
+}
+.devos-logs-search-input {
+  background: transparent;
+  border: none;
+  color: var(--text-1);
+  font-size: 11px;
+  width: 120px;
+  outline: none;
+}
+.devos-logs-levels {
+  display: flex;
+  gap: 4px;
+}
+.devos-logs-level {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 10px;
+  text-transform: uppercase;
+  font-weight: 600;
+  opacity: 0.6;
+  transition: opacity var(--motion-fast);
+}
+.devos-logs-level:hover, .devos-logs-level.active { opacity: 1; }
+.devos-logs-autoscroll {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.devos-logs-export {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.devos-logs-export:hover { background: var(--bg-3); color: var(--text-0); }
+.devos-logs-body {
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 4px 10px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+}
+.devos-logs-empty {
+  color: var(--text-3);
+  text-align: center;
+  padding: 16px;
+  font-style: italic;
+}
+.devos-log-line {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  line-height: 1.4;
+}
+.devos-log-time {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.devos-log-level-tag {
+  flex-shrink: 0;
+  font-weight: 600;
+  min-width: 44px;
+}
+.devos-log-message {
+  color: var(--text-1);
+  word-break: break-word;
+}
+.devos-log-error .devos-log-message { color: var(--red); }
+.devos-log-warn .devos-log-message { color: var(--yellow); }
+
+/* ══════════════════════════════════════════════════════════
+   Theme Customizer
+   ══════════════════════════════════════════════════════════ */
+.devos-theme-customizer {
+  padding: 16px;
+}
+.devos-customizer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.devos-customizer-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.devos-customizer-actions {
+  display: flex;
+  gap: 4px;
+}
+.devos-customizer-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-3);
+  border: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.devos-customizer-btn:hover { background: var(--bg-4); color: var(--text-0); }
+.devos-customizer-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 12px;
+  border-bottom: var(--border-width) solid var(--border);
+}
+.devos-customizer-tabs button {
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all var(--motion-fast);
+}
+.devos-customizer-tabs button:hover { color: var(--text-0); }
+.devos-customizer-tabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.devos-customizer-body {
+  min-height: 200px;
+}
+
+/* Theme grid */
+.devos-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+.devos-theme-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--motion-fast);
+  text-align: center;
+}
+.devos-theme-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+}
+.devos-theme-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.2);
+}
+.devos-theme-preview {
+  display: flex;
+  gap: 2px;
+}
+.devos-theme-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+}
+.devos-theme-card-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.devos-theme-card-cat {
+  font-size: 9px;
+  color: var(--text-3);
+  text-transform: uppercase;
+}
+.devos-theme-check {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  color: var(--accent);
+}
+
+/* Customizer controls */
+.devos-customize-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.devos-control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.devos-control-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-1);
+  font-weight: 500;
+}
+.devos-control-value {
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--font-mono, monospace);
+}
+.devos-control-hint {
+  font-size: 10px;
+  color: var(--text-3);
+}
+.devos-accent-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.devos-accent-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform var(--motion-fast);
+}
+.devos-accent-swatch:hover { transform: scale(1.15); }
+.devos-accent-swatch.active {
+  border-color: var(--text-0);
+  box-shadow: 0 0 0 2px var(--bg-0), 0 0 0 4px var(--text-0);
+}
+.devos-accent-picker {
+  width: 40px;
+  height: 28px;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  background: transparent;
+}
+.devos-slider {
+  width: 100%;
+  height: 4px;
+  background: var(--bg-3);
+  border-radius: 2px;
+  appearance: none;
+  cursor: pointer;
+}
+.devos-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+.devos-segmented {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-3);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+}
+.devos-segmented button {
+  flex: 1;
+  padding: 5px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 11px;
+  transition: all var(--motion-fast);
+}
+.devos-segmented button.active {
+  background: var(--bg-1);
+  color: var(--accent);
+}
+.devos-toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: var(--bg-4);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background var(--motion-fast);
+}
+.devos-toggle.on {
+  background: var(--accent);
+}
+.devos-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: white;
+  transition: transform var(--motion-fast) var(--ease-spring);
+}
+.devos-toggle.on .devos-toggle-knob {
+  transform: translateX(16px);
+}

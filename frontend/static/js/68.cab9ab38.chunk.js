@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkdevos_frontend=self.webpackChunkdevos_frontend||[]).push([[68],{6068(e,s,n){n.r(s),n.d(s,{default:()=>c});var t=n(2555),a=n(5043),d=n(579);const l=a.lazy(()=>n.e(780).then(n.bind(n,2780)));function c(e){return(0,d.jsx)(a.Suspense,{fallback:(0,d.jsx)("div",{className:"text-slate-400 text-xs p-4",children:"Loading files..."}),children:(0,d.jsx)(l,(0,t.A)({},e))})}}}]);
+//# sourceMappingURL=68.cab9ab38.chunk.js.map

@@ -1,0 +1,26 @@
+{
+  "chain_id": "336deb7f-002f-4836-bf11-116cc25b844a",
+  "goal": "List test",
+  "identity_context": {},
+  "root_id": "b63ac39b-1ee9-4d1e-beef-7986de090253",
+  "nodes": {
+    "b63ac39b-1ee9-4d1e-beef-7986de090253": {
+      "node_id": "b63ac39b-1ee9-4d1e-beef-7986de090253",
+      "chain_id": "336deb7f-002f-4836-bf11-116cc25b844a",
+      "action": "write_python",
+      "actor_id": "user-1",
+      "delegation_chain": [],
+      "input_hash": null,
+      "output_hash": null,
+      "status": "pending",
+      "decision": "",
+      "latency_ms": 0,
+      "tokens_used": 0,
+      "error": null,
+      "predecessor_ids": [],
+      "successor_ids": [],
+      "timestamp": "2026-07-26T10:32:55.006318+00:00",
+      "metadata": {}
+    }
+  }
+}

@@ -1,0 +1,199 @@
+# DevOS Docker Compose — Profile-based deployment
+# Agency OS Master Plan §8: three deployment profiles
+#
+# Profile: Micro (default)
+#   - Single container, SQLite, local-only
+#   - docker compose up
+#
+# Profile: Standard
+#   - Backend + Supabase, multi-tenant
+#   - docker compose --profile standard up
+#
+# Profile: Enterprise
+#   - Full stack with Redis, monitoring, multi-region
+#   - docker compose --profile enterprise up
+
+version: "3.9"
+
+services:
+  # ── Micro Profile (default) ────────────────────────────────────────────────
+  devos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: devos
+    ports:
+      - "8000:8000"
+    environment:
+      - DEVOS_PROFILE=micro
+      - DEVOS_HOST=0.0.0.0
+      - DEVOS_PORT=8000
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@devos.local}
+      - JWT_SECRET=${JWT_SECRET:-}
+      - SECRET_KEY=${SECRET_KEY:-}
+      - ENV=${ENV:-production}
+    volumes:
+      - devos_data:/app/data
+      - devos_workspace:/app/workspace
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+
+  # ── Standard Profile ───────────────────────────────────────────────────────
+  # Requires Supabase project (set SUPABASE_URL, SUPABASE_KEY, SUPABASE_SERVICE_KEY)
+  # docker compose --profile standard up
+  devos-standard:
+    profiles: ["standard"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: devos-standard
+    ports:
+      - "8001:8000"
+    environment:
+      - DEVOS_PROFILE=standard
+      - DEVOS_HOST=0.0.0.0
+      - DEVOS_PORT=8000
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@devos.local}
+      - JWT_SECRET=${JWT_SECRET:-}
+      - SECRET_KEY=${SECRET_KEY:-}
+      - ENV=production
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - BILLING_BACKEND=audit
+    volumes:
+      - devos_standard_data:/app/data
+      - devos_standard_workspace:/app/workspace
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 2G
+
+  # ── Enterprise Profile ─────────────────────────────────────────────────────
+  # Full stack: Redis for caching/pubsub, Postgres for audit, monitoring
+  # docker compose --profile enterprise up
+  redis:
+    profiles: ["enterprise"]
+    image: redis:7-alpine
+    container_name: devos-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+  postgres:
+    profiles: ["enterprise"]
+    image: pgvector/pgvector:pg16
+    container_name: devos-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=devos
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-devos_password}
+      - POSTGRES_DB=devos
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devos -d devos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+
+  devos-enterprise:
+    profiles: ["enterprise"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: devos-enterprise
+    ports:
+      - "8002:8000"
+    environment:
+      - DEVOS_PROFILE=enterprise
+      - DEVOS_HOST=0.0.0.0
+      - DEVOS_PORT=8000
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@devos.local}
+      - JWT_SECRET=${JWT_SECRET:-}
+      - SECRET_KEY=${SECRET_KEY:-}
+      - ENV=production
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql+asyncpg://devos:${POSTGRES_PASSWORD:-devos_password}@postgres:5432/devos
+      - BILLING_BACKEND=stripe
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+    volumes:
+      - devos_enterprise_data:/app/data
+      - devos_enterprise_workspace:/app/workspace
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 8G
+        reservations:
+          cpus: "2.0"
+          memory: 4G
+
+volumes:
+  devos_data:
+  devos_workspace:
+  devos_standard_data:
+  devos_standard_workspace:
+  devos_enterprise_data:
+  devos_enterprise_workspace:
+  redis_data:
+  postgres_data:

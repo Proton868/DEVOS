@@ -1,0 +1,82 @@
+name: CI - Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest tests/ -q
+        env:
+          AUTH_ENABLED: "false"
+          SUPABASE_URL: ""
+          SUPABASE_KEY: ""
+          OLLAMA_HOST: "http://localhost:11434"
+          JWT_SECRET: "test-secret-key-for-ci-only-32chars-long"
+          DEFAULT_PROVIDER: "ollama"
+
+  docker-build:
+    name: Docker Build (all profiles)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build micro profile
+        run: docker build --target micro -t caraios:micro-test .
+
+      - name: Build standard profile
+        run: docker build --target standard -t caraios:standard-test .
+
+      - name: Build enterprise profile
+        run: docker build --target enterprise -t caraios:enterprise-test .
+
+  security-scan:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install pip-audit
+        run: pip install pip-audit || pip install pip-audit --break-system-packages
+
+      - name: Scan Python dependencies
+        run: pip-audit -r requirements.txt --desc --format=json --output=pip-audit-report.json || true
+
+      - name: Check for HIGH/CRITICAL Python vulnerabilities
+        run: python3 scripts/check_pip_audit.py
+
+      - name: Scan Node dependencies (frontend)
+        run: |
+          cd frontend-src
+          npm audit --audit-level=high --json > npm-audit-report.json || true
+
+      - name: Check for HIGH/CRITICAL Node vulnerabilities
+        run: python3 scripts/check_npm_audit.py
