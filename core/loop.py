@@ -490,9 +490,10 @@ class BrainExecutionLoop:
             # Web search
             if action == "search_web":
                 from execution.search import search_web
+                # UCIP already approved above — pass explicit authorization flag
                 state.add_step(StepType.THINK, f"Searching: {action_input[:80]}")
                 await self._emit(state.steps[-1])
-                result = await search_web(action_input)
+                result = await search_web(action_input, uci_authorized=True)
                 answer = result.get("answer", "")
                 snippets = "\n".join(f"• {r['title']}: {r['content'][:200]}"
                                      for r in result.get("results", [])[:3])
@@ -519,6 +520,12 @@ class BrainExecutionLoop:
                 await self._emit(exec_step)
 
                 exec_t0 = time.perf_counter_ns()
+                # Network derived from authorized capability, not static sandbox config
+                from governance.execution_pipeline import network_allowed_for_capability
+                cap_for_net = getattr(ucip, "cap_required", None) or (
+                    "ucip:execution.python" if lang == "python" else "ucip:execution.shell"
+                )
+                self.sandbox.allow_network = network_allowed_for_capability(cap_for_net)
                 result  = await self.sandbox.run(code=action_input, language=lang,
                                                   run_id=f"{state.id}-{state.iteration}",
                                                   timeout=30)

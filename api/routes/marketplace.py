@@ -419,44 +419,113 @@ class InstallReq(BaseModel):
 
 @router.post("/install")
 async def install_packages(req: InstallReq, request: Request, db=Depends(get_db)):
-    """Install packages into a specific script's isolated venv (Python) or
-    node_modules (Node), delegating to the ExecutionLayer's existing
-    dependency installer. Bash scripts have no package manager here."""
+    """Governed package install: capability + job + isolated install + evidence.
+
+    ExecutionLayer is a primitive only — authority is established here first.
+    """
     user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
+    tenant = await ensure_personal_tenant(db, user)
     from sqlalchemy import select
     from core.database import Script
+    from governance.execution_pipeline import (
+        begin_execution_job, complete_execution_job, record_path_evidence, PathClass,
+    )
+    from governance.execution_authority import require_authority, CAP_PACKAGE_INSTALL
+    import hashlib
+
     r = await db.execute(select(Script).where(Script.id == req.script_id, Script.owner_id == user.id))
     script = r.scalar_one_or_none()
     if not script:
         raise HTTPException(404, "Script not found")
 
-    if script.language == "python":
-        from execution.runner import ExecutionLayer
-        layer = ExecutionLayer()
-        try:
-            result = await layer.install_packages(req.packages, env_name=script.id)
-        except Exception as e:
-            logger.exception("Package install failed for script %s", req.script_id)
-            raise HTTPException(502, f"Install failed: {e}")
-        if not result.get("success"):
-            raise HTTPException(502, f"pip install failed: {result.get('error') or result.get('output')}")
-        return {"installed": True, "packages": req.packages, "venv_path": result.get("venv_path"), "output": result.get("output")}
+    packages = list(req.packages or [])
+    if not packages:
+        raise HTTPException(400, "packages required")
+    pkg_hash = hashlib.sha256(",".join(sorted(packages)).encode()).hexdigest()[:16]
 
-    elif script.language == "node":
-        import asyncio
-        from pathlib import Path
-        node_dir = Path("data/node_modules") / script.id
-        node_dir.mkdir(parents=True, exist_ok=True)
-        proc = await asyncio.create_subprocess_exec(
-            "npm", "install", "--no-audit", "--no-fund", *req.packages,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            cwd=str(node_dir),
-        )
-        stdout, stderr = await proc.communicate()
-        output = (stdout + stderr).decode(errors="replace")[:2000]
-        if proc.returncode != 0:
-            raise HTTPException(502, f"npm install failed: {output}")
-        return {"installed": True, "packages": req.packages, "node_dir": str(node_dir), "output": output}
+    job_id = await begin_execution_job(
+        owner_id=user.id,
+        tenant_id=tenant.id,
+        job_type="package_install",
+        payload={
+            "script_id": script.id,
+            "language": script.language,
+            "packages": packages[:50],
+            "packages_hash": pkg_hash,
+        },
+        path_class=PathClass.DURABLE,
+    )
+    require_authority(
+        path_class=PathClass.DURABLE,
+        actor_id=user.id,
+        tenant_id=tenant.id,
+        capability=CAP_PACKAGE_INSTALL,
+        job_id=job_id,
+        reason="marketplace package install",
+        metadata={"script_id": script.id, "packages_hash": pkg_hash},
+    )
 
-    raise HTTPException(400, f"Dependency install isn't supported for language '{script.language}'")
+    try:
+        if script.language == "python":
+            from execution.runner import ExecutionLayer
+            layer = ExecutionLayer()
+            result = await layer.install_packages(
+                packages, env_name=script.id,
+                path_class=PathClass.DURABLE.value,
+                actor_id=user.id,
+                tenant_id=tenant.id,
+                capability=CAP_PACKAGE_INSTALL,
+                job_id=job_id,
+            )
+            if not result.get("success"):
+                await complete_execution_job(job_id, status="failed", error=str(result.get("error") or result.get("output")))
+                raise HTTPException(502, f"pip install failed: {result.get('error') or result.get('output')}")
+            out = {
+                "installed": True, "packages": packages,
+                "venv_path": result.get("venv_path"), "output": result.get("output"),
+                "execution_job_id": job_id, "packages_hash": pkg_hash,
+            }
+        elif script.language == "node":
+            import asyncio
+            from pathlib import Path as _P
+            node_dir = _P("data/node_modules") / script.id
+            node_dir.mkdir(parents=True, exist_ok=True)
+            # Isolated-ish: no audit/fund; cwd scoped to script dir
+            proc = await asyncio.create_subprocess_exec(
+                "npm", "install", "--no-audit", "--no-fund", *packages,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                cwd=str(node_dir),
+            )
+            stdout, stderr = await proc.communicate()
+            output = (stdout + stderr).decode(errors="replace")[:2000]
+            if proc.returncode != 0:
+                await complete_execution_job(job_id, status="failed", error=output)
+                raise HTTPException(502, f"npm install failed: {output}")
+            out = {
+                "installed": True, "packages": packages,
+                "node_dir": str(node_dir), "output": output,
+                "execution_job_id": job_id, "packages_hash": pkg_hash,
+            }
+        else:
+            await complete_execution_job(job_id, status="failed", error="unsupported language")
+            raise HTTPException(400, f"Dependency install isn't supported for language '{script.language}'")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Package install failed for script %s", req.script_id)
+        await complete_execution_job(job_id, status="failed", error=str(e))
+        raise HTTPException(502, f"Install failed: {e}")
+
+    await complete_execution_job(job_id, status="succeeded", result=out)
+    await record_path_evidence(
+        tenant_id=tenant.id,
+        owner_id=user.id,
+        goal=f"package.install:{script.id}",
+        path="marketplace_install",
+        status="success",
+        body=out,
+        execution_job_id=job_id,
+        path_class=PathClass.DURABLE,
+        require_evidence=True,
+    )
+    return out

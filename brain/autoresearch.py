@@ -92,10 +92,11 @@ class AutoresearchSession:
     """
 
     def __init__(self, user_id: str, max_rounds: int = 12,
-                 timeout_per_round_s: int = 30):
+                 timeout_per_round_s: int = 30, tenant_id: str | None = None):
         self.user_id = user_id
         self.max_rounds = max_rounds
         self.timeout_per_round_s = timeout_per_round_s
+        self.tenant_id = tenant_id
         self.session_id = str(uuid.uuid4())
         self.results_file = RESULTS_DIR / f"{self.session_id}.jsonl"
 
@@ -145,8 +146,38 @@ Respond ONLY with JSON:
         Run the fixed-budget improvement loop.
         Returns: best code found, full history, summary stats.
         """
+        from governance.execution_pipeline import (
+            begin_execution_job, complete_execution_job, record_path_evidence, PathClass,
+        )
+        from governance.execution_authority import require_authority, CAP_AUTORESEARCH
+
+        job_id = None
+        tenant_id = getattr(self, "tenant_id", None)
+        if tenant_id:
+            try:
+                job_id = await begin_execution_job(
+                    owner_id=self.user_id,
+                    tenant_id=tenant_id,
+                    job_type="autoresearch",
+                    payload={"goal": str(getattr(goal, "description", ""))[:500]},
+                    path_class=PathClass.DURABLE,
+                )
+            except Exception as e:
+                raise RuntimeError(f"autoresearch job creation failed: {e}") from e
+        require_authority(
+            path_class=PathClass.DURABLE if tenant_id else PathClass.NON_DURABLE,
+            actor_id=self.user_id,
+            tenant_id=tenant_id,
+            capability=CAP_AUTORESEARCH,
+            job_id=job_id,
+            reason="autoresearch measurement loop",
+        )
+        # Network always denied for research measurement (capability has no network)
         from governance.sandbox import SandboxedExecutor
-        sandbox = SandboxedExecutor(max_cpu_seconds=self.timeout_per_round_s, allow_network=False)  # UCI: research code has no network cap by default
+        sandbox = SandboxedExecutor(
+            max_cpu_seconds=self.timeout_per_round_s,
+            allow_network=False,
+        )
 
         best_code = goal.target_code
         best_metric = goal.baseline_value
@@ -248,7 +279,7 @@ Respond ONLY with JSON:
         except Exception as e:
             logger.warning(f"[autoresearch] failed to write learning-division lesson: {e}")
 
-        return {
+        summary = {
             "session_id": self.session_id,
             "goal": goal.to_dict(),
             "best_code": best_code,
@@ -258,7 +289,30 @@ Respond ONLY with JSON:
             "accepted_count": accepted_count,
             "improvement_pct": improvement_pct,
             "history": [r.to_dict() for r in history],
+            "execution_job_id": job_id,
         }
+        if job_id:
+            await complete_execution_job(job_id, status="succeeded", result={
+                "rounds": len(history), "accepted": accepted_count,
+                "improvement_pct": improvement_pct,
+            })
+        if tenant_id:
+            try:
+                await record_path_evidence(
+                    tenant_id=tenant_id,
+                    owner_id=self.user_id,
+                    goal=str(getattr(goal, "metric", "autoresearch")),
+                    path="autoresearch",
+                    status="success",
+                    body={"session_id": self.session_id, "accepted_count": accepted_count},
+                    execution_job_id=job_id,
+                    path_class=PathClass.DURABLE,
+                    require_evidence=True,
+                )
+            except Exception as ev_err:
+                logger.warning("autoresearch evidence degraded: %s", ev_err)
+                summary["governance_state"] = "degraded"
+        return summary
 
     async def _propose_change(self, current_code: str, goal: ResearchGoal,
                               history: list[ResearchRound]) -> tuple[str, str]:

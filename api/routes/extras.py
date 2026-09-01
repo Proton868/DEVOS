@@ -276,9 +276,11 @@ class AutoresearchReq(BaseModel):
 @router.post("/autoresearch/start")
 async def start_autoresearch(req: AutoresearchReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
+    tenant = await ensure_personal_tenant(db, user)
     from brain.autoresearch import AutoresearchSession
-    session = AutoresearchSession(user_id=user.id, max_rounds=req.max_rounds)
+    session = AutoresearchSession(
+        user_id=user.id, max_rounds=req.max_rounds, tenant_id=tenant.id,
+    )
     goal = await session.parse_goal(req.goal, req.code)
     return await session.run(goal)
 

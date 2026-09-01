@@ -56,11 +56,42 @@ async def run_and_record(script_id: str, trigger: str = "manual", _depth: int = 
         if not s:
             return {"status": "error", "error": "script not found"}
         user_secrets = await get_user_secrets_dict(db, s.owner_id)
+        owner_id = s.owner_id
+        lang = s.language
+        script_name = s.name
+        script_code = s.code
+        script_retry = script_retry
 
-    # Use SandboxedExecutor for scheduled/webhook runs (hardened), but keep
-    # ExecutionLayer for manual runs (backward compatibility with existing
-    # user scripts that may need broader filesystem/env access).
-    use_sandbox = trigger not in ("HUMAN_TERMINAL", "human_terminal")
+    from governance.execution_pipeline import PathClass
+    from governance.execution_authority import require_authority
+
+    # Explicit path classification — never accidental
+    if trigger in ("HUMAN_TERMINAL", "human_terminal"):
+        path_class = PathClass.HUMAN_ONLY
+        use_sandbox = False
+        authority_reason = "human terminal script path (explicit exception)"
+    elif trigger in ("webhook", "schedule", "cron", "interval", "manual", "api"):
+        path_class = PathClass.DURABLE
+        use_sandbox = True
+        authority_reason = f"script runner trigger={trigger} under sandbox + UCI identity context"
+    else:
+        path_class = PathClass.DURABLE
+        use_sandbox = True
+        authority_reason = f"script runner unknown trigger={trigger} — default durable sandbox"
+
+    # Capability context for script body (scheduled/webhook get execution.python)
+    cap = "ucip:execution.python" if lang == "python" else (
+        "ucip:execution.node" if lang in ("node", "javascript") else "ucip:execution.shell"
+    )
+    tenant_id = getattr(s, "tenant_id", None) or f"user:{owner_id}"
+    require_authority(
+        path_class=path_class,
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        capability=cap if use_sandbox else None,
+        reason=authority_reason,
+        metadata={"script_id": script_id, "trigger": trigger, "language": lang, "name": script_name},
+    )
     if use_sandbox:
         executor = SandboxedExecutor(
             max_cpu_seconds=30,
@@ -73,13 +104,13 @@ async def run_and_record(script_id: str, trigger: str = "manual", _depth: int = 
         from execution.runner import ExecutionLayer
         executor = ExecutionLayer()
 
-    attempts = RETRY_ATTEMPTS.get(s.retry_policy or "none", 1)
+    attempts = RETRY_ATTEMPTS.get(script_retry or "none", 1)
     result = None
     for attempt in range(1, attempts + 1):
         if use_sandbox:
             sandbox_result = await executor.run(
-                code=s.code,
-                language=s.language,
+                code=script_code,
+                language=lang,
                 run_id=script_id,
                 inject_secrets=user_secrets,
                 timeout=60,
@@ -93,9 +124,14 @@ async def run_and_record(script_id: str, trigger: str = "manual", _depth: int = 
                 "duration_ms": sandbox_result.duration_ms,
             }
         else:
-            result = await executor.run(code=s.code, language=s.language, script_id=s.id,
-                                        secrets=user_secrets, venv_path=None,
-                                        env_vars=None)
+            result = await executor.run(
+                code=script_code, language=lang, script_id=s.id,
+                secrets=user_secrets, venv_path=None, env_vars=None,
+                path_class=path_class.value,
+                actor_id=owner_id,
+                tenant_id=tenant_id,
+                authority_reason=authority_reason,
+            )
         if result["status"] == "success":
             break
 

@@ -22,8 +22,20 @@ def _get_http_client() -> httpx.AsyncClient:
 
 
 async def search_web(query: str, max_results: int = 5,
+                     *,
+                     uci_authorized: bool = False,
                      depth: str = "basic", topic: str = "general") -> dict:
-    """Search the web. Returns structured results for the Brain to reason about."""
+    """Search the web. Returns structured results for the Brain to reason about.
+
+    MUST only be called after UCI has authorized search.web (uci_authorized=True).
+    """
+    if not uci_authorized:
+        return {
+            "error": "search_web requires prior UCI authorization (uci_authorized=True)",
+            "results": [],
+            "answer": None,
+            "backend": "denied",
+        }
     http = _get_http_client()
 
     if settings.TAVILY_API_KEY:

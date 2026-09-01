@@ -90,11 +90,26 @@ class ExecutionLayer:
         secrets: Optional[dict] = None,
         venv_path: Optional[str] = None,
         timeout: int = 60,
+        *,
+        path_class: str = "human_only",
+        actor_id: str = "unknown",
+        tenant_id: Optional[str] = None,
+        authority_reason: str = "ExecutionLayer primitive — not a security authority",
     ) -> dict:
         """
-        Execute code. Return structured result dict for the Brain.
-        This is the ONLY entry point — the Brain always calls this.
+        Execute code. PRIMITIVE ONLY — authority must already be established.
+        path_class must be an explicit PathClass value (default human_only).
         """
+        from governance.execution_pipeline import PathClass
+        from governance.execution_authority import require_authority
+        try:
+            pc = PathClass(path_class)
+        except ValueError:
+            pc = PathClass.HUMAN_ONLY
+        require_authority(
+            path_class=pc, actor_id=actor_id, tenant_id=tenant_id,
+            reason=authority_reason, metadata={"language": language},
+        )
         script_id = script_id or str(uuid.uuid4())
         cfg = LANG_CONFIG.get(language, LANG_CONFIG["python"])
         script_file = SCRIPT_DIR / f"{script_id}{cfg['ext']}"
@@ -167,12 +182,30 @@ class ExecutionLayer:
         return result.to_dict()
 
     async def install_packages(
-        self, packages: list[str], env_name: str, python_version: str = "3.11"
+        self, packages: list[str], env_name: str, python_version: str = "3.11",
+        *,
+        path_class: str = "durable",
+        actor_id: str = "unknown",
+        tenant_id: Optional[str] = None,
+        capability: str = "ucip:package.install",
+        job_id: Optional[str] = None,
     ) -> dict:
         """
         Create a venv and install packages.
-        Called by Brain when it needs a specific library.
+        PRIMITIVE ONLY — caller must authorize capability + job first.
         """
+        from governance.execution_pipeline import PathClass
+        from governance.execution_authority import require_authority
+        try:
+            pc = PathClass(path_class)
+        except ValueError:
+            pc = PathClass.DURABLE
+        require_authority(
+            path_class=pc, actor_id=actor_id, tenant_id=tenant_id,
+            capability=capability, job_id=job_id,
+            reason="package install primitive",
+            metadata={"packages": list(packages)[:20], "env_name": env_name},
+        )
         venv_path = VENV_DIR / env_name
         if not venv_path.exists():
             proc = await asyncio.create_subprocess_exec(
