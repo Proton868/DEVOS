@@ -137,3 +137,16 @@ Do not only test clean kills. Prefer:
 10. Full deployment checklist  
 
 **FAIL → STOP.** No silent override in a developer shell for production promote.
+
+## Automated pure-logic profile
+
+```bash
+python scripts/run_chaos_drills.py --out data/chaos/latest_report.json
+./scripts/ci_deploy_gate.sh
+```
+
+Runs the algorithmic matrix (claim races, lease, UNKNOWN, drop-response mock,
+secrets, multi-node quota fail-closed, inject points) with full JSON capture.
+
+**Does not replace** live Postgres/Redis/worker drills — it gates CI on
+failure semantics before staging infrastructure tests.

@@ -7,6 +7,9 @@ cd "$ROOT"
 echo "== governance freeze + reliability unit tests =="
 python -m pytest tests/test_governance_freeze.py tests/test_reliability.py tests/test_failure_drills.py -q
 
+echo "== chaos drills (pure-logic profile) =="
+python scripts/run_chaos_drills.py --out data/chaos/ci_report.json
+
 echo "== production checklist =="
 # In CI without secrets, checklist may FAIL on JWT — allow DEVOS_CHECKLIST_SOFT=1 for non-prod
 if [[ "${DEVOS_CHECKLIST_SOFT:-}" == "1" ]]; then
