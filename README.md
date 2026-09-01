@@ -10,18 +10,18 @@ Goals go through a multi-provider **Brain**, **Workers**, **sandboxed execution*
 
 ```bash
 chmod +x install.sh && ./install.sh
-python3 cli.py start
+./devos start
 ```
 
 Open **http://localhost:8000**
 
-That’s it. `install.sh` installs Python deps, creates `.env` with a secure `JWT_SECRET`, and verifies the prebuilt frontend.
+That’s it. `install.sh` creates a project-local `.venv`, installs Python deps into it, creates `.env` with a secure `JWT_SECRET` (if missing), and verifies the prebuilt frontend. Use the `./devos` launcher so you never need to activate the virtualenv manually.
 
 | Check | Command |
 |-------|---------|
-| Health | `python3 cli.py doctor` |
+| Health | `./devos doctor` |
 | API health | http://localhost:8000/api/health |
-| Chaos drills (optional) | `python scripts/run_chaos_drills.py` |
+| Chaos drills (optional) | `./.venv/bin/python scripts/run_chaos_drills.py` |
 
 ---
 
@@ -112,8 +112,14 @@ docs/                   Status, staging drills, hardening
 
 ```bash
 cp .env.example .env   # then set JWT_SECRET or run install.sh
-pip install -r requirements-lite.txt   # or requirements.txt
-python3 cli.py start
+# Prefer the installer (creates .venv automatically):
+./install.sh
+./devos start
+
+# Or manually:
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-lite.txt   # or requirements.txt
+./devos start
 ```
 
 **Docker**
@@ -129,7 +135,7 @@ Profiles (`micro` / `standard` / `enterprise`): see [DEPLOYMENT.md](DEPLOYMENT.m
 
 ```bash
 cd frontend-src && npm install && npm run build
-cd .. && python3 cli.py build
+cd .. && ./devos build
 ```
 
 ---
@@ -137,10 +143,10 @@ cd .. && python3 cli.py build
 ## CLI
 
 ```bash
-python3 cli.py start      # API + UI on :8000
-python3 cli.py doctor     # environment check
-python3 cli.py version
-python3 cli.py audit      # UCIP audit tail
+./devos start      # API + UI on :8000
+./devos doctor     # environment check
+./devos version
+./devos audit      # UCIP audit tail
 ```
 
 ---

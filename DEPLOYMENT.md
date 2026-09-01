@@ -1,4 +1,4 @@
-> **Local default:** `./install.sh` then `python3 cli.py start` (SQLite + prebuilt UI). Governance v1 and Reliability architecture v1 are frozen; see docs/STAGING_DRILLS.md for live chaos.
+> **Local default:** `./install.sh` then `./devos start` (SQLite + prebuilt UI). Governance v1 and Reliability architecture v1 are frozen; see docs/STAGING_DRILLS.md for live chaos.
 
 
 # DevOS Deployment Guide
@@ -141,7 +141,7 @@ The production frontend is the static build in `frontend/build/`. After editing
 React sources in `frontend-src/`:
 
 ```bash
-python3 cli.py build
+./devos build
 ```
 
 or directly:

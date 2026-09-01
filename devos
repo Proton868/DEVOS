@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# DevOS launcher — always uses the project-local .venv
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+VENV_PYTHON="$ROOT/.venv/bin/python"
+if [[ ! -x "$VENV_PYTHON" ]]; then
+  echo "ERROR: Virtual environment not found at $ROOT/.venv"
+  echo "  Run ./install.sh first."
+  exit 1
+fi
+exec "$VENV_PYTHON" "$ROOT/cli.py" "$@"
