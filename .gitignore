@@ -1,6 +1,4 @@
 .env
-.env.*
-!.env.example
 
 .venv/
 venv/
@@ -26,7 +24,9 @@ yarn-debug.log*
 yarn-error.log*
 core/.devos_secret
 .env
-.env*
 __pycache__/
 .venv/
 node_modules/
+.env
+.env.*
+!.env.example
