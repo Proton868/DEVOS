@@ -131,3 +131,22 @@ def test_failed_retries_until_max_then_terminal():
     assert q.jobs["job-1"].status == "failed"
     assert q.jobs["job-1"].attempts == 3
     assert q.claim("w4") is None
+
+
+def test_http_500_is_unknown_not_failed():
+    from governance.side_effects import classify_provider_result, EffectOutcome
+    assert classify_provider_result({"http_status": 500}) == EffectOutcome.UNKNOWN
+    assert classify_provider_result({"http_status": 503}) == EffectOutcome.UNKNOWN
+    assert classify_provider_result({"status": "error", "request_sent": True}) == EffectOutcome.UNKNOWN
+
+
+def test_http_400_is_failed_safe_retry():
+    from governance.side_effects import classify_provider_result, EffectOutcome
+    assert classify_provider_result({"http_status": 400}) == EffectOutcome.FAILED
+    assert classify_provider_result({"http_status": 422}) == EffectOutcome.FAILED
+    assert classify_provider_result({"status": "error", "request_sent": False}) == EffectOutcome.FAILED
+
+
+def test_connection_reset_unknown():
+    from governance.side_effects import classify_exception, EffectOutcome
+    assert classify_exception(ConnectionError("connection reset by peer")) == EffectOutcome.UNKNOWN
