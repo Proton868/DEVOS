@@ -40,8 +40,10 @@ _redis = _RedisBackend(REDIS_URL) if REDIS_URL else None
 
 async def enqueue(*, owner_id, tenant_id, job_type, payload, actor_id=None, priority=100, max_attempts=3, scheduled_at=None):
     async with AsyncSessionLocal() as db:
-        job=ExecutionJob(id=gen_id(), tenant_id=tenant_id, owner_id=owner_id, actor_id=actor_id,
-            job_type=job_type, payload=payload or {}, status="queued", priority=priority,
+        from governance.reliability import scrub_secrets
+    safe_payload = scrub_secrets(payload or {})
+    job=ExecutionJob(id=gen_id(), tenant_id=tenant_id, owner_id=owner_id, actor_id=actor_id,
+            job_type=job_type, payload=safe_payload, status="queued", priority=priority,
             max_attempts=max_attempts, scheduled_at=scheduled_at)
         db.add(job); await db.commit(); await db.refresh(job)
         jid, pri = job.id, job.priority

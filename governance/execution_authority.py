@@ -64,7 +64,8 @@ def require_authority(
         reason=reason,
         metadata=metadata or {},
     )
-    entry = auth.to_dict()
+    from governance.reliability import scrub_secrets
+    entry = scrub_secrets(auth.to_dict())
     _EXCEPTION_LOG.append(entry)
     if len(_EXCEPTION_LOG) > 500:
         del _EXCEPTION_LOG[:-500]

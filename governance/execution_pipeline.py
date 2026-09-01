@@ -189,10 +189,11 @@ async def record_path_evidence(
         from datetime import datetime, timezone
         from core.database import AsyncSessionLocal, EvidenceRecord, gen_id
 
+        from governance.reliability import scrub_secrets
         payload = {
             "path": path,
             "status": status,
-            "body": body or {},
+            "body": scrub_secrets(body or {}),
             "execution_job_id": execution_job_id,
             "recorded_at": datetime.now(timezone.utc).isoformat(),
         }
