@@ -166,6 +166,9 @@ python scripts/production_checklist.py
 | Doc | Contents |
 |-----|----------|
 | **[README.md](README.md)** | Install & overview (this file) |
+| [LICENSE](LICENSE) | PolyForm Shield 1.0.0 (unmodified) |
+| [NOTICE](NOTICE) | Copyright & required notice |
+| [TRADEMARKS.md](TRADEMARKS.md) | Trademark guidelines |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Docker profiles, env, production deploy |
 | [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) | What is implemented now |
 | [docs/STAGING_DRILLS.md](docs/STAGING_DRILLS.md) | Production readiness / chaos matrix |
@@ -187,6 +190,70 @@ Historical plans under `plans/` and `record.md` may lag the code — prefer **RE
 
 ---
 
+---
+
 ## License
 
-See repository license if present.
+DevOS is **source-available** software licensed under the **PolyForm Shield License 1.0.0**.
+
+You may use, study, modify, and distribute DevOS for permitted purposes, subject to the terms of the license.
+
+The license specifically restricts providing products or services that compete with DevOS or with products or services provided by the licensor or its affiliates using DevOS.
+
+DevOS is **not** licensed under an OSI-approved open-source license. The PolyForm Shield License is a source-available license with a noncompete restriction.
+
+| | |
+|--|--|
+| License | PolyForm Shield 1.0.0 |
+| Source available | Yes |
+| OSI open source | No |
+| Commercial use | Subject to the license |
+| Competing products/services | Restricted by the license |
+
+See [LICENSE](./LICENSE) for the complete terms.
+
+See [NOTICE](./NOTICE) for copyright, trademark, and third-party licensing information.
+
+For commercial licensing or uses that may fall within the license's competition restriction, contact **Carai Agency**.
+
+### What this means in practice
+
+You are generally free to:
+
+- run DevOS for your own purposes;
+- study the source code;
+- modify DevOS;
+- create forks and derivative works for permitted purposes;
+- use DevOS internally in a business;
+- build applications and integrations around DevOS;
+- provide professional services involving permitted uses of DevOS.
+
+You may not use DevOS to provide a product or service that competes with DevOS or with a product or service provided by the licensor or its affiliates using DevOS, except where the license expressly permits that use.
+
+The actual legal rights and restrictions are determined by the **PolyForm Shield License 1.0.0**, not by this summary.
+
+If you are unsure whether a proposed commercial use is permitted, obtain a separate commercial license or contact Carai Agency before proceeding.
+
+---
+
+## Trademarks
+
+DevOS, Carai, Carai Agency, Caribbean Ai Agency and associated names, logos, product names, service names, and branding are trademarks or protected marks of their respective owners.
+
+The DevOS software license does not grant permission to use these marks to imply endorsement, sponsorship, affiliation, or official status.
+
+You may accurately refer to DevOS as the software used by, based on, or compatible with your project where such use is truthful and does not create a misleading impression of affiliation with Carai Agency.
+
+Forks and derivative projects should use distinct names, logos, and branding and should not present themselves as official versions of DevOS or official Carai products without written permission.
+
+Examples of names that should not be used without authorization include:
+
+- Official Carai DevOS
+- Carai DevOS Cloud
+- Official DevOS Cloud
+- Carai Agency DevOS
+- any substantially similar branding that could reasonably imply official sponsorship or affiliation
+
+Nothing in this section grants trademark rights. Trademark rights, if any, are separate from the software license.
+
+See [TRADEMARKS.md](./TRADEMARKS.md) for full guidelines.
