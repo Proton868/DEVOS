@@ -250,6 +250,22 @@ async def _migrate_missing_columns(conn):
         "execution_jobs", "locked_at",
         "ALTER TABLE execution_jobs ADD COLUMN locked_at DATETIME",
     )
+    await _add_column_if_missing(
+        "execution_jobs", "lease_expires_at",
+        "ALTER TABLE execution_jobs ADD COLUMN lease_expires_at DATETIME",
+    )
+    await _add_column_if_missing(
+        "execution_jobs", "idempotency_key",
+        "ALTER TABLE execution_jobs ADD COLUMN idempotency_key VARCHAR",
+    )
+    await _add_column_if_missing(
+        "execution_jobs", "request_id",
+        "ALTER TABLE execution_jobs ADD COLUMN request_id VARCHAR",
+    )
+    await _add_column_if_missing(
+        "execution_jobs", "correlation",
+        "ALTER TABLE execution_jobs ADD COLUMN correlation JSON",
+    )
 
     await _add_column_if_missing(
         "worker_trust_records", "competency",
@@ -335,6 +351,10 @@ class DurableCapability(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 class ExecutionJob(Base):
+    """Durable work unit. Status lifecycle:
+    queued → running → succeeded|failed
+    running + lease expired → queued (recoverable retry)
+    """
     __tablename__ = "execution_jobs"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
     tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
@@ -351,6 +371,10 @@ class ExecutionJob(Base):
     isolation: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     worker_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    request_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    correlation: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

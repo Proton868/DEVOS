@@ -136,3 +136,76 @@ AI_EFFECT_REQUIREMENTS = (
     "execution_job_if_durable",
     "evidence_if_durable",
 )
+
+
+# ── Quotas / abuse controls (tenant-scoped, in-process + overridable) ─────────
+
+DEFAULT_QUOTAS = {
+    "max_concurrent_jobs": 10,
+    "max_jobs_per_hour": 200,
+    "max_worker_spawns_per_hour": 50,
+    "max_delegation_depth": 10,
+    "max_autonomous_duration_s": 3600,
+    "max_tokens_per_day": 2_000_000,
+}
+
+
+@dataclass
+class QuotaDecision:
+    allowed: bool
+    reason: str = ""
+    remaining: Optional[int] = None
+
+
+_tenant_counters: dict[str, dict] = {}
+
+
+def check_quota(tenant_id: str, kind: str, *, increment: int = 1) -> QuotaDecision:
+    """Lightweight in-process quota gate. Replace with Redis for multi-node."""
+    limits = DEFAULT_QUOTAS
+    key = f"{tenant_id}:{kind}"
+    bucket = _tenant_counters.setdefault(key, {"count": 0, "window_start": datetime.now(timezone.utc)})
+    # simple hourly window for rate-ish quotas
+    if kind.endswith("_per_hour"):
+        if (datetime.now(timezone.utc) - bucket["window_start"]).total_seconds() > 3600:
+            bucket["count"] = 0
+            bucket["window_start"] = datetime.now(timezone.utc)
+    limit = limits.get(kind)
+    if limit is None:
+        return QuotaDecision(True, "no_limit")
+    if bucket["count"] + increment > limit:
+        return QuotaDecision(False, f"quota exceeded: {kind}>={limit}", remaining=0)
+    bucket["count"] += increment
+    return QuotaDecision(True, "ok", remaining=max(0, limit - bucket["count"]))
+
+
+def reset_quota_counters():
+    _tenant_counters.clear()
+
+
+# ── Adversarial / integrity helpers ───────────────────────────────────────────
+
+def validate_tenant_scope(claimed_tenant_id: Optional[str], authenticated_tenant_id: Optional[str]) -> bool:
+    """Reject client-supplied tenant_id that does not match auth context."""
+    if not authenticated_tenant_id:
+        return False
+    if claimed_tenant_id and claimed_tenant_id != authenticated_tenant_id:
+        return False
+    return True
+
+
+def reject_authority_forgery(payload: dict) -> list[str]:
+    """Flag hostile fields that must never be accepted from clients."""
+    banned = (
+        "trust_level", "autonomy", "capability_token", "extra_caps",
+        "actor_kind", "is_admin", "root", "AGENCY_OP", "authority_snapshot",
+    )
+    hits = []
+    if not isinstance(payload, dict):
+        return ["payload_not_object"]
+    for k in payload.keys():
+        if str(k).lower() in {b.lower() for b in banned}:
+            hits.append(str(k))
+        if str(k).lower().endswith("_override") and "autonomy" in str(k).lower():
+            hits.append(str(k))
+    return hits

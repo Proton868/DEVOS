@@ -100,10 +100,24 @@ async def begin_execution_job(
     actor_id: Optional[str] = None,
     path_class: PathClass = PathClass.DURABLE,
     allow_missing_job: bool = False,
+    idempotency_key: Optional[str] = None,
+    request_id: Optional[str] = None,
+    correlation: Optional[dict] = None,
 ) -> Optional[str]:
     """Create durable job. Fail-closed for DURABLE paths unless explicitly opted out."""
     try:
         from workers.job_queue import enqueue
+        from governance.reliability import new_idempotency_key, new_request_id
+        rid = request_id or new_request_id()
+        ikey = idempotency_key
+        if not ikey and path_class == PathClass.DURABLE:
+            ikey = new_idempotency_key(
+                tenant_id=tenant_id or "none",
+                actor_id=owner_id,
+                capability=job_type,
+                operation=job_type,
+                body={"payload_keys": sorted((payload or {}).keys())},
+            )
         job = await enqueue(
             owner_id=owner_id,
             tenant_id=tenant_id,
@@ -111,6 +125,9 @@ async def begin_execution_job(
             payload=payload,
             actor_id=actor_id,
             priority=50,
+            idempotency_key=ikey,
+            request_id=rid,
+            correlation=correlation or {"request_id": rid},
         )
         return job.id
     except Exception as e:
