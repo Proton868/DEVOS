@@ -2,7 +2,7 @@
 
 ## Ownership
 
-"DevOS", "Carai", "Carai Agency", "Caribbean Ai Agency" and associated logos and branding are trademarks or protected marks of their respective owners.
+"DevOS", "Carai", "Carai Agency", "Caribbean AI Agency" and associated logos and branding are trademarks or protected marks of their respective owners.
 
 The DevOS source code license does not grant trademark rights.
 

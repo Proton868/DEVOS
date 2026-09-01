@@ -238,7 +238,7 @@ If you are unsure whether a proposed commercial use is permitted, obtain a separ
 
 ## Trademarks
 
-DevOS, Carai, Carai Agency, Caribbean Ai Agency and associated names, logos, product names, service names, and branding are trademarks or protected marks of their respective owners.
+DevOS, Carai, Carai Agency, Caribbean AI Agency and associated names, logos, product names, service names, and branding are trademarks or protected marks of their respective owners.
 
 The DevOS software license does not grant permission to use these marks to imply endorsement, sponsorship, affiliation, or official status.
 
