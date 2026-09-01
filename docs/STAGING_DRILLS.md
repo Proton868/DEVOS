@@ -78,3 +78,62 @@ python scripts/production_checklist.py  # must not BLOCK for prod
 export DEVOS_FAIL_INJECT=after_job_claim
 # restart workers, exercise one job, unset inject, recover
 ```
+
+---
+
+## Official freeze
+
+| Layer | Status |
+|-------|--------|
+| Governance v1 | **FROZEN** |
+| Reliability architecture v1 | **FROZEN** |
+| Architecture audit | **PAUSED** |
+
+Do not change design to “pass” a drill. Fix implementation bugs; reopen architecture only if an invariant is violated.
+
+## Result capture (required per drill)
+
+| Field | Value |
+|-------|--------|
+| Drill name | |
+| EXPECTED | |
+| ACTUAL | |
+| PASS/FAIL | |
+| request_id / correlation | |
+| execution_job_id | |
+| Database state | |
+| Job status | |
+| Evidence state | |
+| Side-effect outcome (SUCCEEDED/FAILED/UNKNOWN) | |
+| Recovery time | |
+| Notes | |
+
+## Awkward-boundary cases (must include)
+
+Do not only test clean kills. Prefer:
+
+| Awkward failure | Risk |
+|-----------------|------|
+| DB commits, response lost to client | Duplicate submit / orphan job |
+| Response arrives, process dies before local complete | Late complete vs reclaim |
+| Provider succeeds, DB write fails | UNKNOWN until reconcile |
+| Lease expires ~1s before completion | Dual complete race |
+| Redis disappears during quota check | Multi-node fail-closed vs drift |
+| Worker dies after external request sent | UNKNOWN + no blind retry |
+| Migration dies after some statements | `migrate_resume.py` coherence |
+| Two workers start simultaneously | Single logical owner |
+
+## Sequence (Production Readiness Gate v1)
+
+1. PostgreSQL failure injection  
+2. Worker crash / lease recovery  
+3. Two-worker race  
+4. Idempotency replay  
+5. Drop-response external provider  
+6. UNKNOWN → reconciliation  
+7. Redis failure  
+8. Multi-node quota behavior  
+9. Interrupted migration  
+10. Full deployment checklist  
+
+**FAIL → STOP.** No silent override in a developer shell for production promote.
