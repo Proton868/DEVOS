@@ -1,19 +1,32 @@
 #!/usr/bin/env bash
-# DevOS — one-step local install (self-contained: SQLite + prebuilt UI)
-# Uses a project-local .venv so no global pip / --break-system-packages is needed.
-# Safe on Ubuntu 24.04+ with PEP 668 (externally-managed-environment).
+# DevOS — single-command complete installation
+# Handles: Python venv, Python deps, .env, Node 22, frontend npm ci + build,
+# runtime frontend asset sync. No separate npm/build step required by the user.
+# Safe on Ubuntu 24.04+ with PEP 668. Idempotent: preserves .env, data/, workspace/.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-echo "==> DevOS installer"
+NODE_MAJOR_REQUIRED=22
+NODE_INSTALL_DIR="${ROOT}/.tools/node"
+
+echo "==> DevOS installer (complete single-command setup)"
 echo "    Location: $ROOT"
 
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+node_major() {
+  local v
+  v="$(node --version 2>/dev/null || true)"
+  v="${v#v}"
+  echo "${v%%.*}"
+}
+
 # ---------------------------------------------------------------------------
-# Python version check
+# Python
 # ---------------------------------------------------------------------------
-if ! command -v python3 >/dev/null 2>&1; then
+if ! have_cmd python3; then
   echo "ERROR: python3 is required (3.11+)."
   exit 1
 fi
@@ -23,65 +36,47 @@ if [[ "$PY_OK" != "yes" ]]; then
   echo "ERROR: Python 3.11+ required (3.12/3.13 recommended). Found: $(python3 --version 2>&1)"
   exit 1
 fi
+echo "==> Using $(command -v python3) ($(python3 --version 2>&1))"
 
-PYTHON_BIN="$(command -v python3)"
-echo "==> Using $PYTHON_BIN ($(python3 --version 2>&1))"
-
-# ---------------------------------------------------------------------------
-# Virtual environment (project-local .venv) — never global pip
-# ---------------------------------------------------------------------------
 VENV_DIR="$ROOT/.venv"
-
 if [[ -d "$VENV_DIR" && -x "$VENV_DIR/bin/python" ]]; then
   echo "==> Reusing existing virtual environment: $VENV_DIR"
 else
-  # Fail early with a clear OS-package hint if venv support is missing
   if ! python3 -c "import venv" >/dev/null 2>&1; then
     echo ""
     echo "ERROR: Python's venv module is not available."
-    echo "  DevOS installs into a project-local .venv (no global packages)."
-    echo "  On Ubuntu/Debian install the OS package that provides venv, e.g.:"
+    echo "  On Ubuntu/Debian:"
     echo "    sudo apt update && sudo apt install -y python3-venv python3-full"
-    echo "  On Ubuntu 24.04+ you may need the versioned package:"
+    echo "  On Ubuntu 24.04+ you may need:"
     echo "    sudo apt install -y python3.12-venv"
     echo "  Then re-run: ./install.sh"
     exit 1
   fi
-
   echo "==> Creating project-local virtual environment: $VENV_DIR"
   if ! python3 -m venv "$VENV_DIR"; then
-    echo ""
     echo "ERROR: Failed to create virtual environment at $VENV_DIR."
-    echo "  On Ubuntu/Debian try:"
-    echo "    sudo apt update && sudo apt install -y python3-venv python3-full"
-    echo "  Then re-run: ./install.sh"
+    echo "  Try: sudo apt install -y python3-venv python3-full"
     exit 1
   fi
 fi
 
-# Always use the venv interpreters from here on (never system pip)
 VENV_PYTHON="$VENV_DIR/bin/python"
 VENV_PIP="$VENV_DIR/bin/pip"
-
 if [[ ! -x "$VENV_PYTHON" ]]; then
-  echo "ERROR: Expected executable $VENV_PYTHON after venv creation, but it is missing."
+  echo "ERROR: Expected executable $VENV_PYTHON after venv creation."
   exit 1
 fi
 
-# ---------------------------------------------------------------------------
-# Install Python dependencies into the venv only
-# ---------------------------------------------------------------------------
 REQ="requirements.txt"
 if [[ -f "$ROOT/requirements-lite.txt" ]]; then
   REQ="requirements-lite.txt"
 fi
-
 echo "==> Installing Python packages from $REQ into .venv"
 "$VENV_PYTHON" -m pip install --upgrade pip -q
 "$VENV_PIP" install -r "$ROOT/$REQ"
 
 # ---------------------------------------------------------------------------
-# .env — create only if missing; never overwrite an existing .env file
+# .env
 # ---------------------------------------------------------------------------
 if [[ ! -f "$ROOT/.env" ]]; then
   if [[ -f "$ROOT/.env.example" ]]; then
@@ -94,7 +89,6 @@ else
   echo "==> .env already exists — leaving it unchanged"
 fi
 
-# Fill JWT_SECRET only when missing or empty (does not rewrite other keys)
 "$VENV_PYTHON" - <<'PY'
 from pathlib import Path
 import re, secrets
@@ -110,27 +104,154 @@ if not re.search(r"^JWT_SECRET=.+", t, re.M) or re.search(r"^JWT_SECRET=\s*$", t
     print("==> Generated JWT_SECRET")
 PY
 
+mkdir -p "$ROOT/data" "$ROOT/workspace" "$ROOT/frontend/templates" "$ROOT/frontend/static"
+
 # ---------------------------------------------------------------------------
-# Prebuilt frontend (required — no Node/npm at runtime)
+# Node 22
 # ---------------------------------------------------------------------------
-if [[ ! -f "$ROOT/frontend/index.html" ]]; then
-  echo "ERROR: frontend/index.html missing — this repo should ship a prebuilt UI"
-  exit 1
-fi
-mkdir -p "$ROOT/frontend/templates" "$ROOT/data" "$ROOT/workspace"
-if [[ ! -f "$ROOT/frontend/templates/index.html" ]]; then
-  cp "$ROOT/frontend/index.html" "$ROOT/frontend/templates/index.html"
-fi
-if [[ ! -d "$ROOT/frontend/static" ]]; then
-  echo "ERROR: frontend/static missing"
+ensure_node22() {
+  local major=""
+  if have_cmd node; then
+    major="$(node_major)"
+    if [[ "$major" == "$NODE_MAJOR_REQUIRED" ]]; then
+      echo "==> Using system Node $(node --version) / npm $(npm --version 2>/dev/null || echo '?')"
+      return 0
+    fi
+    echo "==> System Node is v${major:-unknown}; need Node ${NODE_MAJOR_REQUIRED}.x for frontend build"
+  else
+    echo "==> Node.js not found; will provision Node ${NODE_MAJOR_REQUIRED} LTS locally"
+  fi
+
+  if [[ -x "$NODE_INSTALL_DIR/bin/node" ]]; then
+    export PATH="$NODE_INSTALL_DIR/bin:$PATH"
+    major="$(node_major)"
+    if [[ "$major" == "$NODE_MAJOR_REQUIRED" ]]; then
+      echo "==> Using project-local Node $(node --version)"
+      return 0
+    fi
+  fi
+
+  local arch os_name tarball url tmpdir ver
+  os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$(uname -m)" in
+    x86_64|amd64) arch="x64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *)
+      echo "ERROR: Unsupported architecture $(uname -m) for automatic Node install."
+      echo "  Install Node ${NODE_MAJOR_REQUIRED} LTS manually, then re-run ./install.sh"
+      exit 1
+      ;;
+  esac
+
+  echo "==> Downloading Node.js ${NODE_MAJOR_REQUIRED} LTS (${os_name}-${arch})..."
+  tmpdir="$(mktemp -d)"
+  ver="22.14.0"
+  if have_cmd curl; then
+    local latest
+    latest="$(curl -fsSL "https://nodejs.org/dist/index.json" 2>/dev/null \
+      | python3 -c "import sys,json; rels=json.load(sys.stdin); print(next((r['version'].lstrip('v') for r in rels if r['version'].startswith('v22.')), ''))" \
+      2>/dev/null || true)"
+    [[ -n "$latest" ]] && ver="$latest"
+  fi
+
+  tarball="node-v${ver}-${os_name}-${arch}.tar.xz"
+  url="https://nodejs.org/dist/v${ver}/${tarball}"
+
+  if ! curl -fsSL "$url" -o "${tmpdir}/${tarball}"; then
+    echo "ERROR: Failed to download Node.js from $url"
+    echo "  Install Node ${NODE_MAJOR_REQUIRED} LTS manually (https://nodejs.org/), then re-run ./install.sh"
+    rm -rf "$tmpdir"
+    exit 1
+  fi
+
+  tar -xJf "${tmpdir}/${tarball}" -C "$tmpdir"
+  local extracted
+  extracted="$(find "$tmpdir" -maxdepth 1 -type d -name 'node-v*' | head -1)"
+  if [[ -z "$extracted" ]]; then
+    echo "ERROR: Failed to extract Node.js tarball."
+    rm -rf "$tmpdir"
+    exit 1
+  fi
+  rm -rf "$NODE_INSTALL_DIR"
+  mkdir -p "$(dirname "$NODE_INSTALL_DIR")"
+  mv "$extracted" "$NODE_INSTALL_DIR"
+  rm -rf "$tmpdir"
+
+  export PATH="$NODE_INSTALL_DIR/bin:$PATH"
+  if [[ "$(node_major)" != "$NODE_MAJOR_REQUIRED" ]]; then
+    echo "ERROR: Provisioned Node but version check failed: $(node --version 2>&1)"
+    exit 1
+  fi
+  echo "==> Provisioned project-local Node $(node --version) / npm $(npm --version)"
+}
+
+ensure_node22
+
+if ! have_cmd npm; then
+  echo "ERROR: npm not found after Node provisioning."
   exit 1
 fi
 
-# data / workspace: create dirs only; never wipe existing DB or files
-mkdir -p "$ROOT/data" "$ROOT/workspace"
+# ---------------------------------------------------------------------------
+# Frontend build
+# ---------------------------------------------------------------------------
+FRONTEND_SRC="$ROOT/frontend-src"
+if [[ ! -f "$FRONTEND_SRC/package.json" ]]; then
+  echo "ERROR: frontend-src/package.json missing."
+  exit 1
+fi
+if [[ ! -f "$FRONTEND_SRC/package-lock.json" ]]; then
+  echo "ERROR: frontend-src/package-lock.json missing. Cannot run deterministic npm ci."
+  exit 1
+fi
+
+echo "==> Installing frontend dependencies (npm ci) in frontend-src/"
+(
+  cd "$FRONTEND_SRC"
+  npm_config_registry="${npm_config_registry:-https://registry.npmjs.org/}" \
+    npm ci --no-audit --no-fund
+)
+
+echo "==> Building frontend (npm run build)"
+(
+  cd "$FRONTEND_SRC"
+  CI=true npm_config_registry="${npm_config_registry:-https://registry.npmjs.org/}" \
+    npm run build
+)
+
+BUILD_DIR="$FRONTEND_SRC/build"
+if [[ ! -f "$BUILD_DIR/index.html" ]] || [[ ! -d "$BUILD_DIR/static" ]]; then
+  echo "ERROR: Frontend build did not produce build/index.html and build/static/."
+  exit 1
+fi
+
+echo "==> Synchronizing runtime frontend assets → frontend/"
+mkdir -p "$ROOT/frontend/templates" "$ROOT/frontend/static"
+rm -rf "$ROOT/frontend/static"
+cp -a "$BUILD_DIR/static" "$ROOT/frontend/static"
+cp "$BUILD_DIR/index.html" "$ROOT/frontend/index.html"
+cp "$BUILD_DIR/index.html" "$ROOT/frontend/templates/index.html"
+if [[ -f "$BUILD_DIR/asset-manifest.json" ]]; then
+  cp "$BUILD_DIR/asset-manifest.json" "$ROOT/frontend/asset-manifest.json"
+fi
+
+"$VENV_PYTHON" - <<'PY'
+from pathlib import Path
+import re, sys
+root = Path(".")
+html = (root / "frontend/templates/index.html").read_text()
+refs = re.findall(r'(?:src|href)="(/static/[^"]+)"', html)
+missing = [r for r in refs if not (root / "frontend" / r.lstrip("/")).exists()]
+if missing:
+    print("ERROR: frontend HTML references missing assets:")
+    for m in missing:
+        print(f"  - {m}")
+    sys.exit(1)
+print(f"==> Frontend assets OK ({len(refs)} referenced static files present)")
+PY
 
 # ---------------------------------------------------------------------------
-# Root "devos" launcher → always .venv/bin/python cli.py
+# Launcher
 # ---------------------------------------------------------------------------
 LAUNCHER="$ROOT/devos"
 cat > "$LAUNCHER" << 'LAUNCHER_EOF'
@@ -149,9 +270,6 @@ LAUNCHER_EOF
 chmod +x "$LAUNCHER"
 echo "==> Installed launcher: $LAUNCHER"
 
-# ---------------------------------------------------------------------------
-# Completion
-# ---------------------------------------------------------------------------
 echo ""
 echo "✅ DevOS installation completed successfully"
 echo ""
@@ -160,6 +278,9 @@ echo "   Launcher         : ./devos"
 echo "   Health check     : ./devos doctor"
 echo "   Start web server : ./devos start"
 echo "   Open             : http://localhost:8000"
+echo ""
+echo "   Note: Node/npm were used only to build the frontend."
+echo "   They are NOT required to run ./devos start after installation."
 echo ""
 echo "   Optional LLM     : install Ollama, or set OPENROUTER_API_KEY in .env"
 echo ""

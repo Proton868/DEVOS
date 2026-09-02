@@ -49,96 +49,196 @@ def cmd_start(args):
 
 
 def cmd_build(args):
-    """Build the frontend (React)."""
+    """Build the frontend (developer convenience — not required after ./install.sh)."""
+    import shutil
+    import re as _re
+
     frontend_dir = BASE_DIR / "frontend-src"
     if not frontend_dir.exists():
-        print("❌ frontend-src/ not found. Run from the DevOS root directory.")
+        print("ERROR: frontend-src/ not found. Run from the DevOS root directory.")
         sys.exit(1)
 
-    print("📦 Building frontend...")
+    try:
+        node_ver = subprocess.run(
+            ["node", "--version"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print("ERROR: Node.js not found. Frontend build requires Node.js 22 LTS.")
+        print("  Run ./install.sh (provisions Node automatically), or install Node 22 manually.")
+        sys.exit(1)
+
+    major = node_ver.lstrip("v").split(".")[0]
+    if major != "22":
+        print(f"WARNING: Node {node_ver} detected; this project standardizes on Node 22 LTS.")
+        print("  Continuing, but prefer Node 22 for reproducible builds.")
+
+    try:
+        subprocess.run(["npm", "--version"], capture_output=True, text=True, check=True)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print("ERROR: npm not found. Install Node.js 22 LTS (includes npm).")
+        sys.exit(1)
+
+    pkg = frontend_dir / "package.json"
+    lock = frontend_dir / "package-lock.json"
+    if not pkg.exists():
+        print("ERROR: frontend-src/package.json missing.")
+        sys.exit(1)
+    if not lock.exists():
+        print("ERROR: frontend-src/package-lock.json missing — cannot run npm ci.")
+        sys.exit(1)
+
+    node_modules = frontend_dir / "node_modules"
+    if not node_modules.exists():
+        print("node_modules missing — running npm ci...")
+        env = os.environ.copy()
+        env.setdefault("npm_config_registry", "https://registry.npmjs.org/")
+        result = subprocess.run(
+            ["npm", "ci", "--no-audit", "--no-fund"],
+            cwd=str(frontend_dir),
+            env=env,
+            capture_output=not args.verbose,
+            text=True,
+        )
+        if result.returncode != 0:
+            print("ERROR: npm ci failed:")
+            if result.stderr:
+                print(result.stderr)
+            sys.exit(1)
+        print("Frontend dependencies installed")
+
+    print("Building frontend...")
+    env = os.environ.copy()
+    env["CI"] = "true"
+    env.setdefault("npm_config_registry", "https://registry.npmjs.org/")
     result = subprocess.run(
         ["npm", "run", "build"],
         cwd=str(frontend_dir),
+        env=env,
         capture_output=not args.verbose,
         text=True,
     )
     if result.returncode != 0:
-        print("❌ Build failed:")
-        print(result.stderr)
+        print("ERROR: Build failed:")
+        if result.stderr:
+            print(result.stderr)
+        if result.stdout and not args.verbose:
+            print(result.stdout[-2000:])
         sys.exit(1)
 
-    # Sync build output to frontend/
-    import shutil
     build_dir = frontend_dir / "build"
     frontend_out = BASE_DIR / "frontend"
-    if build_dir.exists():
-        static_dir = frontend_out / "static"
-        templates_dir = frontend_out / "templates"
-        static_dir.mkdir(parents=True, exist_ok=True)
-        templates_dir.mkdir(parents=True, exist_ok=True)
-
-        # Clean and copy
-        if (build_dir / "static").exists():
-            shutil.rmtree(str(static_dir), ignore_errors=True)
-            shutil.copytree(str(build_dir / "static"), str(static_dir))
-        if (build_dir / "index.html").exists():
-            shutil.copy2(str(build_dir / "index.html"), str(templates_dir / "index.html"))
-
-        print("✅ Frontend built and synced to frontend/")
-    else:
-        print("❌ Build output not found at frontend-src/build/")
+    if not (build_dir / "index.html").exists() or not (build_dir / "static").exists():
+        print("ERROR: Build output not found at frontend-src/build/")
         sys.exit(1)
+
+    static_dir = frontend_out / "static"
+    templates_dir = frontend_out / "templates"
+    templates_dir.mkdir(parents=True, exist_ok=True)
+    if static_dir.exists():
+        shutil.rmtree(str(static_dir), ignore_errors=True)
+    shutil.copytree(str(build_dir / "static"), str(static_dir))
+    shutil.copy2(str(build_dir / "index.html"), str(templates_dir / "index.html"))
+    shutil.copy2(str(build_dir / "index.html"), str(frontend_out / "index.html"))
+    manifest = build_dir / "asset-manifest.json"
+    if manifest.exists():
+        shutil.copy2(str(manifest), str(frontend_out / "asset-manifest.json"))
+
+    html = (templates_dir / "index.html").read_text()
+    refs = _re.findall(r'(?:src|href)="(/static/[^"]+)"', html)
+    missing = [r for r in refs if not (frontend_out / r.lstrip("/")).exists()]
+    if missing:
+        print("ERROR: HTML references missing static assets:")
+        for m in missing:
+            print(f"  - {m}")
+        sys.exit(1)
+
+    print("Frontend built and synced to frontend/")
 
 
 def cmd_doctor(args):
-    """Check system health."""
-    print(f"DevOS v{VERSION} — System Check\n")
+    """Check runtime health (Node/npm optional after install)."""
+    print(f"DevOS v{VERSION} — System Check")
+    print()
+    print("DevOS Runtime")
+    runtime_ok = True
 
-    checks = []
-
-    # Python version
     py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-    checks.append(("Python", py_ver, sys.version_info >= (3, 10)))
+    py_ok = sys.version_info >= (3, 11)
+    mark = "OK" if py_ok else "FAIL"
+    extra = "" if py_ok else " (3.11+ required)"
+    print(f"  [{mark}] Python: {py_ver}{extra}")
+    runtime_ok = runtime_ok and py_ok
 
-    # Node.js
+    venv_py = BASE_DIR / ".venv" / "bin" / "python"
+    venv_ok = venv_py.exists()
+    mark = "OK" if venv_ok else "FAIL"
+    print(f"  [{mark}] Virtualenv: {'.venv' if venv_ok else 'missing (run ./install.sh)'}")
+    runtime_ok = runtime_ok and venv_ok
+
+    env_file = BASE_DIR / ".env"
+    env_ok = env_file.exists()
+    mark = "OK" if env_ok else "FAIL"
+    print(f"  [{mark}] Environment: {'.env' if env_ok else 'missing'}")
+    runtime_ok = runtime_ok and env_ok
+
+    data_dir = BASE_DIR / "data"
+    data_ok = data_dir.is_dir()
+    mark = "OK" if data_ok else "FAIL"
+    print(f"  [{mark}] Data: {'data/' if data_ok else 'missing'}")
+    runtime_ok = runtime_ok and data_ok
+
+    workspace = BASE_DIR / "workspace"
+    ws_ok = workspace.is_dir()
+    mark = "OK" if ws_ok else "FAIL"
+    print(f"  [{mark}] Workspace: {'workspace/' if ws_ok else 'missing'}")
+    runtime_ok = runtime_ok and ws_ok
+
+    index_html = BASE_DIR / "frontend" / "templates" / "index.html"
+    static_dir = BASE_DIR / "frontend" / "static"
+    fe_ok = index_html.exists() and static_dir.is_dir()
+    mark = "OK" if fe_ok else "FAIL"
+    detail = "templates/index.html + static/" if fe_ok else "missing runtime assets"
+    print(f"  [{mark}] Frontend: {detail}")
+    runtime_ok = runtime_ok and fe_ok
+
+    if fe_ok:
+        import re as _re
+        html = index_html.read_text()
+        refs = _re.findall(r'(?:src|href)="(/static/[^"]+)"', html)
+        missing = [r for r in refs if not (BASE_DIR / "frontend" / r.lstrip("/")).exists()]
+        assets_ok = not missing
+        mark = "OK" if assets_ok else "FAIL"
+        msg = "all referenced files present" if assets_ok else f"missing {len(missing)} file(s)"
+        print(f"  [{mark}] Runtime assets: {msg}")
+        runtime_ok = runtime_ok and assets_ok
+
+    app_py = BASE_DIR / "app.py"
+    cli_py = BASE_DIR / "cli.py"
+    files_ok = app_py.exists() and cli_py.exists()
+    mark = "OK" if files_ok else "FAIL"
+    print(f"  [{mark}] Application files: {'app.py + cli.py' if files_ok else 'incomplete'}")
+    runtime_ok = runtime_ok and files_ok
+
+    print()
+    print("Frontend Build Tooling (not required for ./devos start after install)")
     try:
         node_ver = subprocess.run(["node", "--version"], capture_output=True, text=True).stdout.strip()
-        checks.append(("Node.js", node_ver, True))
+        print(f"  [info] Node.js: {node_ver} (available; not required for runtime)")
     except FileNotFoundError:
-        checks.append(("Node.js", "not found", False))
+        print("  [info] Node.js: not found (not required for runtime after ./install.sh)")
 
-    # npm
     try:
         npm_ver = subprocess.run(["npm", "--version"], capture_output=True, text=True).stdout.strip()
-        checks.append(("npm", npm_ver, True))
+        print(f"  [info] npm: {npm_ver} (available; not required for runtime)")
     except FileNotFoundError:
-        checks.append(("npm", "not found", False))
+        print("  [info] npm: not found (not required for runtime after ./install.sh)")
 
-    # Git
-    try:
-        git_ver = subprocess.run(["git", "--version"], capture_output=True, text=True).stdout.strip()
-        checks.append(("Git", git_ver, True))
-    except FileNotFoundError:
-        checks.append(("Git", "not found", False))
-
-    # .env
-    env_file = BASE_DIR / ".env"
-    checks.append((".env file", "exists" if env_file.exists() else "missing", env_file.exists()))
-
-    # Data directory
-    data_dir = BASE_DIR / "data"
-    checks.append(("data/ directory", "exists" if data_dir.exists() else "missing", data_dir.exists()))
-
-    # Frontend build
-    index_html = BASE_DIR / "frontend" / "templates" / "index.html"
-    checks.append(("Frontend build", "exists" if index_html.exists() else "missing", index_html.exists()))
-
-    for name, status, ok in checks:
-        icon = "✅" if ok else "❌"
-        print(f"  {icon} {name}: {status}")
-
-    all_ok = all(c[2] for c in checks)
-    print(f"\n{'✅ All checks passed!' if all_ok else '❌ Some checks failed. Run devos build to fix frontend.'}")
+    print()
+    if runtime_ok:
+        print("Runtime health OK — you can run: ./devos start")
+    else:
+        print("Runtime checks failed. Run ./install.sh to complete installation.")
+        print("  (./devos build is only for developers modifying the frontend.)")
 
 
 def cmd_version(args):

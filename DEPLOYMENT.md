@@ -1,4 +1,4 @@
-> **Local default:** `./install.sh` then `./devos start` (SQLite + prebuilt UI). Governance v1 and Reliability architecture v1 are frozen; see docs/STAGING_DRILLS.md for live chaos.
+> **Local default:** `./install.sh` (complete install including frontend build) then `./devos start`. Governance v1 and Reliability architecture v1 are frozen; see docs/STAGING_DRILLS.md for live chaos.
 
 
 # DevOS Deployment Guide

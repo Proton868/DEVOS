@@ -6,16 +6,21 @@ Goals go through a multi-provider **Brain**, **Workers**, **sandboxed execution*
 
 ---
 
-## Quick start (2 commands)
+## Quick start (one installer)
 
 ```bash
-chmod +x install.sh && ./install.sh
+git clone https://github.com/Proton868/DEVOS.git
+cd DEVOS
+./install.sh
+./devos doctor
 ./devos start
 ```
 
 Open **http://localhost:8000**
 
-That’s it. `install.sh` creates a project-local `.venv`, installs Python deps into it, creates `.env` with a secure `JWT_SECRET` (if missing), and verifies the prebuilt frontend. Use the `./devos` launcher so you never need to activate the virtualenv manually.
+`install.sh` performs the **complete** DevOS installation: project-local Python `.venv`, Python dependencies, `.env` + `JWT_SECRET`, Node.js 22 (provisioned automatically if needed), frontend `npm ci` + production build, and runtime asset sync into `frontend/static` and `frontend/templates/`. **No separate frontend installation is required.**
+
+After installation, Node/npm are **not** required to run `./devos start`.
 
 | Check | Command |
 |-------|---------|
@@ -25,12 +30,13 @@ That’s it. `install.sh` creates a project-local `.venv`, installs Python deps 
 
 ---
 
+
 ## Requirements
 
 | Need | Minimum |
 |------|---------|
 | **Python** | **3.11+** (3.12 / 3.13 recommended) |
-| **Node** | Not required to run (only to rebuild UI) |
+| **Node** | Not required at runtime (install.sh provisions Node 22 only to build the UI) |
 | **Docker** | Optional |
 | **Redis / Postgres** | Optional (multi-node / enterprise) |
 

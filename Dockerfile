@@ -14,14 +14,12 @@
 # =============================================================================
 
 # ── Stage 0: Frontend Build ───────────────────────────────────────────────────
-FROM node:20-slim AS frontend-build
+FROM node:22-slim AS frontend-build
 WORKDIR /frontend
-COPY frontend-src/package*.json ./
-# `npm install` instead of `npm ci`: this repo's lock file is not always in
-# sync with package.json. CI will run `npm ci` after a fresh install; local
-# Docker builds use this pragmatic fallback.
-RUN npm install --omit=dev --no-audit --no-fund
+COPY frontend-src/package.json frontend-src/package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY frontend-src/ ./
+ENV CI=true
 RUN npm run build
 
 # ── Stage 1: Micro Profile (SQLite-only, zero external deps) ──────────────────
