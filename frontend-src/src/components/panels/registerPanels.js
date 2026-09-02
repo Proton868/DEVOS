@@ -26,11 +26,11 @@ wrapAsPanel("workflow", {
 // AI Chat — flexible multi-mode chat
 wrapAsPanel("chat", {
   name: "AI Chat",
-  description: "Converse with AI teammates",
+  description: "Converse with AI teammates — the primary DevOS assistant",
   component: lazy(() => import("../sidebar/ChatSidebar")),
   icon: MessageSquare,
   category: "core",
-  defaultSize: { width: 420, height: 600 },
+  defaultSize: { width: 480, height: 720 },
   defaultConfig: { mode: "docked" },
 });
 

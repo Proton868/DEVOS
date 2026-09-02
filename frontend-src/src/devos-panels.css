@@ -928,3 +928,43 @@
   max-height: 85dvh !important;
   border-radius: 16px 16px 0 0 !important;
 }
+
+
+/* ── AI Chat / Assistant panel — first-class sizing ───────────────────── */
+.devos-panel[data-panel-type="chat"],
+.devos-panel-chat {
+  min-width: 320px;
+}
+.devos-panel[data-panel-type="chat"] .devos-panel-body,
+.devos-panel[data-panel-type="chat"] .chat-sidebar,
+.chat-sidebar {
+  min-height: 280px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.chat-sidebar .chat-message,
+.chat-message {
+  font-size: 14px;
+  line-height: 1.55;
+  padding: 10px 12px;
+}
+.chat-sidebar textarea,
+.chat-composer textarea,
+.chat-input textarea {
+  min-height: 44px;
+  font-size: 14px;
+}
+
+/* Prevent the assistant from collapsing into a tiny corner widget */
+[data-mobile="true"] .devos-panel[data-panel-type="chat"],
+[data-mobile="true"] .chat-sidebar {
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  left: 0 !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  border-radius: 0 !important;
+}

@@ -77,7 +77,7 @@ function createDefaultPanels() {
     dock: DOCK_POSITIONS.RIGHT,
     dockGroup: null,
     position: { x: 0, y: 0 },
-    size: { width: 380, height: 0 },
+    size: { width: 480, height: 0 },
     config: { mode: "docked" },
     zIndex: Z_INDEX.docked,
     order: 0,

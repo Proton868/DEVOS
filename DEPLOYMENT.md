@@ -33,7 +33,7 @@ Copy `.env.example` to `.env` and set at least these:
 |---|---|---|
 | `JWT_SECRET` | HS256 signing key for local tokens; also seeds the Fernet secrets vault | `openssl rand -hex 32` |
 | `DATABASE_URL` | SQLAlchemy async URL | `sqlite+aiosqlite:///./data/devos.db` |
-| `AUTH_MODE` | `local`, `supabase`, or `dual` | `dual` |
+| `AUTH_MODE` | `local`, `supabase`, or `dual` (see [docs/AUTH_AND_ISOLATION.md](docs/AUTH_AND_ISOLATION.md)) | `dual` |
 | `ALLOWED_ORIGINS` | CORS allow-list | `https://devos.example.com` |
 
 ### Required for Supabase / dual auth

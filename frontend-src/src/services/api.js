@@ -129,6 +129,27 @@ export async function syncSupabaseSession() {
 
 export async function logout() {
   setToken(null);
+  // Clear user-scoped client caches so a subsequent login cannot leak state
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      if (
+        k === "devos_token" ||
+        k.startsWith("devos_panels") ||
+        k.startsWith("devos_chat") ||
+        k.startsWith("devos_scratch") ||
+        k.startsWith("devos_provider") ||
+        k.startsWith("devos_model") ||
+        k.startsWith("devos-auth") ||
+        k.startsWith("sb-")
+      ) {
+        keys.push(k);
+      }
+    }
+    keys.forEach((k) => localStorage.removeItem(k));
+  } catch {}
   try {
     const { supabase } = await import("./supabase");
     if (supabase) await supabase.auth.signOut();

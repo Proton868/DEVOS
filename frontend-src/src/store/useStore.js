@@ -12,7 +12,23 @@ const useStore = create((set, get) => ({
   user: null,
   authChecked: false,   // true once we've resolved whether the stored token is real
   isAuthenticated: !!getToken(),
-  setUser: (user) => set({ user, isAuthenticated: !!user, authChecked: true }),
+  setUser: (user) => set({ user, isAuthenticated: !!user, authChecked: true }
+  logoutUser: async () => {
+    try { await apiLogout(); } catch (e) {}
+    set({
+      user: null,
+      isAuthenticated: false,
+      chatMessages: [],
+      mentionedFiles: [],
+      terminalContext: null,
+      agentActions: [],
+      providers: {},
+      selectedProvider: localStorage.getItem("devos_provider") || "ollama",
+      selectedModel: localStorage.getItem("devos_model") || "",
+      workspaceSettings: {},
+      status: "",
+    });
+  },),
   logout: async () => {
     // security-audit P2e: clears both the local token AND signs out of any
     // active Supabase session (api.js's logout() handles both — see its

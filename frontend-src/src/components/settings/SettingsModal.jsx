@@ -360,7 +360,7 @@ export default function SettingsModal() {
   if (!settingsOpen) return null;
   const s = local || {};
 
-  const TABS = ["providers","editor","ai","git","ui","theme","marketplace","ucip"];
+  const TABS = ["account","providers","models","ai","appearance","workspace","editor","git","notifications","privacy","marketplace","ucip"];
 
   return (
     <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setSettingsOpen(false); }}>
@@ -379,7 +379,49 @@ export default function SettingsModal() {
           </div>
           <div className="settings-content">
 
-            {tab === "providers" && (
+            {tab === "account" && (
+              <div className="settings-section">
+                <h3 className="settings-section-title">Account</h3>
+                <p className="text-xs text-slate-400 mb-3">Signed-in identity is managed by authentication. Profile fields below are personal preferences.</p>
+                <label className="settings-label">Display name</label>
+                <input className="settings-input" value={(local.account&&local.account.display_name)||""}
+                  onChange={(e)=>patch("account","display_name",e.target.value)} placeholder="Display name" />
+                <p className="text-xs text-slate-500 mt-2">Email and username come from your login identity and cannot be forged via settings.</p>
+              </div>
+            )}
+            {tab === "appearance" && (
+              <div className="settings-section">
+                <h3 className="settings-section-title">Appearance</h3>
+                <label className="settings-label">Theme</label>
+                <select className="settings-input" value={(local.appearance&&local.appearance.theme)||theme||"dark"}
+                  onChange={(e)=>{ patch("appearance","theme",e.target.value); setTheme(e.target.value); }}>
+                  <option value="dark">Dark</option>
+                  <option value="light">Light</option>
+                  <option value="system">System</option>
+                </select>
+                <label className="settings-label mt-3">Density</label>
+                <select className="settings-input" value={(local.appearance&&local.appearance.density)||"comfortable"}
+                  onChange={(e)=>patch("appearance","density",e.target.value)}>
+                  <option value="compact">Compact</option>
+                  <option value="comfortable">Comfortable</option>
+                  <option value="spacious">Spacious</option>
+                </select>
+              </div>
+            )}
+            {tab === "models" && (
+              <div className="settings-section">
+                <h3 className="settings-section-title">Model defaults</h3>
+                <p className="text-xs text-slate-400 mb-2">Per-user defaults. Leave blank to use system/provider defaults.</p>
+                {["default_chat","default_coding","default_reasoning","default_fast"].map((k)=>(
+                  <div key={k} className="mb-2">
+                    <label className="settings-label">{k.replace("default_","")}</label>
+                    <input className="settings-input" value={(local.models&&local.models[k])||""}
+                      onChange={(e)=>patch("models",k,e.target.value)} placeholder="model id" />
+                  </div>
+                ))}
+              </div>
+            )}
+            {{tab === "providers" && (
               <div>
                 <p className="settings-hint">Select the active provider/model below, or edit credentials and endpoints directly.</p>
                 <div className="provider-list">
