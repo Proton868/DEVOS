@@ -821,3 +821,309 @@ code { font-family:var(--font-mono); font-size:.85em; background:var(--bg-3); pa
     width: 100%;
   }
 }
+
+/* ══════════════════════════════════════════════════════════
+   MOBILE SHELL FIX — single-panel, bottom nav, no desktop chrome
+   Applied when [data-mobile="true"] is set on .devos-shell
+   ══════════════════════════════════════════════════════════ */
+
+[data-mobile="true"].devos-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  height: 100vh;
+  max-height: 100dvh;
+  width: 100vw;
+  overflow: hidden;
+  position: fixed;
+  inset: 0;
+}
+
+[data-mobile="true"] .devos-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  overflow: hidden;
+}
+
+[data-mobile="true"] .devos-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+[data-mobile="true"] .devos-sidebar,
+[data-mobile="true"] .devos-sidebar-expanded,
+[data-mobile="true"] .devos-sidebar-compact,
+[data-mobile="true"] .devos-sidebar-hidden-strip,
+[data-mobile="true"] .devos-resize-handle,
+[data-mobile="true"] .devos-floating-layer,
+[data-mobile="true"] .devos-dock-top {
+  display: none !important;
+}
+
+/* Mission bar — compact */
+[data-mobile="true"] .devos-mission-bar {
+  height: 44px !important;
+  min-height: 44px;
+  padding: 0 8px;
+  flex-shrink: 0;
+  gap: 6px;
+}
+[data-mobile="true"] .devos-mission-right,
+[data-mobile="true"] .devos-preset-name,
+[data-mobile="true"] .devos-status-text,
+[data-mobile="true"] .devos-palette-trigger-text,
+[data-mobile="true"] .title-hint {
+  display: none !important;
+}
+[data-mobile="true"] .devos-workspace-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+/* Panel container fills available space */
+[data-mobile="true"] .devos-panel-container,
+[data-mobile="true"] .devos-panel-container-mobile {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-0, #0d1117);
+}
+
+[data-mobile="true"] .devos-mobile-panel-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+[data-mobile="true"] .devos-mobile-panel-host .devos-panel,
+[data-mobile="true"] .devos-mobile-panel-host > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  position: relative !important;
+  left: auto !important;
+  top: auto !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
+/* Hide window chrome that is desktop-only on mobile panels */
+[data-mobile="true"] .devos-panel-controls button[title="Dock left"],
+[data-mobile="true"] .devos-panel-controls button[title="Dock right"],
+[data-mobile="true"] .devos-panel-controls button[title="Dock bottom"],
+[data-mobile="true"] .devos-panel-controls button[title="Float"] {
+  display: none !important;
+}
+
+[data-mobile="true"] .devos-panel-header {
+  min-height: 40px;
+  padding: 0 10px;
+  flex-shrink: 0;
+}
+
+[data-mobile="true"] .devos-panel-body,
+[data-mobile="true"] .devos-panel-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+[data-mobile="true"] .devos-mobile-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-2, #8b949e);
+  font-size: 14px;
+  padding: 24px;
+  text-align: center;
+}
+
+/* Bottom tab bar */
+[data-mobile="true"] .mobile-nav {
+  display: flex !important;
+  position: relative;
+  flex-shrink: 0;
+  height: var(--mobile-nav-h, 56px);
+  min-height: var(--mobile-nav-h, 56px);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  background: var(--bg-1, #161b22);
+  border-top: 1px solid var(--border, rgba(255,255,255,0.08));
+  z-index: 100;
+  width: 100%;
+  align-items: stretch;
+  justify-content: space-around;
+}
+
+.mobile-nav-tab {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-2, #8b949e);
+  font-size: 10px;
+  padding: 6px 2px;
+  min-width: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.mobile-nav-tab.active {
+  color: var(--accent, #58a6ff);
+}
+.mobile-nav-label {
+  font-size: 10px;
+  line-height: 1.1;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* More menu sheet */
+.mobile-more-menu {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(var(--mobile-nav-h, 56px) + env(safe-area-inset-bottom, 0px) + 8px);
+  background: var(--bg-1, #161b22);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  border-radius: 12px;
+  padding: 8px;
+  z-index: 120;
+  box-shadow: 0 -8px 32px rgba(0,0,0,0.45);
+  max-height: 50vh;
+  overflow: auto;
+}
+.mobile-more-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2, #8b949e);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mobile-more-close-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  padding: 4px;
+}
+.mobile-more-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.mobile-more-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--bg-2, #21262d);
+  color: var(--text-1, #e6edf3);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.mobile-more-item.active {
+  border-color: rgba(88, 166, 255, 0.35);
+  background: rgba(88, 166, 255, 0.1);
+  color: var(--accent, #58a6ff);
+}
+
+/* Onboarding / welcome modal — fit phone */
+[data-mobile="true"] .devos-onboarding-overlay,
+[data-mobile="true"] .devos-onboarding-modal,
+[data-mobile="true"] .onboarding-wizard,
+[data-mobile="true"] .devos-shortcut-modal {
+  max-width: calc(100vw - 24px) !important;
+  max-height: calc(100dvh - 80px) !important;
+  width: 100% !important;
+  margin: 12px !important;
+  border-radius: 12px !important;
+  overflow: auto;
+}
+
+/* Workflow / graph canvas — prevent overflow */
+[data-mobile="true"] .workflow-canvas,
+[data-mobile="true"] .graph-canvas,
+[data-mobile="true"] .automation-hub {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100vw;
+  overflow: hidden;
+}
+
+/* Chat composer safe area */
+[data-mobile="true"] .chat-composer,
+[data-mobile="true"] .composer-input-row {
+  padding-bottom: 4px;
+}
+
+/* Prevent body rubber-band scroll fighting the app shell */
+@media (max-width: 767px) {
+  html, body, #root {
+    height: 100%;
+    height: 100dvh;
+    overflow: hidden;
+    position: fixed;
+    width: 100%;
+    overscroll-behavior: none;
+  }
+  .mobile-nav { display: flex; }
+}
+
+[data-mobile="true"] .devos-onboarding-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  display: flex !important;
+  align-items: flex-end !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  z-index: 1000;
+  background: rgba(0,0,0,0.55);
+}
+[data-mobile="true"] .devos-onboarding-modal {
+  width: 100% !important;
+  max-width: 100% !important;
+  max-height: 85dvh !important;
+  margin: 0 !important;
+  border-radius: 16px 16px 0 0 !important;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px)) !important;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+[data-mobile="true"] .devos-onboarding-footer {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+[data-mobile="true"] .devos-onboarding-btn {
+  flex: 1 1 auto;
+  min-height: 44px;
+}

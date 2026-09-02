@@ -26,6 +26,7 @@ import { useResponsive } from "../../hooks/useResponsive";
 import { applyThemeToDOM } from "../../store/themeStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { lazy, Suspense } from "react";
+import MobileNav from "../mobile/MobileNav";
 
 // Lazy load onboarding (only shows on first run)
 const OnboardingWizard = lazy(() => import("../onboarding/OnboardingWizard"));
@@ -51,22 +52,25 @@ export default function DockableLayout() {
   return (
     <DndProvider backend={HTML5Backend}>
       <div className="devos-shell" data-mobile={isMobile} data-tablet={isTablet}>
-        {/* Top mission bar */}
+        {/* Top mission bar — compact on mobile */}
         <MissionBar />
 
         {/* Main content area */}
         <div className="devos-main">
-          {/* Three-state sidebar */}
-          <ThreeStateSidebar />
+          {/* Desktop/tablet sidebar only */}
+          {!isMobile && <ThreeStateSidebar />}
 
-          {/* Panel container with dock zones */}
+          {/* Panel container with dock zones (single-panel on mobile) */}
           <main className="devos-content" role="main">
             <PanelContainer />
           </main>
         </div>
 
-        {/* Keyboard shortcut cheatsheet overlay */}
-        {showCheatsheet && (
+        {/* Mobile bottom navigation */}
+        {isMobile && <MobileNav />}
+
+        {/* Keyboard shortcut cheatsheet overlay (desktop primarily) */}
+        {showCheatsheet && !isMobile && (
           <ShortcutCheatsheet shortcuts={shortcuts} onClose={toggleCheatsheet} />
         )}
 

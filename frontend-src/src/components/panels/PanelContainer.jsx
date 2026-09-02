@@ -10,6 +10,7 @@ import { panelRegistry } from "./panelRegistry";
 import { Panel } from "./Panel";
 import { DockZone, FloatingDockZone } from "./DockZone";
 import { PANEL_STATES } from "../../theme/tokens";
+import { useResponsive } from "../../hooks/useResponsive";
 
 const Spin = () => (
   <div className="flex items-center justify-center h-full text-slate-400 text-xs">
@@ -114,7 +115,34 @@ function FullscreenPanel() {
 export const PanelContainer = React.memo(function PanelContainer() {
   const panels = usePanelStore((s) => s.panels);
   const dockOrder = usePanelStore((s) => s.dockOrder);
+  const activePanelId = usePanelStore((s) => s.activePanelId);
+  const { isMobile } = useResponsive();
 
+  // ── Mobile: single full-screen active panel ──────────────────────────
+  if (isMobile) {
+    const active =
+      panels.find((p) => p.id === activePanelId && p.state !== PANEL_STATES.HIDDEN) ||
+      panels.find((p) => p.state !== PANEL_STATES.HIDDEN) ||
+      null;
+
+    return (
+      <div className="devos-panel-container devos-panel-container-mobile">
+        {active ? (
+          <div className="devos-mobile-panel-host">
+            <Panel key={active.id} panel={active}>
+              <PanelContent panel={active} />
+            </Panel>
+          </div>
+        ) : (
+          <div className="devos-mobile-empty">
+            <p>Select a panel from the bottom navigation</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Desktop / tablet: multi-dock layout ──────────────────────────────
   const hasLeft = (dockOrder.left || []).length > 0;
   const hasRight = (dockOrder.right || []).length > 0;
   const hasTop = (dockOrder.top || []).length > 0;
