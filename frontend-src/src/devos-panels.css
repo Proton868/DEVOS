@@ -850,3 +850,81 @@
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-3);
 }
+
+/* ── Mobile single-panel shell (also in devos.css; duplicated for load safety) ── */
+[data-mobile="true"].devos-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  position: fixed;
+  inset: 0;
+}
+[data-mobile="true"] .devos-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+[data-mobile="true"] .devos-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+[data-mobile="true"] .devos-sidebar,
+[data-mobile="true"] .devos-resize-handle,
+[data-mobile="true"] .devos-floating-layer {
+  display: none !important;
+}
+[data-mobile="true"] .devos-mission-bar {
+  height: 44px !important;
+  min-height: 44px;
+  flex-shrink: 0;
+  padding: 0 8px;
+}
+[data-mobile="true"] .devos-panel-container-mobile,
+[data-mobile="true"] .devos-panel-container {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+[data-mobile="true"] .devos-mobile-panel-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+[data-mobile="true"] .devos-mobile-panel-host .devos-panel {
+  flex: 1;
+  min-height: 0;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  position: relative !important;
+}
+[data-mobile="true"] .mobile-nav {
+  display: flex !important;
+  flex-shrink: 0;
+  height: 56px;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  border-top: 1px solid var(--border, rgba(255,255,255,0.08));
+  background: var(--bg-1, #161b22);
+  z-index: 100;
+  align-items: stretch;
+  justify-content: space-around;
+}
+[data-mobile="true"] .devos-onboarding-overlay {
+  align-items: flex-end !important;
+}
+[data-mobile="true"] .devos-onboarding-modal {
+  width: 100% !important;
+  max-width: 100% !important;
+  max-height: 85dvh !important;
+  border-radius: 16px 16px 0 0 !important;
+}

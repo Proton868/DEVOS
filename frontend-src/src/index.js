@@ -3,6 +3,10 @@ import ReactDOM from "react-dom/client";
 import "./index.css";
 import "./devos-panels.css";
 import "./devos-workflow.css";
+import "./devos.css";
+import "./devos-extra.css";
+import "./devos-premium.css";
+import "./devos-light.css";
 import "./components/panels/registerPanels";
 import App from "./App";
 
