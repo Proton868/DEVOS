@@ -82,7 +82,7 @@ if [[ ! -f "$ROOT/.env" ]]; then
   if [[ -f "$ROOT/.env.example" ]]; then
     cp "$ROOT/.env.example" "$ROOT/.env"
   else
-    printf 'DEBUG=true\nJWT_SECRET=\nDEFAULT_PROVIDER=ollama\nDATABASE_URL=sqlite+aiosqlite:///./data/devos.db\n' > "$ROOT/.env"
+    printf 'DEBUG=true\nJWT_SECRET=\nDEFAULT_PROVIDER=ollama\nDATABASE_URL=sqlite+aiosqlite:///./data/devos.db\nADMIN_USER=Admin\nADMIN_EMAIL=admin@localhost\nADMIN_PASSWORD=123456..\n' > "$ROOT/.env"
   fi
   echo "==> Created .env"
 else

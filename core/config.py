@@ -79,9 +79,9 @@ class Settings(BaseSettings):
         if not self.JWT_SECRET:
             self.JWT_SECRET = _get_or_create_persisted_secret()
     JWT_EXPIRE_HOURS: int = 168
-    ADMIN_USER: str = "admin"
+    ADMIN_USER: str = "Admin"
     ADMIN_EMAIL: str = "admin@localhost"
-    ADMIN_PASSWORD: str = ""
+    ADMIN_PASSWORD: str = "123456.."
 
     # Supabase
     SUPABASE_URL: str = ""
