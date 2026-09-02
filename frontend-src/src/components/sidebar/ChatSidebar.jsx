@@ -79,6 +79,8 @@ function MentionPicker({ query, fileTree, onSelect, onClose }) {
   );
 }
 
+const ASSISTANT_TITLE = "Wozzy / Nuha";
+
 export default function ChatSidebar() {
   const {
     chatMessages, addChatMessage, updateLastAssistantMessage, clearChat,
@@ -192,9 +194,9 @@ export default function ChatSidebar() {
   }, []);
 
   return (
-    <div className="chat-sidebar">
+    <div className="chat-sidebar" data-assistant="wozzy-nuha">
       <div className="chat-header">
-        <span>Chat</span>
+        <span>{ASSISTANT_TITLE}</span>
         <div className="chat-header-actions">
           {activeFile && <span className="chat-context-badge" title={activeFile.path}>{activeFile.name}</span>}
           <button

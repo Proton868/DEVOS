@@ -2,6 +2,7 @@ import React, { useState, useEffect, Suspense, lazy } from "react";
 import { X, CheckCircle, AlertCircle, ExternalLink, Save, Loader, Search, Download, Package } from "lucide-react";
 import useStore from "../../store/useStore";
 import { api } from "../../services/api";
+import UserProviderCredentials from "./UserProviderCredentials";
 
 // Lazy load ThemeCustomizer to avoid heavy initial bundle
 const ThemeCustomizer = lazy(() => import("../settings/ThemeCustomizer"));
@@ -382,11 +383,23 @@ export default function SettingsModal() {
             {tab === "account" && (
               <div className="settings-section">
                 <h3 className="settings-section-title">Account</h3>
-                <p className="text-xs text-slate-400 mb-3">Signed-in identity is managed by authentication. Profile fields below are personal preferences.</p>
+                <p className="settings-hint">Signed-in identity is managed by authentication. Profile fields below are personal preferences.</p>
                 <label className="settings-label">Display name</label>
                 <input className="settings-input" value={(local.account&&local.account.display_name)||""}
                   onChange={(e)=>patch("account","display_name",e.target.value)} placeholder="Display name" />
-                <p className="text-xs text-slate-500 mt-2">Email and username come from your login identity and cannot be forged via settings.</p>
+                <p className="settings-hint" style={{marginTop:8}}>Email and username come from your login identity and cannot be forged via settings.</p>
+                <div style={{marginTop:16, borderTop:"1px solid var(--border)", paddingTop:12}}>
+                  <h4 className="settings-section-title">Security</h4>
+                  <button className="btn-secondary" onClick={async () => {
+                    try {
+                      const { usePanelStore } = await import("../../store/panelStore");
+                      usePanelStore.getState().resetLayout?.();
+                    } catch {}
+                    const logout = useStore.getState().logout || useStore.getState().logoutUser;
+                    if (logout) await logout();
+                    setSettingsOpen(false);
+                  }}>Log out</button>
+                </div>
               </div>
             )}
             {tab === "appearance" && (
@@ -411,19 +424,38 @@ export default function SettingsModal() {
             {tab === "models" && (
               <div className="settings-section">
                 <h3 className="settings-section-title">Model defaults</h3>
-                <p className="text-xs text-slate-400 mb-2">Per-user defaults. Leave blank to use system/provider defaults.</p>
-                {["default_chat","default_coding","default_reasoning","default_fast"].map((k)=>(
+                <p className="settings-hint">Per-user defaults used when a request does not specify a model. Explicit agent/session model always wins.</p>
+                {[
+                  ["default_chat", "Default chat model"],
+                  ["default_coding", "Default coding model"],
+                  ["default_reasoning", "Default reasoning model"],
+                  ["default_fast", "Default fast model"],
+                  ["default_vision", "Default vision model"],
+                ].map(([k, label]) => (
                   <div key={k} className="mb-2">
-                    <label className="settings-label">{k.replace("default_","")}</label>
-                    <input className="settings-input" value={(local.models&&local.models[k])||""}
-                      onChange={(e)=>patch("models",k,e.target.value)} placeholder="model id" />
+                    <label className="settings-label">{label}</label>
+                    <input
+                      className="settings-input"
+                      list="devos-available-models"
+                      value={(local.models && local.models[k]) || ""}
+                      onChange={(e) => patch("models", k, e.target.value)}
+                      placeholder="Leave blank for system default"
+                    />
                   </div>
                 ))}
+                <datalist id="devos-available-models">
+                  {(providers[selectedProvider]?.models || []).map((m) => (
+                    <option key={m.id || m} value={m.id || m} />
+                  ))}
+                </datalist>
               </div>
             )}
             {tab === "providers" && (
               <div>
-                <p className="settings-hint">Select the active provider/model below, or edit credentials and endpoints directly.</p>
+                <p className="settings-hint">Select the active provider/model below. Your personal API keys are stored encrypted per account.</p>
+                <UserProviderCredentials />
+                <h4 className="settings-section-title" style={{ marginTop: 20 }}>System provider configuration</h4>
+                <p className="settings-hint">Server-wide defaults (admin). Changing these does not replace other users&apos; personal credentials.</p>
                 <div className="provider-list">
                   {Object.entries(providers).map(([id, p]) => (
                     <div key={id}

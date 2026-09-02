@@ -239,3 +239,15 @@ class TestModelPreferenceIsolation:
         assert ma["default_chat"] == "model-A"
         assert mb["default_chat"] == "model-B"
         assert ma["default_chat"] != mb["default_chat"]
+
+
+class TestPathTraversal:
+    def test_file_path_escape_rejected(self, two_clients):
+        a = two_clients["alice_c"]
+        # Ensure project exists via tree
+        tree = a.get("/api/files/default/tree")
+        # tree may 200 even if empty
+        assert tree.status_code in (200, 404)
+        for bad in ("../../etc/passwd", "../bob_iso/secret", "/etc/passwd", "..\\..\\windows\\system32"):
+            r = a.get("/api/files/default/read", params={"path": bad})
+            assert r.status_code in (400, 404), f"{bad} -> {r.status_code} {r.text[:120]}"

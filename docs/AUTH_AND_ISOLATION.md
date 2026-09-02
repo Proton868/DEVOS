@@ -71,3 +71,17 @@ System `.env` keys remain admin-only via `PUT /api/models/providers/config` (`is
 ## Workflow ownership
 
 In-memory workflow engine entries carry `owner_id`. List/get/update/delete are filtered to the authenticated user.
+
+## Model resolution
+
+```
+Explicit agent/session/request model
+  → User model preference (/api/settings/models)
+  → Provider/system default (.env / DEFAULT_PROVIDER models)
+```
+
+Tenant-level model defaults are **not** implemented. Do not assume a
+tenant default layer exists.
+
+`resolve_user_model()` implements the user preference step; callers that
+pass an explicit model skip user prefs.

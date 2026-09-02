@@ -42,11 +42,33 @@ class BrainLLM:
         return cls._shared_http
 
     def __init__(self, provider: Optional[str] = None, model: Optional[str] = None,
-                 user_id: Optional[str] = None):
+                 user_id: Optional[str] = None, *, purpose: str = "chat"):
         self.provider = provider or settings.DEFAULT_PROVIDER
-        self.model = model
         self.user_id = user_id
+        self.purpose = purpose  # chat | coding | reasoning | fast | vision
+        # Explicit model wins; otherwise fall back to this user's preference,
+        # then leave None so provider-specific system defaults apply.
+        self.model = model or self._user_default_model(user_id, purpose)
         self._http = self._get_http_client()
+
+    @staticmethod
+    def _user_default_model(user_id: Optional[str], purpose: str) -> Optional[str]:
+        if not user_id:
+            return None
+        key = {
+            "chat": "default_chat",
+            "coding": "default_coding",
+            "reasoning": "default_reasoning",
+            "fast": "default_fast",
+            "vision": "default_vision",
+        }.get(purpose, "default_chat")
+        try:
+            # Sync lookup is intentionally avoided — callers that need DB
+            # should pass model explicitly. Prefs are loaded at request
+            # time in routes via resolve_user_model().
+            return None
+        except Exception:
+            return None
 
     async def decide(self, messages: list[dict]) -> Optional[dict]:
         providers = [self.provider] + [
@@ -290,3 +312,34 @@ class BrainLLM:
         cleanup semantics — that expectation would now be wrong, and this
         docstring is where a future reader finds out why."""
         pass
+
+
+async def resolve_user_model(db, user_id: str, purpose: str = "chat",
+                             explicit: Optional[str] = None) -> Optional[str]:
+    """Agent/request explicit model → user preference → None (system default).
+
+    Tenant defaults are not implemented; document Agent → User → System.
+    """
+    if explicit:
+        return explicit
+    if not user_id:
+        return None
+    try:
+        from sqlalchemy import select
+        from core.database import UserSettings
+        r = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
+        row = r.scalar_one_or_none()
+        if not row or not row.settings_json:
+            return None
+        models = (row.settings_json.get("models") or {})
+        key = {
+            "chat": "default_chat",
+            "coding": "default_coding",
+            "reasoning": "default_reasoning",
+            "fast": "default_fast",
+            "vision": "default_vision",
+        }.get(purpose, "default_chat")
+        val = (models.get(key) or "").strip()
+        return val or None
+    except Exception:
+        return None

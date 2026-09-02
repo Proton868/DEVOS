@@ -9,6 +9,7 @@ from typing import Optional
 from sqlalchemy import select, desc
 from core.database import get_db, ChatSession, Message
 from api.routes.auth import get_current_user
+from brain.llm import resolve_user_model
 from governance.tenant_store import ensure_personal_tenant
 from api.deps import tenant_ctx
 
@@ -117,7 +118,7 @@ async def edit(req: EditReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
-    brain = BrainLLM(provider=req.providerId, model=req.model, user_id=user.id)
+    brain = BrainLLM(provider=req.providerId or provider, model=model or req.model, user_id=user.id)
 
     lang_hint = f" ({req.language})" if req.language else ""
     if req.selectedCode.strip():
@@ -174,7 +175,7 @@ async def explain(req: ExplainReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
-    brain = BrainLLM(provider=req.providerId, model=req.model, user_id=user.id)
+    brain = BrainLLM(provider=req.providerId or provider, model=model or req.model, user_id=user.id)
 
     lang_hint = f" ({req.language})" if req.language else ""
     system = (
@@ -244,6 +245,10 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
     messages += [{"role":m.role,"content":m.content} for m in history]
     messages.append({"role":"user","content":req.message})
 
+    model = await resolve_user_model(db, user.id, "chat", explicit=req.model or session.model or None)
+    provider = req.provider or session.provider or "ollama"
+    if model and not session.model:
+        session.model = model
     db.add(Message(session_id=session.id, role="user", content=req.message))
     session.updated_at = datetime.now(timezone.utc)
     if not history: session.title = req.message[:80]

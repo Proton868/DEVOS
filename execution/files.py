@@ -33,10 +33,21 @@ class FileService:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _resolve(self, rel_path: str) -> Path:
-        """Resolve a relative path inside the project root; refuse escapes."""
-        rel_path = (rel_path or "").lstrip("/")
+        """Resolve a relative path inside the project root; refuse escapes.
+
+        Canonicalize before authorization: resolve() follows symlinks, then
+        we verify the final target still lives under the project root.
+        """
+        rel_path = (rel_path or "").replace("\\", "/").lstrip("/")
+        # Reject empty / absolute / null-byte paths early
+        if not rel_path or "\x00" in rel_path or rel_path.startswith("/"):
+            if not rel_path:
+                return self.root
+            raise PathViolation(f"Invalid path: {rel_path!r}")
         candidate = (self.root / rel_path).resolve()
-        if candidate != self.root and self.root not in candidate.parents:
+        try:
+            candidate.relative_to(self.root)
+        except ValueError:
             raise PathViolation(f"Path escapes project root: {rel_path}")
         return candidate
 

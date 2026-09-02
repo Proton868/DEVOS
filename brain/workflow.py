@@ -195,8 +195,13 @@ class Workflow:
 
 
 class WorkflowEngine:
-    """In-memory workflow registry. For production, replace with Supabase-backed
-    storage. The interface stays the same — store/load/delete/list."""
+    """In-memory workflow registry.
+
+    TODO(technical-debt): Persist workflow definitions in the database before
+    production multi-instance deployment. Ownership (owner_id) is enforced, but
+    process restart currently loses definitions. Prefer WorkflowRecord / SQLite
+    or Postgres when promoting beyond single-process hosting.
+    """
 
     def __init__(self):
         self._workflows: dict[str, Workflow] = {}
