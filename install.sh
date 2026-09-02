@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # DevOS — one-step local install (self-contained: SQLite + prebuilt UI)
 # Uses a project-local .venv so no global pip / --break-system-packages is needed.
+# Safe on Ubuntu 24.04+ with PEP 668 (externally-managed-environment).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -27,37 +28,48 @@ PYTHON_BIN="$(command -v python3)"
 echo "==> Using $PYTHON_BIN ($(python3 --version 2>&1))"
 
 # ---------------------------------------------------------------------------
-# Virtual environment (project-local .venv)
+# Virtual environment (project-local .venv) — never global pip
 # ---------------------------------------------------------------------------
 VENV_DIR="$ROOT/.venv"
 
 if [[ -d "$VENV_DIR" && -x "$VENV_DIR/bin/python" ]]; then
   echo "==> Reusing existing virtual environment: $VENV_DIR"
 else
+  # Fail early with a clear OS-package hint if venv support is missing
+  if ! python3 -c "import venv" >/dev/null 2>&1; then
+    echo ""
+    echo "ERROR: Python's venv module is not available."
+    echo "  DevOS installs into a project-local .venv (no global packages)."
+    echo "  On Ubuntu/Debian install the OS package that provides venv, e.g.:"
+    echo "    sudo apt update && sudo apt install -y python3-venv python3-full"
+    echo "  On Ubuntu 24.04+ you may need the versioned package:"
+    echo "    sudo apt install -y python3.12-venv"
+    echo "  Then re-run: ./install.sh"
+    exit 1
+  fi
+
   echo "==> Creating project-local virtual environment: $VENV_DIR"
   if ! python3 -m venv "$VENV_DIR"; then
     echo ""
-    echo "ERROR: Failed to create virtual environment."
-    echo "  The 'venv' module is unavailable or incomplete."
-    echo "  On Ubuntu/Debian install the package that provides it, e.g.:"
+    echo "ERROR: Failed to create virtual environment at $VENV_DIR."
+    echo "  On Ubuntu/Debian try:"
     echo "    sudo apt update && sudo apt install -y python3-venv python3-full"
-    echo "  (On Ubuntu 24.04+ the package is usually python3.12-venv or python3-venv.)"
     echo "  Then re-run: ./install.sh"
     exit 1
   fi
 fi
 
-# Always use the venv interpreters from here on
+# Always use the venv interpreters from here on (never system pip)
 VENV_PYTHON="$VENV_DIR/bin/python"
 VENV_PIP="$VENV_DIR/bin/pip"
 
 if [[ ! -x "$VENV_PYTHON" ]]; then
-  echo "ERROR: Expected $VENV_PYTHON after venv creation, but it is missing."
+  echo "ERROR: Expected executable $VENV_PYTHON after venv creation, but it is missing."
   exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# Install Python dependencies into the venv
+# Install Python dependencies into the venv only
 # ---------------------------------------------------------------------------
 REQ="requirements.txt"
 if [[ -f "$ROOT/requirements-lite.txt" ]]; then
@@ -69,7 +81,7 @@ echo "==> Installing Python packages from $REQ into .venv"
 "$VENV_PIP" install -r "$ROOT/$REQ"
 
 # ---------------------------------------------------------------------------
-# .env — create only if missing; generate JWT_SECRET if empty
+# .env — create only if missing; never overwrite an existing .env file
 # ---------------------------------------------------------------------------
 if [[ ! -f "$ROOT/.env" ]]; then
   if [[ -f "$ROOT/.env.example" ]]; then
@@ -82,7 +94,7 @@ else
   echo "==> .env already exists — leaving it unchanged"
 fi
 
-# Generate JWT_SECRET if missing or empty (safe to re-run)
+# Fill JWT_SECRET only when missing or empty (does not rewrite other keys)
 "$VENV_PYTHON" - <<'PY'
 from pathlib import Path
 import re, secrets
@@ -99,7 +111,7 @@ if not re.search(r"^JWT_SECRET=.+", t, re.M) or re.search(r"^JWT_SECRET=\s*$", t
 PY
 
 # ---------------------------------------------------------------------------
-# Prebuilt frontend (required — no Node/npm needed at runtime)
+# Prebuilt frontend (required — no Node/npm at runtime)
 # ---------------------------------------------------------------------------
 if [[ ! -f "$ROOT/frontend/index.html" ]]; then
   echo "ERROR: frontend/index.html missing — this repo should ship a prebuilt UI"
@@ -114,13 +126,11 @@ if [[ ! -d "$ROOT/frontend/static" ]]; then
   exit 1
 fi
 
-# ---------------------------------------------------------------------------
-# Ensure data / workspace dirs exist (do not overwrite existing content)
-# ---------------------------------------------------------------------------
+# data / workspace: create dirs only; never wipe existing DB or files
 mkdir -p "$ROOT/data" "$ROOT/workspace"
 
 # ---------------------------------------------------------------------------
-# Install / refresh the root "devos" launcher
+# Root "devos" launcher → always .venv/bin/python cli.py
 # ---------------------------------------------------------------------------
 LAUNCHER="$ROOT/devos"
 cat > "$LAUNCHER" << 'LAUNCHER_EOF'
@@ -140,13 +150,13 @@ chmod +x "$LAUNCHER"
 echo "==> Installed launcher: $LAUNCHER"
 
 # ---------------------------------------------------------------------------
-# Completion message
+# Completion
 # ---------------------------------------------------------------------------
 echo ""
 echo "✅ DevOS installation completed successfully"
 echo ""
 echo "   Install location : $ROOT"
-echo "   Launcher         : ./devos   (or $LAUNCHER)"
+echo "   Launcher         : ./devos"
 echo "   Health check     : ./devos doctor"
 echo "   Start web server : ./devos start"
 echo "   Open             : http://localhost:8000"

@@ -6,7 +6,7 @@ Aligned with **Governance v1 + Reliability v1** freeze (`main` tip including cha
 
 | Item | Status |
 |------|--------|
-| `./install.sh` | One step: pip + `.env` + JWT + frontend check |
+| `./install.sh` | One step: project-local `.venv` + deps + `.env` + JWT + frontend |
 | Prebuilt `frontend/` | No Node required to run |
 | Default DB | SQLite (`./data/devos.db`) |
 | Docker | Optional (`docker compose up --build`) |
@@ -56,6 +56,6 @@ Aligned with **Governance v1 + Reliability v1** freeze (`main` tip including cha
 
 1. `./install.sh`
 2. Optional: start Ollama or set a provider key in `.env`
-3. `python3 cli.py start`
+3. `./devos start`
 4. Open http://localhost:8000
-5. `python3 cli.py doctor` if issues
+5. `./devos doctor` if issues

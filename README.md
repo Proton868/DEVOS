@@ -108,17 +108,12 @@ docs/                   Status, staging drills, hardening
 
 ## Other ways to run
 
-**Manual pip**
+**Manual (without install.sh)**
 
 ```bash
-cp .env.example .env   # then set JWT_SECRET or run install.sh
-# Prefer the installer (creates .venv automatically):
-./install.sh
-./devos start
-
-# Or manually:
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-lite.txt   # or requirements.txt
+cp -n .env.example .env 2>/dev/null || true
 ./devos start
 ```
 
