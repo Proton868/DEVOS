@@ -13,7 +13,7 @@ Aligned with **Governance v1 + Reliability v1** freeze (`main` tip including cha
 | Redis / Postgres | Optional (multi-node / enterprise) |
 
 ```bash
-./install.sh && python3 cli.py start   # → http://localhost:8000
+./install.sh && ./devos start   # → http://localhost:8000
 ```
 
 ## Backend capabilities
