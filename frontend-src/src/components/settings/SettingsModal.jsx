@@ -421,7 +421,7 @@ export default function SettingsModal() {
                 ))}
               </div>
             )}
-            {{tab === "providers" && (
+            {tab === "providers" && (
               <div>
                 <p className="settings-hint">Select the active provider/model below, or edit credentials and endpoints directly.</p>
                 <div className="provider-list">

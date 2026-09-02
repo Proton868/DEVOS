@@ -12,7 +12,7 @@ const useStore = create((set, get) => ({
   user: null,
   authChecked: false,   // true once we've resolved whether the stored token is real
   isAuthenticated: !!getToken(),
-  setUser: (user) => set({ user, isAuthenticated: !!user, authChecked: true }
+  setUser: (user) => set({ user, isAuthenticated: !!user, authChecked: true }),
   logoutUser: async () => {
     try { await apiLogout(); } catch (e) {}
     set({
@@ -28,13 +28,23 @@ const useStore = create((set, get) => ({
       workspaceSettings: {},
       status: "",
     });
-  },),
+  },
   logout: async () => {
     // security-audit P2e: clears both the local token AND signs out of any
     // active Supabase session (api.js's logout() handles both — see its
     // docstring), so a dual-auth user is fully logged out either way.
     await apiLogout();
-    set({ user: null, isAuthenticated: false, authChecked: true });
+    set({
+      user: null,
+      isAuthenticated: false,
+      authChecked: true,
+      chatMessages: [],
+      mentionedFiles: [],
+      terminalContext: null,
+      agentActions: [],
+      workspaceSettings: {},
+      status: "",
+    });
   },
 
   // ── File Tree ──────────────────────────────────────────────

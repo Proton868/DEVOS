@@ -1,0 +1,2 @@
+"use strict";(globalThis.webpackChunkdevos_frontend||=[]).push([[68],{6068(e,s,t){t.r(s),t.d(s,{default:()=>c});var n=t(5043),a=t(579);const l=n.lazy(()=>t.e(780).then(()=>t(2780)));function c(e){return(0,a.jsx)(n.Suspense,{fallback:(0,a.jsx)("div",{className:"text-slate-400 text-xs p-4",children:"Loading files..."}),children:(0,a.jsx)(l,{...e})})}}}]);
+//# sourceMappingURL=68.308f1aa0.chunk.js.map
