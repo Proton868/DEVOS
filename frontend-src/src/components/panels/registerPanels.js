@@ -25,8 +25,8 @@ wrapAsPanel("workflow", {
 
 // AI Chat — flexible multi-mode chat
 wrapAsPanel("chat", {
-  name: "AI Chat",
-  description: "Converse with AI teammates — the primary DevOS assistant",
+  name: "Wozzy / Nuha",
+  description: "DevOS assistant (Wozzy / Nuha) — primary conversational surface",
   component: lazy(() => import("../sidebar/ChatSidebar")),
   icon: MessageSquare,
   category: "core",

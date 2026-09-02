@@ -108,6 +108,42 @@ export default function App() {
     });
   }, [setUser, setStatus]);
 
+  // Prefer Supabase SDK session events over manual hash parsing alone
+  useEffect(() => {
+    let unsub = () => {};
+    (async () => {
+      try {
+        const { supabase } = await import("./services/supabase");
+        if (!supabase) return;
+        const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
+          if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && session?.access_token) {
+            try {
+              const { api } = await import("./services/api");
+              // exchange/sync path
+              const r = await fetch("/api/auth/supabase/sync", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${session.access_token}`,
+                },
+              });
+              if (r.ok) {
+                const user = await r.json();
+                setUser(user);
+              }
+            } catch (e) {}
+          }
+          if (event === "SIGNED_OUT") {
+            setUser(null);
+          }
+        });
+        unsub = () => data?.subscription?.unsubscribe?.();
+      } catch (e) {}
+    })();
+    return () => unsub();
+  }, [setUser]);
+
+
   // Event subscription
   useEffect(() => {
     if (!isAuthenticated) return;

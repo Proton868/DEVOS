@@ -168,3 +168,74 @@ class TestAuthGate:
         c = TestClient(app)
         assert c.get("/api/settings").status_code in (401, 403)
         assert c.get("/api/settings", headers={"Authorization": "Bearer garbage"}).status_code in (401, 403)
+
+
+class TestWorkflowIsolation:
+    def test_workflow_not_visible_cross_user(self, two_clients):
+        a, b = two_clients["alice_c"], two_clients["bob_c"]
+        r = a.post("/api/workflows", json={
+            "name": "Alice Flow",
+            "description": "private",
+            "steps": [{"id": "s1", "type": "notify", "name": "n"}],
+            "start_step": "s1",
+        })
+        assert r.status_code in (200, 201), r.text
+        wid = r.json()["workflow"]["workflow_id"]
+        assert b.get(f"/api/workflows/{wid}").status_code in (404, 403)
+        bob_list = b.get("/api/workflows")
+        assert bob_list.status_code == 200
+        ids = [w.get("workflow_id") for w in bob_list.json().get("workflows", [])]
+        assert wid not in ids
+        assert b.delete(f"/api/workflows/{wid}").status_code in (404, 403)
+        assert a.get(f"/api/workflows/{wid}").status_code == 200
+
+
+class TestProviderCredentialIsolation:
+    def test_credential_status_only_and_cross_user(self, two_clients):
+        a, b = two_clients["alice_c"], two_clients["bob_c"]
+        r = a.put("/api/models/providers/openrouter/credential", json={
+            "provider": "openrouter",
+            "api_key": "sk-alice-secret-key-value",
+        })
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("credentials_configured") is True
+        assert "api_key" not in body
+        assert "sk-" not in str(body)
+
+        # Bob status for same provider should be false (his own secret absent)
+        st = b.get("/api/models/providers/openrouter/credential")
+        assert st.status_code == 200
+        assert st.json().get("credentials_configured") is False
+
+        # Alice sees configured
+        st_a = a.get("/api/models/providers/openrouter/credential")
+        assert st_a.json().get("credentials_configured") is True
+
+        # Secrets list never leaks value
+        secrets = a.get("/api/secrets").json().get("secrets") or []
+        for s in secrets:
+            assert "value" not in s and "encrypted_value" not in s
+            assert "sk-alice" not in str(s)
+
+        # Bob cannot delete alice credential by guessing provider path
+        # (delete only affects bob's own secret — which doesn't exist → 404)
+        assert b.delete("/api/models/providers/openrouter/credential").status_code in (404, 403)
+        # Alice still has it
+        assert a.get("/api/models/providers/openrouter/credential").json()["credentials_configured"] is True
+
+
+class TestModelPreferenceIsolation:
+    def test_model_prefs_independent(self, two_clients):
+        a, b = two_clients["alice_c"], two_clients["bob_c"]
+        assert a.put("/api/settings/models", json={
+            "settings": {"default_chat": "model-A", "default_coding": "code-A"}
+        }).status_code == 200
+        assert b.put("/api/settings/models", json={
+            "settings": {"default_chat": "model-B", "default_coding": "code-B"}
+        }).status_code == 200
+        ma = a.get("/api/settings/models").json()["models"]
+        mb = b.get("/api/settings/models").json()["models"]
+        assert ma["default_chat"] == "model-A"
+        assert mb["default_chat"] == "model-B"
+        assert ma["default_chat"] != mb["default_chat"]

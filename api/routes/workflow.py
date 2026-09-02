@@ -125,7 +125,7 @@ async def list_workflows(
     await ensure_personal_tenant(db, user)
     engine = get_workflow_engine()
     tags = [tag] if tag else None
-    workflows = engine.list_all(status=status, tags=tags)
+    workflows = engine.list_all(status=status, tags=tags, owner_id=user.id)
     return {
         "workflows": [w.to_dict() for w in workflows],
         "count": len(workflows),
@@ -171,6 +171,7 @@ async def create_workflow_route(req: WorkflowCreate, request: Request, db=Depend
     if not valid:
         raise HTTPException(400, detail=f"Invalid workflow: {'; '.join(errors)}")
 
+    workflow.owner_id = user.id
     engine = get_workflow_engine()
     engine.store(workflow)
 
@@ -187,7 +188,7 @@ async def get_workflow(workflow_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     engine = get_workflow_engine()
-    workflow = engine.load(workflow_id)
+    workflow = engine.load_for_owner(workflow_id, user.id)
     if not workflow:
         raise HTTPException(404, f"Workflow not found: {workflow_id}")
     return {"workflow": workflow.to_dict()}
@@ -200,7 +201,7 @@ async def update_workflow(workflow_id: str, req: WorkflowUpdate,
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     engine = get_workflow_engine()
-    workflow = engine.load(workflow_id)
+    workflow = engine.load_for_owner(workflow_id, user.id)
     if not workflow:
         raise HTTPException(404, f"Workflow not found: {workflow_id}")
 
@@ -257,8 +258,10 @@ async def delete_workflow(workflow_id: str, request: Request, db=Depends(get_db)
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     engine = get_workflow_engine()
-    if not engine.delete(workflow_id):
+    workflow = engine.load_for_owner(workflow_id, user.id)
+    if not workflow:
         raise HTTPException(404, f"Workflow not found: {workflow_id}")
+    engine.delete(workflow_id)
     return {"deleted": True}
 
 
@@ -270,7 +273,7 @@ async def export_workflow(workflow_id: str, request: Request,
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     engine = get_workflow_engine()
-    workflow = engine.load(workflow_id)
+    workflow = engine.load_for_owner(workflow_id, user.id)
     if not workflow:
         raise HTTPException(404, f"Workflow not found: {workflow_id}")
 
@@ -285,7 +288,7 @@ async def workflow_ucip(workflow_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     engine = get_workflow_engine()
-    workflow = engine.load(workflow_id)
+    workflow = engine.load_for_owner(workflow_id, user.id)
     if not workflow:
         raise HTTPException(404, f"Workflow not found: {workflow_id}")
     return {"ucip_plan": workflow.to_ucip_plan()}
@@ -312,6 +315,7 @@ async def import_workflow(req: WorkflowImport, request: Request, db=Depends(get_
     if not valid:
         raise HTTPException(400, detail=f"Invalid workflow: {'; '.join(errors)}")
 
+    workflow.owner_id = user.id
     engine = get_workflow_engine()
     engine.store(workflow)
 

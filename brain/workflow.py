@@ -103,6 +103,7 @@ class Workflow:
     updated_at:    datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     metadata:      dict = field(default_factory=dict)
     status:        str = "draft"  # draft | active | paused | archived
+    owner_id:      Optional[str] = None  # authenticated user who owns this workflow
 
     def to_dict(self) -> dict:
         return {
@@ -119,6 +120,7 @@ class Workflow:
             "updated_at": self.updated_at.isoformat(),
             "metadata": self.metadata,
             "status": self.status,
+            "owner_id": self.owner_id,
         }
 
     def to_yaml(self) -> str:
@@ -186,6 +188,7 @@ class Workflow:
             tags=data.get("tags", []),
             metadata=data.get("metadata", {}),
             status=data.get("status", "draft"),
+            owner_id=data.get("owner_id"),
         )
         workflow.steps = [WorkflowStep.from_dict(s) for s in data.get("steps", [])]
         return workflow
@@ -213,14 +216,25 @@ class WorkflowEngine:
         return False
 
     def list_all(self, status: Optional[str] = None,
-                 tags: Optional[list[str]] = None) -> list[Workflow]:
+                 tags: Optional[list[str]] = None,
+                 owner_id: Optional[str] = None) -> list[Workflow]:
         workflows = list(self._workflows.values())
+        if owner_id is not None:
+            workflows = [w for w in workflows if w.owner_id == owner_id]
         if status:
             workflows = [w for w in workflows if w.status == status]
         if tags:
             workflows = [w for w in workflows
                         if any(t in w.tags for t in tags)]
         return sorted(workflows, key=lambda w: w.updated_at, reverse=True)
+
+    def load_for_owner(self, workflow_id: str, owner_id: str) -> Optional[Workflow]:
+        w = self.load(workflow_id)
+        if not w:
+            return None
+        if w.owner_id and w.owner_id != owner_id:
+            return None
+        return w
 
     def count(self) -> int:
         return len(self._workflows)

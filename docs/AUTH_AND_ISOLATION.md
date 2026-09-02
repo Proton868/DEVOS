@@ -55,3 +55,19 @@ Raw API keys are never returned in JSON responses.
 
 `ADMIN_USER` / `ADMIN_PASSWORD` (see `.env.example`) create the first admin when
 no admin exists. Change the password before production use.
+
+## Per-user provider credentials
+
+```http
+PUT /api/models/providers/{provider_id}/credential
+{"provider":"openrouter","api_key":"..."}
+
+→ {"provider":"openrouter","credentials_configured":true}
+```
+
+Stored as encrypted `Secret` named `PROVIDER_<ID>_KEY` owned by the user.
+System `.env` keys remain admin-only via `PUT /api/models/providers/config` (`is_admin` required).
+
+## Workflow ownership
+
+In-memory workflow engine entries carry `owner_id`. List/get/update/delete are filtered to the authenticated user.

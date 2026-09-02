@@ -181,3 +181,77 @@ async def complete(req: CompleteReq, request: Request, db=Depends(get_db)):
         return {"completion": ""}
     except Exception:
         return {"completion": ""}
+
+
+# ── Per-user provider credentials (encrypted Secret store) ───────────────────
+# Does NOT mutate process env / system config. Keys stored as PROVIDER_<ID>_KEY.
+
+class UserProviderCredential(BaseModel):
+    provider: str
+    api_key: str
+
+
+@router.put("/providers/{provider_id}/credential")
+async def put_user_provider_credential(provider_id: str, req: UserProviderCredential,
+                                       request: Request, db=Depends(get_db)):
+    """Store/replace the authenticated user's API key for a provider.
+    Returns credentials_configured only — never the key."""
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from core.database import Secret
+    from governance.secrets_vault import encrypt
+    from sqlalchemy import select
+    import re
+
+    pid = re.sub(r"[^a-z0-9_]+", "", (provider_id or req.provider or "").lower())
+    if not pid or not req.api_key:
+        raise HTTPException(400, "provider and api_key are required")
+    secret_name = f"PROVIDER_{pid.upper()}_KEY"
+
+    r = await db.execute(select(Secret).where(Secret.owner_id == user.id, Secret.name == secret_name))
+    existing = r.scalar_one_or_none()
+    if existing:
+        existing.encrypted_value = encrypt(req.api_key)
+        from datetime import datetime, timezone
+        existing.updated_at = datetime.now(timezone.utc)
+    else:
+        db.add(Secret(
+            owner_id=user.id,
+            name=secret_name,
+            description=f"User credential for provider {pid}",
+            encrypted_value=encrypt(req.api_key),
+        ))
+    await db.commit()
+    return {"provider": pid, "credentials_configured": True}
+
+
+@router.delete("/providers/{provider_id}/credential")
+async def delete_user_provider_credential(provider_id: str, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from core.database import Secret
+    from sqlalchemy import select
+    import re
+    pid = re.sub(r"[^a-z0-9_]+", "", (provider_id or "").lower())
+    secret_name = f"PROVIDER_{pid.upper()}_KEY"
+    r = await db.execute(select(Secret).where(Secret.owner_id == user.id, Secret.name == secret_name))
+    existing = r.scalar_one_or_none()
+    if not existing:
+        raise HTTPException(404, "Credential not found")
+    await db.delete(existing)
+    await db.commit()
+    return {"provider": pid, "credentials_configured": False}
+
+
+@router.get("/providers/{provider_id}/credential")
+async def get_user_provider_credential_status(provider_id: str, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from core.database import Secret
+    from sqlalchemy import select
+    import re
+    pid = re.sub(r"[^a-z0-9_]+", "", (provider_id or "").lower())
+    secret_name = f"PROVIDER_{pid.upper()}_KEY"
+    r = await db.execute(select(Secret).where(Secret.owner_id == user.id, Secret.name == secret_name))
+    existing = r.scalar_one_or_none()
+    return {"provider": pid, "credentials_configured": existing is not None}

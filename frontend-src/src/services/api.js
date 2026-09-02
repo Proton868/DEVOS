@@ -686,6 +686,16 @@ const providerConfigApi = {
 export const api = {
   health: () => req("/api/health"),
   getSettings: () => req("/api/models/settings"),
+  putProviderCredential: (providerId, apiKey) =>
+    req(`/api/models/providers/${encodeURIComponent(providerId)}/credential`, {
+      method: "PUT",
+      body: JSON.stringify({ provider: providerId, api_key: apiKey }),
+    }),
+  deleteProviderCredential: (providerId) =>
+    req(`/api/models/providers/${encodeURIComponent(providerId)}/credential`, { method: "DELETE" }),
+  getProviderCredentialStatus: (providerId) =>
+    req(`/api/models/providers/${encodeURIComponent(providerId)}/credential`),
+
   supabaseExchange,
   baseUrl,
   ...notBuiltYet,
