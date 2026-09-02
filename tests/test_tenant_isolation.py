@@ -251,3 +251,42 @@ class TestPathTraversal:
         for bad in ("../../etc/passwd", "../bob_iso/secret", "/etc/passwd", "..\\..\\windows\\system32"):
             r = a.get("/api/files/default/read", params={"path": bad})
             assert r.status_code in (400, 404), f"{bad} -> {r.status_code} {r.text[:120]}"
+
+
+class TestPathTraversalExtended:
+    def test_canonical_escape_variants(self, two_clients, tmp_path, monkeypatch):
+        from execution.files import FileService, PathViolation, PROJECTS_DIR
+        import execution.files as fm
+        monkeypatch.setattr(fm, "PROJECTS_DIR", tmp_path)
+        svc = FileService("alice", "proj")
+        (svc.root / "ok.txt").write_text("hi")
+        assert svc.read("ok.txt")["content"] == "hi"
+        denials = [
+            "../../etc/passwd",
+            "../alice/../bob/x",
+            "foo/../../../etc/passwd",
+            "a\x00b",
+            "..\\..\\etc\\passwd",
+            "foo/./../../etc/passwd",
+        ]
+        for bad in denials:
+            try:
+                svc._resolve(bad)
+                # only fail if resolved outside root
+                p = (svc.root / bad.replace("\\", "/").lstrip("/")).resolve()
+                assert str(svc.root) in str(p) or p == svc.root
+            except PathViolation:
+                pass
+        # symlink out
+        outside = tmp_path / "outside_secret"
+        outside.write_text("leak")
+        link = svc.root / "linkout"
+        try:
+            link.symlink_to(outside)
+            try:
+                svc._resolve("linkout")
+                raise AssertionError("symlink escape should raise PathViolation")
+            except PathViolation:
+                pass
+        except OSError:
+            pass

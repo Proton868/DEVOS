@@ -13,6 +13,7 @@ def slugify(name: str) -> str:
     return s[:120] or "tenant"
 
 async def ensure_personal_tenant(db: AsyncSession, user: User) -> Tenant:
+    from sqlalchemy.exc import IntegrityError
     if getattr(user, "default_tenant_id", None):
         r = await db.execute(select(Tenant).where(Tenant.id == user.default_tenant_id))
         t = r.scalar_one_or_none()
@@ -22,10 +23,21 @@ async def ensure_personal_tenant(db: AsyncSession, user: User) -> Tenant:
     t = r.scalar_one_or_none()
     if not t:
         t = Tenant(id=gen_id(), name=f"{user.username}'s workspace", slug=slug, tier="tenant_user")
-        db.add(t); await db.flush()
+        try:
+            db.add(t); await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            r = await db.execute(select(Tenant).where(Tenant.slug == slug))
+            t = r.scalar_one_or_none()
+            if not t:
+                raise
     mr = await db.execute(select(Membership).where(Membership.tenant_id==t.id, Membership.user_id==user.id))
     if not mr.scalar_one_or_none():
-        db.add(Membership(id=gen_id(), tenant_id=t.id, user_id=user.id, role="admin"))
+        try:
+            db.add(Membership(id=gen_id(), tenant_id=t.id, user_id=user.id, role="admin"))
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
     user.default_tenant_id = t.id
     await db.commit(); await db.refresh(t)
     return t

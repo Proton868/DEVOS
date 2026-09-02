@@ -14,11 +14,15 @@ except RuntimeError:
 def client_with_auth():
     """Create a test client with auth disabled."""
     from core.config import settings
+    prev_auth = settings.AUTH_ENABLED
+    prev_debug = settings.DEBUG
     settings.AUTH_ENABLED = False
+    settings.DEBUG = True  # avoid production ADMIN_PASSWORD hard-fail during tests
     from app import app
     with TestClient(app) as client:
         yield client
-    settings.AUTH_ENABLED = True
+    settings.AUTH_ENABLED = prev_auth
+    settings.DEBUG = prev_debug
 
 
 class TestUserSettings:

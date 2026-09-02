@@ -183,7 +183,10 @@ async def sync_supabase_user(db: AsyncSession, payload: dict) -> User:
 
     if user is None:
         from core.database import gen_id
+        from sqlalchemy.exc import IntegrityError
         username = (email.split("@")[0] if email else f"supabase_{supabase_id[:8]}")
+        # Uniqueness on username/email/supabase_id: concurrent first-login may race;
+        # catch IntegrityError and re-select the winner row.
         user = User(
             id=gen_id(),
             username=username,
@@ -193,8 +196,21 @@ async def sync_supabase_user(db: AsyncSession, payload: dict) -> User:
             is_admin=False,
             is_active=True,
         )
-        db.add(user)
-        logger.info("[auth] created local user for new Supabase identity sub=%s", supabase_id)
+        try:
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+            logger.info("[auth] created local user for new Supabase identity sub=%s", supabase_id)
+        except IntegrityError:
+            await db.rollback()
+            r = await db.execute(select(User).where(User.supabase_id == supabase_id))
+            user = r.scalar_one_or_none()
+            if user is None and email:
+                r = await db.execute(select(User).where(User.email == email))
+                user = r.scalar_one_or_none()
+            if user is None:
+                raise
+            logger.info("[auth] concurrent create resolved to existing user %s for sub=%s", user.id, supabase_id)
     else:
         changed = False
         if user.supabase_id != supabase_id:
@@ -205,9 +221,9 @@ async def sync_supabase_user(db: AsyncSession, payload: dict) -> User:
             changed = True
         if changed:
             logger.info("[auth] synced local user %s with Supabase identity sub=%s", user.id, supabase_id)
+            await db.commit()
+            await db.refresh(user)
 
-    await db.commit()
-    await db.refresh(user)
     from governance.tenant_store import ensure_personal_tenant
     await ensure_personal_tenant(db, user)
     return user

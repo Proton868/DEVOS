@@ -69,7 +69,12 @@ logger = logging.getLogger("devos")
 _COMMON_WEAK_PASSWORDS = {
     "123456", "password", "admin", "12345678", "qwerty", "letmein",
     "changeme", "admin123", "welcome", "111111", "123456789", "password1",
+    # Shipped .env.example / historical bootstrap defaults — treat as known-bad
+    "123456..", "admin", "admin123..", "devos", "devosadmin",
 }
+
+# Exact defaults that must never remain active when DEBUG=False
+_KNOWN_DEFAULT_ADMIN_PASSWORDS = {"123456..", "123456", "admin", "changeme"}
 
 
 def _is_weak_password(pw: str) -> Optional[str]:
@@ -117,6 +122,13 @@ def _validate_startup_env():
     # instead, so there's nothing to warn about in that case.
     if settings.ADMIN_PASSWORD:
         weak_reason = _is_weak_password(settings.ADMIN_PASSWORD)
+        is_known_default = settings.ADMIN_PASSWORD in _KNOWN_DEFAULT_ADMIN_PASSWORDS
+        if not settings.DEBUG and (is_known_default or weak_reason):
+            raise RuntimeError(
+                "Refusing to start: ADMIN_PASSWORD is a known default or weak value while DEBUG=False. "
+                "Set a strong unique ADMIN_PASSWORD in .env, or leave ADMIN_PASSWORD empty to auto-generate "
+                "on first boot. Shipped example values such as '123456..' are not production-safe."
+            )
         if weak_reason:
             logger.warning("[startup] ADMIN_PASSWORD is weak (%s) — set a strong, random ADMIN_PASSWORD "
                             "in .env before running in production, or leave it unset to auto-generate one.",
