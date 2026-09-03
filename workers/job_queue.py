@@ -120,11 +120,13 @@ async def enqueue(
         jt = (job_type or "").lower()
         is_consequential = jt not in SAFE_NON_CONSEQUENTIAL and not jt.startswith("read_")
         if is_consequential:
-            from governance.execution_operations import reserve_operation
+            from governance.execution_operations import reserve_operation_tx, validate_operation_job_binding
             corr = None
             if isinstance(correlation, dict):
                 corr = correlation.get("correlation_id") or correlation.get("id")
-            op_id = await reserve_operation(
+            # Same transaction as job create — failure-atomic
+            op_id = await reserve_operation_tx(
+                db,
                 owner_id=owner_id,
                 tenant_id=tenant_id,
                 actor_id=actor_id or owner_id,
@@ -158,6 +160,19 @@ async def enqueue(
             operation_id=op_id,
         )
         db.add(job)
+        await db.flush()
+        if is_consequential and op_id:
+            from governance.execution_operations import load_operation, validate_operation_job_binding
+            # Binding check uses in-session state after flush
+            op_row = await db.get(__import__("core.database", fromlist=["ExecutionOperation"]).ExecutionOperation, op_id)
+            if op_row is not None:
+                op_row.execution_job_id = job_id
+            ok_bind, reason = validate_operation_job_binding(
+                {"id": op_id, "execution_job_id": job_id, "tenant_id": tenant_id, "owner_id": owner_id},
+                {"id": job_id, "operation_id": op_id, "payload": safe_payload, "tenant_id": tenant_id, "owner_id": owner_id},
+            )
+            if not ok_bind:
+                raise RuntimeError(f"operation_job_binding_failed: {reason}")
         await db.commit()
         await db.refresh(job)
         jid, pri = job.id, job.priority

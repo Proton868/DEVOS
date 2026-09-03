@@ -103,3 +103,42 @@ asyncio.run(main())
     assert r["ok1"] is True
     assert r["ok2"] is False
     assert r["status"] == "succeeded"
+
+
+def test_historical_null_operation_id_not_replayable(db):
+    """Legacy consequential job with NULL operation_id must fail closed on stale recovery."""
+    r = _worker(db, """
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from core.database import ExecutionJob
+    from workers.job_queue import recover_stale_leases
+    from datetime import datetime, timezone, timedelta
+    async with dbmod.AsyncSessionLocal() as session:
+        session.add(ExecutionJob(
+            id="legacy-job-1",
+            tenant_id="t",
+            owner_id="u",
+            job_type="script",  # consequential
+            payload={},
+            status="running",
+            operation_id=None,
+            locked_at=datetime.now(timezone.utc) - timedelta(hours=2),
+            lease_expires_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        ))
+        await session.commit()
+    n = await recover_stale_leases()
+    async with dbmod.AsyncSessionLocal() as session:
+        job = await session.get(ExecutionJob, "legacy-job-1")
+        print(json.dumps({
+            "status": job.status,
+            "error": job.error or "",
+            "not_queued": job.status != "queued",
+        }))
+asyncio.run(main())
+""")
+    assert r["status"] == "failed"
+    assert r["not_queued"] is True
+    assert "missing_operation" in (r.get("error") or "")

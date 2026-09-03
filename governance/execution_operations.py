@@ -218,6 +218,75 @@ def _scrub_args(args: dict) -> dict:
     return out
 
 
+
+async def reserve_operation_tx(
+    db,
+    *,
+    owner_id: str,
+    tenant_id=None,
+    actor_id=None,
+    task_id=None,
+    execution_job_id=None,
+    operation_type: str = "tool",
+    tool_name=None,
+    correlation_id=None,
+    request_id=None,
+    idempotency_key=None,
+    input_digest=None,
+    target_digest=None,
+    args=None,
+):
+    """Reserve within an existing session (no commit). Caller owns the transaction."""
+    from core.database import ExecutionOperation
+    from sqlalchemy import select
+    import uuid as _uuid
+
+    safe_args = None
+    if args is not None:
+        safe_args = _scrub_args(args)
+        if not input_digest:
+            input_digest = digest_payload(safe_args)
+
+    if idempotency_key:
+        q = await db.execute(
+            select(ExecutionOperation).where(
+                ExecutionOperation.owner_id == owner_id,
+                ExecutionOperation.idempotency_key == idempotency_key,
+                ExecutionOperation.operation_type == operation_type,
+                ExecutionOperation.tenant_id == tenant_id if tenant_id is not None
+                else ExecutionOperation.tenant_id.is_(None),
+            )
+        )
+        existing = q.scalars().first()
+        if existing:
+            if execution_job_id and not existing.execution_job_id:
+                existing.execution_job_id = execution_job_id
+            return existing.id
+
+    op_id = str(_uuid.uuid4())
+    row = ExecutionOperation(
+        id=op_id,
+        tenant_id=tenant_id,
+        owner_id=owner_id,
+        actor_id=actor_id or owner_id,
+        task_id=task_id,
+        execution_job_id=execution_job_id,
+        operation_type=operation_type,
+        tool_name=tool_name,
+        status=OP_RESERVED,
+        idempotency_key=idempotency_key,
+        request_id=request_id,
+        correlation_id=correlation_id,
+        input_digest=input_digest,
+        target_digest=target_digest,
+        attempt=1,
+        created_at=_now(),
+    )
+    db.add(row)
+    await db.flush()
+    return op_id
+
+
 async def mark_running(operation_id: str) -> bool:
     return await transition_operation(operation_id, OP_RUNNING)
 

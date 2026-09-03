@@ -123,3 +123,10 @@ Idempotency: same owner + operation_type + idempotency_key returns existing oper
 - Unknown job types default to **consequential**.
 - `complete(job, succeeded)` refuses success while operation is not SUCCEEDED (UNKNOWN/missing → permanent failed, no requeue).
 - Idempotency identity: `(tenant_id, owner_id, operation_type, idempotency_key)` with NULL tenant non-wildcard.
+
+
+## Stage 3M.4 — Final boundary closure
+
+- Operation + job creation in **one DB transaction** via `reserve_operation_tx` + job insert + binding validation before commit.
+- Canonical binding: `ExecutionJob.operation_id` ↔ `ExecutionOperation.execution_job_id` (payload is mirror only).
+- Historical consequential jobs with `operation_id=NULL` → permanent failed on recovery, never requeued.
