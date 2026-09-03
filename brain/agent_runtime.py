@@ -680,7 +680,60 @@ class AgentRuntime:
                     yield _emit(task, "agent.cancelled", {"reason": "user_cancelled"})
                     return
 
+                # Stage 3M — operation ledger for consequential tools
+                op_id = None
+                from brain.agent_tools import SideEffect
+                from governance.execution_operations import (
+                    is_consequential_side_effect, reserve_operation, mark_running,
+                    complete_operation, digest_payload,
+                )
+                se = getattr(tool.side_effect, "value", str(tool.side_effect))
+                if is_consequential_side_effect(se):
+                    op_id = await reserve_operation(
+                        owner_id=self.user_id,
+                        tenant_id=self.tenant_id,
+                        actor_id=self.user_id,
+                        task_id=task.id,
+                        operation_type="agent_tool",
+                        tool_name=action,
+                        correlation_id=task.correlation_id,
+                        args=action_input if isinstance(action_input, dict) else {},
+                    )
+                    if not op_id:
+                        result = {"ok": False, "error": "operation_reservation_failed"}
+                        task.tools_used.append(action)
+                        yield _emit(task, "agent.tool_result", {
+                            "tool": action, "ok": False, "error": "operation_reservation_failed",
+                        })
+                        messages.append({"role": "assistant", "content": text})
+                        messages.append({
+                            "role": "user",
+                            "content": "OPERATION RESERVE FAILED. Do not assume the side effect ran.",
+                        })
+                        continue
+                    await mark_running(op_id)
+                    # expose to HAI checkpoint binding
+                    if hasattr(task, "last_operation_id"):
+                        task.last_operation_id = op_id
+                    else:
+                        setattr(task, "last_operation_id", op_id)
+                    try:
+                        from governance.failure_injection import maybe_crash
+                        maybe_crash("after_operation_running")
+                    except Exception:
+                        pass
+
                 result = await self._execute_tool(task, tool, action_input)
+
+                if op_id:
+                    try:
+                        from governance.failure_injection import maybe_crash
+                        maybe_crash("after_side_effect_before_evidence")
+                    except Exception:
+                        pass
+                    # Evidence already recorded below; complete after evidence when possible
+                    result = dict(result or {})
+                    result["operation_id"] = op_id
 
                 task.tools_used.append(action)
                 task.current_tool = None
@@ -688,6 +741,26 @@ class AgentRuntime:
 
                 # Record evidence for consequential tools
                 await self._record_evidence(task, tool, action_input, result)
+
+                # Stage 3M — complete operation after evidence attempt
+                if op_id:
+                    try:
+                        from governance.failure_injection import maybe_crash
+                        maybe_crash("after_evidence_before_operation_complete")
+                    except Exception:
+                        pass
+                    await complete_operation(
+                        op_id,
+                        success=bool(result.get("ok")),
+                        evidence_id=(result.get("evidence_id") if isinstance(result, dict) else None),
+                        result_digest=digest_payload(result) if isinstance(result, dict) else None,
+                        error=None if result.get("ok") else str(result.get("error") or "failed")[:500],
+                    )
+                    try:
+                        from governance.failure_injection import maybe_crash
+                        maybe_crash("after_operation_complete_before_hai_checkpoint")
+                    except Exception:
+                        pass
 
                 yield _emit(task, "agent.tool_result", {
                     "tool": action,
@@ -1491,6 +1564,8 @@ class AgentRuntime:
                     "side_effect": tool.side_effect.value,
                     "ok": result.get("ok"),
                     "args_keys": list(args.keys()),
+                    "operation_id": result.get("operation_id"),
+                    "outcome": "succeeded" if result.get("ok") else "failed",
                 },
             )
         except Exception:

@@ -69,3 +69,20 @@ Entrypoint: `brain/hai_recovery.recover_hai_task` — restores and reconciles; d
 **Identity binding:** `checkpoint.task_id` must equal `AgentTaskRecord.id`. When both correlation IDs are present, they must match. Identity always comes from the task row, never the checkpoint.
 
 **Recovery remains non-executing:** restore + validate + reconcile only; `execute=false` always.
+
+
+## Stage 3M — Consequential operation ledger
+
+**Invariant:** DEVOS never automatically retries a consequential operation whose completion cannot be proven.
+
+Lifecycle:
+
+```
+RESERVED → RUNNING → SUCCEEDED | FAILED | UNKNOWN | CANCELLED
+```
+
+UNKNOWN → investigation/reconciliation only (never automatic retry).
+
+Direct AgentRuntime consequential tools reserve an `ExecutionOperation` **before** the side effect. Evidence binds `operation_id`. HAI checkpoints may record `last_operation_id`.
+
+Stale ExecutionJob leases consult the bound operation: UNKNOWN/succeeded do not requeue for replay.

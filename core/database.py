@@ -425,6 +425,38 @@ class ExecutionJob(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+
+class ExecutionOperation(Base):
+    """Durable consequential operation identity (Stage 3M).
+
+    Lifecycle: reserved → running → succeeded|failed|unknown|cancelled
+    UNKNOWN is never automatically retried.
+    """
+    __tablename__ = "execution_operations"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    owner_id: Mapped[str] = mapped_column(String, index=True)
+    actor_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    task_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    execution_job_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    operation_type: Mapped[str] = mapped_column(String(64), default="tool")
+    tool_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="reserved", index=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    request_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    input_digest: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    target_digest: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    result_digest: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    evidence_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class WorkerTrustRecord(Base):
     """Earned autonomy state. Promotion is never self-granted — only proposed
     by the trust engine and applied after human approval."""

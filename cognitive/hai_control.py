@@ -201,6 +201,7 @@ class HAIControl:
     started_at: float = field(default_factory=time.monotonic)
     last_job_id: Optional[str] = None
     last_job_status: Optional[str] = None
+    last_operation_id: Optional[str] = None
     workflow_id: Optional[str] = None
     plan_dirty: bool = False  # True after REPLAN until consumed by runtime
     evidence_refs: list = field(default_factory=list)

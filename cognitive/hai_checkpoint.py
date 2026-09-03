@@ -72,6 +72,7 @@ class HAICheckpoint:
     state: dict = field(default_factory=dict)
     last_job_id: Optional[str] = None
     last_job_status: Optional[str] = None
+    last_operation_id: Optional[str] = None
     workflow_id: Optional[str] = None
     correlation_id: str = ""
     checksum: str = ""
@@ -81,6 +82,7 @@ class HAICheckpoint:
             "state_version": int(self.state_version), "created_at": self.created_at,
             "lifecycle": self.lifecycle, "state": bound_state(self.state),
             "last_job_id": self.last_job_id, "last_job_status": self.last_job_status,
+            "last_operation_id": self.last_operation_id,
             "workflow_id": self.workflow_id, "correlation_id": self.correlation_id,
         }
         payload["checksum"]=_checksum(payload); self.checksum=payload["checksum"]; return payload
@@ -100,14 +102,17 @@ class HAICheckpoint:
                    created_at=str(data.get("created_at") or _now_iso()),
                    lifecycle=str(data.get("lifecycle") or "created"), state=state,
                    last_job_id=data.get("last_job_id"), last_job_status=data.get("last_job_status"),
+                   last_operation_id=data.get("last_operation_id"),
                    workflow_id=data.get("workflow_id"), correlation_id=str(data.get("correlation_id") or ""),
                    checksum=str(data.get("checksum") or ""))
 
 def build_checkpoint(*, task_id, state, lifecycle="executing", state_version=0,
-                     last_job_id=None, last_job_status=None, workflow_id=None, correlation_id=""):
+                     last_job_id=None, last_job_status=None, last_operation_id=None,
+                     workflow_id=None, correlation_id=""):
     return HAICheckpoint(task_id=task_id, state=bound_state(state), lifecycle=lifecycle,
                          state_version=state_version, last_job_id=last_job_id,
-                         last_job_status=last_job_status, workflow_id=workflow_id,
+                         last_job_status=last_job_status, last_operation_id=last_operation_id,
+                         workflow_id=workflow_id,
                          correlation_id=correlation_id, created_at=_now_iso())
 
 @dataclass

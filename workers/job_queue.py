@@ -9,6 +9,7 @@ Idempotency: same (tenant, idempotency_key) returns existing non-failed job.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import socket
@@ -144,29 +145,68 @@ async def recover_stale_leases(db=None) -> int:
     stale = now - timedelta(seconds=LOCK_STALE_S)
 
     async def _do(session):
+        from sqlalchemy import select
         # Prefer lease_expires_at when set; fall back to locked_at age
-        q = update(ExecutionJob).where(
-            ExecutionJob.status == "running",
-            or_(
-                and_(
-                    ExecutionJob.lease_expires_at.is_not(None),
-                    ExecutionJob.lease_expires_at < now,
+        q = await session.execute(
+            select(ExecutionJob).where(
+                ExecutionJob.status == "running",
+                or_(
+                    and_(
+                        ExecutionJob.lease_expires_at.is_not(None),
+                        ExecutionJob.lease_expires_at < now,
+                    ),
+                    and_(
+                        ExecutionJob.lease_expires_at.is_(None),
+                        ExecutionJob.locked_at.is_not(None),
+                        ExecutionJob.locked_at < stale,
+                    ),
                 ),
-                and_(
-                    ExecutionJob.lease_expires_at.is_(None),
-                    ExecutionJob.locked_at.is_not(None),
-                    ExecutionJob.locked_at < stale,
-                ),
-            ),
-        ).values(
-            status="queued",
-            worker_id=None,
-            locked_at=None,
-            lease_expires_at=None,
+            )
         )
-        result = await session.execute(q)
+        jobs = list(q.scalars().all())
+        recovered = 0
+        for job in jobs:
+            # Stage 3M: operation-aware stale lease handling
+            op_id = None
+            payload = job.payload if isinstance(job.payload, dict) else {}
+            op_id = payload.get("operation_id") or (job.correlation or {}).get("operation_id") if isinstance(job.correlation, dict) else payload.get("operation_id")
+            if op_id:
+                try:
+                    from governance.execution_operations import load_operation, reconcile_operation, OP_UNKNOWN, OP_SUCCEEDED, OP_RUNNING
+                    op = await load_operation(op_id)
+                    if op and op.get("status") in (OP_RUNNING, "reserved"):
+                        rec = await reconcile_operation(op_id)
+                        # After reconcile, do not requeue UNKNOWN/succeeded
+                        st = (rec.get("status") or "").lower()
+                        if st in ("unknown", "succeeded", "cancelled"):
+                            job.status = "failed" if st == "unknown" else ("succeeded" if st == "succeeded" else "failed")
+                            job.error = json.dumps({
+                                "reason_code": "operation_unknown" if st == "unknown" else f"operation_{st}",
+                                "operation_id": op_id,
+                                "retryable": False,
+                            })
+                            job.worker_id = None
+                            job.locked_at = None
+                            job.lease_expires_at = None
+                            recovered += 1
+                            continue
+                    if op and op.get("status") == OP_SUCCEEDED:
+                        job.status = "succeeded"
+                        job.worker_id = None
+                        job.locked_at = None
+                        job.lease_expires_at = None
+                        recovered += 1
+                        continue
+                except Exception:
+                    logger.debug("operation-aware lease recovery failed", exc_info=True)
+            # Safe non-consequential or no op: existing requeue
+            job.status = "queued"
+            job.worker_id = None
+            job.locked_at = None
+            job.lease_expires_at = None
+            recovered += 1
         await session.commit()
-        return result.rowcount or 0
+        return recovered
 
     if db is not None:
         return await _do(db)
