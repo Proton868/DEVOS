@@ -290,6 +290,14 @@ async def _migrate_missing_columns(conn):
         "agent_tasks", "hai_checkpoint",
         "ALTER TABLE agent_tasks ADD COLUMN hai_checkpoint JSON",
     )
+    await _add_column_if_missing(
+        "agent_tasks", "recovery_owner",
+        "ALTER TABLE agent_tasks ADD COLUMN recovery_owner VARCHAR(128)",
+    )
+    await _add_column_if_missing(
+        "agent_tasks", "recovery_lease_expires_at",
+        "ALTER TABLE agent_tasks ADD COLUMN recovery_lease_expires_at DATETIME",
+    )
 
     await _add_column_if_missing(
         "worker_trust_records", "competency",
@@ -471,6 +479,8 @@ class AgentTaskRecord(Base):
     # Bounded recent events for SSE reconnect (not Evidence substitute)
     events: Mapped[list] = mapped_column(JSON, default=list)
     hai_checkpoint: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    recovery_owner: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    recovery_lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

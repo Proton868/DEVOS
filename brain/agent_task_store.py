@@ -203,3 +203,80 @@ async def load_hai_checkpoint(task_id: str):
     except Exception:
         logger.debug("load_hai_checkpoint failed", exc_info=True)
         return None
+
+
+
+async def claim_task_recovery(task_id: str, owner_id: str, lease_seconds: int = 60) -> bool:
+    """Claim exclusive recovery ownership. Returns True if this owner holds the lease."""
+    try:
+        from datetime import timedelta
+        from core.database import AsyncSessionLocal, AgentTaskRecord
+        now = _now()
+        async with AsyncSessionLocal() as db:
+            row = await db.get(AgentTaskRecord, task_id)
+            if row is None:
+                return False
+            exp = getattr(row, "recovery_lease_expires_at", None)
+            current = getattr(row, "recovery_owner", None)
+            expired = True
+            if exp is not None:
+                try:
+                    # normalize naive/aware
+                    if getattr(exp, "tzinfo", None) is None:
+                        from datetime import timezone as _tz
+                        exp = exp.replace(tzinfo=_tz.utc)
+                    expired = exp <= now
+                except Exception:
+                    expired = True
+            if current and current != owner_id and not expired:
+                return False
+            row.recovery_owner = owner_id
+            row.recovery_lease_expires_at = now + timedelta(seconds=int(lease_seconds))
+            row.updated_at = now
+            await db.commit()
+            return True
+    except Exception:
+        logger.debug("claim_task_recovery failed", exc_info=True)
+        return False
+
+
+async def release_task_recovery(task_id: str, owner_id: str) -> bool:
+    try:
+        from core.database import AsyncSessionLocal, AgentTaskRecord
+        async with AsyncSessionLocal() as db:
+            row = await db.get(AgentTaskRecord, task_id)
+            if row is None:
+                return False
+            if getattr(row, "recovery_owner", None) != owner_id:
+                return False
+            row.recovery_owner = None
+            row.recovery_lease_expires_at = None
+            row.updated_at = _now()
+            await db.commit()
+            return True
+    except Exception:
+        logger.debug("release_task_recovery failed", exc_info=True)
+        return False
+
+
+async def load_task_identity(task_id: str) -> Optional[dict]:
+    """Durable identity fields only (never from HAI checkpoint)."""
+    try:
+        from core.database import AsyncSessionLocal, AgentTaskRecord
+        async with AsyncSessionLocal() as db:
+            row = await db.get(AgentTaskRecord, task_id)
+            if row is None:
+                return None
+            return {
+                "id": row.id,
+                "user_id": row.user_id,
+                "tenant_id": row.tenant_id,
+                "project_id": row.project_id,
+                "session_id": row.session_id,
+                "status": row.status,
+                "correlation_id": row.correlation_id,
+                "objective": row.objective,
+            }
+    except Exception:
+        logger.debug("load_task_identity failed", exc_info=True)
+        return None

@@ -33,3 +33,29 @@ Future = true process crash/restart, GoalDecomposer-backed planning, full Coordi
 ## Stage 3K.1 — Verification semantics
 
 Tool execution success and verification success are distinct. Generic `run_command` success (including `exit_code=0`) is **not** sufficient evidence that a consequential edit is correct. HAI requires explicit or recognized verification evidence (`tests_passed`, `verification_passed`, or clear test summary output from `run_tests`) before treating verification as passed.
+
+## Stage 3L — Process-level crash recovery
+
+Durable recovery boundary:
+
+- AgentTaskRecord (identity, status, correlation_id, events)
+- HAICheckpoint (cognitive state, checksum)
+- ExecutionJob (execution truth)
+- Evidence (proof)
+
+Recovery semantics:
+
+| Durable job/task state | Recovery action |
+|------------------------|-----------------|
+| queued / running | WAIT — do not duplicate execution |
+| succeeded | continue HAI / verification — do not rerun |
+| failed | replan recommendation — retry=false |
+| unknown | investigate — never blind retry |
+| cancelled | terminal — no execution |
+| corrupt checkpoint | fail closed — no execution |
+
+Recovery lease: only one worker may own recovery of a task at a time (`claim_task_recovery`).
+
+Security: checkpoint is cognitive state, not authority. Identity comes from AgentTaskRecord columns only.
+
+Entrypoint: `brain/hai_recovery.recover_hai_task` — restores and reconciles; does not execute tools.
