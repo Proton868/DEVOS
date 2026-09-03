@@ -444,7 +444,99 @@ class AgentRuntime:
 
                 call = _parse_tool_call(text)
                 if not call:
-                    # Final answer
+                    # Natural-language final answer — HAI may veto premature success
+                    if hai is not None:
+                        gate = hai.evaluate_natural_language_completion(text)
+                        task.hai_state = hai.control.to_state_dict()
+                        task.lifecycle = hai.control.lifecycle
+                        if gate.get("decision") == StrategicDecision.VERIFY.value:
+                            yield _emit(task, "agent.verification_started", gate)
+                            messages.append({"role": "assistant", "content": text})
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    "HAI: verification is required before completion. "
+                                    f"Reason: {gate.get('reason_code')}. "
+                                    "Use an appropriate verification tool (e.g. run_tests, "
+                                    "get_diagnostics) and report evidence. Do not claim done yet."
+                                ),
+                            })
+                            continue
+                        if gate.get("decision") == StrategicDecision.CONTINUE.value:
+                            messages.append({"role": "assistant", "content": text})
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    "HAI: completion criteria not satisfied "
+                                    f"({gate.get('reason_code')}). Continue working on "
+                                    f"subgoal={gate.get('selected_subgoal')}."
+                                ),
+                            })
+                            continue
+                        if gate.get("decision") in (
+                            StrategicDecision.BLOCK.value, StrategicDecision.FAIL.value,
+                        ):
+                            task.status = (
+                                AgentTaskStatus.BLOCKED
+                                if gate["decision"] == StrategicDecision.BLOCK.value
+                                else AgentTaskStatus.FAILED
+                            )
+                            task.summary = gate.get("message") or gate.get("reason_code")
+                            task.completed_at = datetime.now(timezone.utc).isoformat()
+                            yield _emit(task, "agent.agent_blocked", gate)
+                            yield _emit(task, "agent.completed", {
+                                "summary": task.summary, "success": False, "hai": gate,
+                            })
+                            return
+                        if gate.get("decision") != StrategicDecision.COMPLETE.value:
+                            messages.append({"role": "assistant", "content": text})
+                            messages.append({
+                                "role": "user",
+                                "content": f"HAI decision={gate.get('decision')}: continue.",
+                            })
+                            continue
+                        # COMPLETE — durable terminal checkpoint required
+                        try:
+                            from brain.agent_task_store import persist_hai_checkpoint
+                            cp = hai.control.checkpoint(
+                                task.id, correlation_id=task.correlation_id,
+                                state_version=hai.control.iteration_count,
+                            )
+                            ok_cp = await persist_hai_checkpoint(task.id, cp.to_dict())
+                            if not ok_cp:
+                                task.status = AgentTaskStatus.BLOCKED
+                                task.summary = "Terminal HAI checkpoint failed; refusing success"
+                                task.error = "checkpoint_persist_failed"
+                                task.completed_at = datetime.now(timezone.utc).isoformat()
+                                yield _emit(task, "agent.agent_blocked", {
+                                    "reason_code": "checkpoint_persist_failed",
+                                })
+                                yield _emit(task, "agent.completed", {
+                                    "summary": task.summary, "success": False,
+                                })
+                                return
+                        except Exception as e:
+                            task.status = AgentTaskStatus.BLOCKED
+                            task.summary = f"Terminal checkpoint error: {e}"
+                            task.error = "checkpoint_persist_failed"
+                            task.completed_at = datetime.now(timezone.utc).isoformat()
+                            yield _emit(task, "agent.completed", {
+                                "summary": task.summary, "success": False,
+                            })
+                            return
+                        task.status = AgentTaskStatus.SUCCEEDED
+                        task.summary = (text or gate.get("message") or "Complete")[:4000]
+                        task.completed_at = datetime.now(timezone.utc).isoformat()
+                        yield _emit(task, "agent.agent_completed", {"summary": task.summary})
+                        yield _emit(task, "agent.completed", {
+                            "summary": task.summary,
+                            "files_changed": task.files_changed,
+                            "tools_used": task.tools_used,
+                            "success": True,
+                            "hai": gate,
+                        })
+                        return
+                    # Non-Agent modes: legacy natural-language completion
                     task.status = AgentTaskStatus.SUCCEEDED
                     task.summary = text[:4000]
                     task.completed_at = datetime.now(timezone.utc).isoformat()
@@ -609,6 +701,8 @@ class AgentRuntime:
                         action,
                         bool(result.get("ok")),
                         summary=str(result.get("error") or result.get("message") or "")[:300],
+                        arguments=action_input if isinstance(action_input, dict) else {},
+                        result=result if isinstance(result, dict) else {},
                     )
                     task.hai_state = hai.control.to_state_dict()
                     task.lifecycle = hai.control.lifecycle
@@ -624,40 +718,95 @@ class AgentRuntime:
                         yield _emit(task, "agent.completed", {"summary": task.summary, "hai": hout})
                         return
                     if hout.get("decision") == StrategicDecision.COMPLETE.value:
+                        try:
+                            from brain.agent_task_store import persist_hai_checkpoint
+                            cp = hai.control.checkpoint(
+                                task.id, correlation_id=task.correlation_id,
+                                state_version=hai.control.plan_version,
+                            )
+                            ok_cp = await persist_hai_checkpoint(task.id, cp.to_dict())
+                            if not ok_cp:
+                                task.status = AgentTaskStatus.BLOCKED
+                                task.error = "checkpoint_persist_failed"
+                                task.summary = "Terminal checkpoint failed; refusing success"
+                                task.completed_at = datetime.now(timezone.utc).isoformat()
+                                yield _emit(task, "agent.completed", {
+                                    "summary": task.summary, "success": False, "hai": hout,
+                                })
+                                return
+                        except Exception as e:
+                            task.status = AgentTaskStatus.BLOCKED
+                            task.error = "checkpoint_persist_failed"
+                            task.summary = f"Terminal checkpoint error: {e}"
+                            task.completed_at = datetime.now(timezone.utc).isoformat()
+                            yield _emit(task, "agent.completed", {
+                                "summary": task.summary, "success": False,
+                            })
+                            return
                         task.status = AgentTaskStatus.SUCCEEDED
                         task.summary = hout.get("message") or "Objective complete"
                         task.completed_at = datetime.now(timezone.utc).isoformat()
-                        try:
-                            from brain.agent_task_store import persist_hai_checkpoint
-                            cp = hai.control.checkpoint(task.id, correlation_id=task.correlation_id, state_version=hai.control.plan_version)
-                            await persist_hai_checkpoint(task.id, cp.to_dict())
-                        except Exception:
-                            pass
                         yield _emit(task, "agent.agent_completed", {"summary": task.summary})
                         yield _emit(task, "agent.completed", {
                             "summary": task.summary,
                             "files_changed": task.files_changed,
                             "tools_used": task.tools_used,
+                            "success": True,
                             "hai": hout,
                         })
                         return
                     if hout.get("decision") == StrategicDecision.REPLAN.value:
                         yield _emit(task, "agent.replan_started", hout)
+                        plan_ctx = hai.consume_plan_update()
+                        if plan_ctx:
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    "HAI REPLAN active. Use the updated plan; do not continue the old plan.\n"
+                                    + json.dumps(plan_ctx)[:3000]
+                                ),
+                            })
                     # Checkpoint after consequential tools
-                    if action in ("apply_patch", "replace_text", "create_file", "write_file", "run_tests"):
+                    if action in (
+                        "apply_patch", "replace_text", "create_file", "write_file",
+                        "rename_file", "delete_file", "run_tests", "run_command",
+                    ):
                         try:
                             from brain.agent_task_store import persist_hai_checkpoint
                             cp = hai.control.checkpoint(
                                 task.id, correlation_id=task.correlation_id,
                                 state_version=hai.control.iteration_count,
                             )
-                            await persist_hai_checkpoint(task.id, cp.to_dict())
-                            yield _emit(task, "agent.hai_checkpoint_created", {
-                                "state_version": hai.control.iteration_count,
-                                "lifecycle": hai.control.lifecycle,
+                            ok_cp = await persist_hai_checkpoint(task.id, cp.to_dict())
+                            if ok_cp:
+                                yield _emit(task, "agent.hai_checkpoint_created", {
+                                    "state_version": hai.control.iteration_count,
+                                    "lifecycle": hai.control.lifecycle,
+                                })
+                            else:
+                                # Consequential boundary: do not silently continue
+                                yield _emit(task, "agent.agent_blocked", {
+                                    "reason_code": "checkpoint_persist_failed",
+                                    "message": "Durable HAI checkpoint failed after consequential action",
+                                })
+                                task.status = AgentTaskStatus.BLOCKED
+                                task.error = "checkpoint_persist_failed"
+                                task.summary = "Checkpoint persistence failed after consequential action"
+                                task.completed_at = datetime.now(timezone.utc).isoformat()
+                                yield _emit(task, "agent.completed", {
+                                    "summary": task.summary, "success": False,
+                                })
+                                return
+                        except Exception as e:
+                            logger.exception("post-tool checkpoint failed")
+                            task.status = AgentTaskStatus.BLOCKED
+                            task.error = "checkpoint_persist_failed"
+                            task.summary = f"Checkpoint error: {e}"
+                            task.completed_at = datetime.now(timezone.utc).isoformat()
+                            yield _emit(task, "agent.completed", {
+                                "summary": task.summary, "success": False,
                             })
-                        except Exception:
-                            logger.debug("post-tool checkpoint failed", exc_info=True)
+                            return
 
                 if result.get("file_changed"):
                     fc = result["file_changed"]
