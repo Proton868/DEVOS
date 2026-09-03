@@ -168,3 +168,38 @@ def _row_to_dict(row, include_events: bool = True) -> dict:
     if include_events:
         d["events"] = row.events or []
     return d
+
+
+async def persist_hai_checkpoint(task_id: str, checkpoint: dict) -> bool:
+    """Best-effort durable HAI checkpoint on AgentTaskRecord."""
+    try:
+        from core.database import AsyncSessionLocal, AgentTaskRecord
+        async with AsyncSessionLocal() as db:
+            row = await db.get(AgentTaskRecord, task_id)
+            if row is None:
+                return False
+            if hasattr(row, "hai_checkpoint"):
+                row.hai_checkpoint = checkpoint
+            else:
+                # Fallback: store under events metadata marker is avoided; skip
+                return False
+            row.updated_at = _now()
+            await db.commit()
+            return True
+    except Exception:
+        logger.debug("persist_hai_checkpoint failed", exc_info=True)
+        return False
+
+
+async def load_hai_checkpoint(task_id: str):
+    try:
+        from core.database import AsyncSessionLocal, AgentTaskRecord
+        async with AsyncSessionLocal() as db:
+            row = await db.get(AgentTaskRecord, task_id)
+            if row is None:
+                return None
+            cp = getattr(row, "hai_checkpoint", None)
+            return dict(cp) if isinstance(cp, dict) else None
+    except Exception:
+        logger.debug("load_hai_checkpoint failed", exc_info=True)
+        return None

@@ -22,6 +22,8 @@ from enum import Enum
 from typing import Any, AsyncIterator, Callable, Optional
 
 from brain.agent_changes import record_change
+from cognitive.hai_control import StrategicController, StrategicDecision
+from cognitive.hai_checkpoint import reconcile_with_execution
 from brain.agent_tools import (
     AGENT_ACTION_TO_CAP,
     AGENT_TOOL_REGISTRY,
@@ -53,6 +55,7 @@ class AgentTaskStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    BLOCKED = "blocked"
     UNKNOWN = "unknown"
 
 
@@ -117,6 +120,8 @@ class AgentTask:
     error: Optional[str] = None
     summary: Optional[str] = None
     cancel_requested: bool = False
+    hai_state: Optional[dict] = None
+    lifecycle: str = "created"
 
     def to_dict(self) -> dict:
         return {
@@ -136,6 +141,8 @@ class AgentTask:
             "correlation_id": self.correlation_id,
             "error": self.error,
             "summary": self.summary,
+            "hai_state": self.hai_state,
+            "lifecycle": getattr(self, "lifecycle", "created"),
         }
 
 
@@ -345,6 +352,45 @@ class AgentRuntime:
             "mode": self.mode.value,
             "task": task.to_dict(),
         })
+
+        # Stage 3J — HAI control plane (Agent mode only; no second tool loop)
+        hai = None
+        if self.mode == AgentMode.AGENT:
+            hai = StrategicController()
+            splan = hai.start(objective)
+            task.lifecycle = hai.control.lifecycle
+            task.hai_state = hai.control.to_state_dict()
+            yield _emit(task, "agent.strategic_plan_created", splan)
+            yield _emit(task, "agent.strategic_subgoal_selected", {
+                "subgoal_id": splan.get("selected_subgoal"),
+                "decision": splan.get("decision"),
+                "reason_code": splan.get("reason_code"),
+            })
+            # Persist checkpoint at plan boundary
+            try:
+                from brain.agent_task_store import persist_hai_checkpoint
+                cp = hai.control.checkpoint(task.id, correlation_id=task.correlation_id, state_version=1)
+                await persist_hai_checkpoint(task.id, cp.to_dict())
+                yield _emit(task, "agent.hai_checkpoint_created", {
+                    "state_version": 1,
+                    "lifecycle": hai.control.lifecycle,
+                    "checksum": cp.checksum,
+                })
+            except Exception:
+                logger.debug("hai checkpoint persist failed", exc_info=True)
+            if splan.get("decision") == StrategicDecision.DELEGATE_WORKFLOW.value:
+                yield _emit(task, "agent.workflow_delegated", splan)
+            if splan.get("decision") == StrategicDecision.DELEGATE_COORDINATOR.value:
+                yield _emit(task, "agent.coordinator_delegated", splan)
+            if splan.get("decision") in (
+                StrategicDecision.BLOCK.value, StrategicDecision.FAIL.value,
+            ):
+                task.status = AgentTaskStatus.BLOCKED if splan["decision"] == StrategicDecision.BLOCK.value else AgentTaskStatus.FAILED
+                task.summary = splan.get("message") or splan.get("reason_code")
+                task.completed_at = datetime.now(timezone.utc).isoformat()
+                yield _emit(task, "agent.agent_blocked" if task.status == AgentTaskStatus.BLOCKED else "agent.agent_failed", splan)
+                yield _emit(task, "agent.completed", {"summary": task.summary, "hai": splan})
+                return
 
         tools_block = tools_for_prompt(self.mode)
         system = SYSTEM_PROMPT.format(tools=tools_block)
@@ -558,6 +604,61 @@ class AgentRuntime:
                     "side_effect": tool.side_effect.value,
                 })
 
+                if hai is not None:
+                    hout = hai.on_tool_result(
+                        action,
+                        bool(result.get("ok")),
+                        summary=str(result.get("error") or result.get("message") or "")[:300],
+                    )
+                    task.hai_state = hai.control.to_state_dict()
+                    task.lifecycle = hai.control.lifecycle
+                    yield _emit(task, "agent.tactical_action_selected" if hout.get("decision") == "continue" else "agent.strategic_subgoal_selected", hout)
+                    if hout.get("decision") == StrategicDecision.VERIFY.value:
+                        yield _emit(task, "agent.verification_started", hout)
+                    if hout.get("decision") == StrategicDecision.BLOCK.value:
+                        task.status = AgentTaskStatus.BLOCKED
+                        task.summary = hout.get("message") or "blocked"
+                        task.completed_at = datetime.now(timezone.utc).isoformat()
+                        yield _emit(task, "agent.loop_detected", hout)
+                        yield _emit(task, "agent.agent_blocked", hout)
+                        yield _emit(task, "agent.completed", {"summary": task.summary, "hai": hout})
+                        return
+                    if hout.get("decision") == StrategicDecision.COMPLETE.value:
+                        task.status = AgentTaskStatus.SUCCEEDED
+                        task.summary = hout.get("message") or "Objective complete"
+                        task.completed_at = datetime.now(timezone.utc).isoformat()
+                        try:
+                            from brain.agent_task_store import persist_hai_checkpoint
+                            cp = hai.control.checkpoint(task.id, correlation_id=task.correlation_id, state_version=hai.control.plan_version)
+                            await persist_hai_checkpoint(task.id, cp.to_dict())
+                        except Exception:
+                            pass
+                        yield _emit(task, "agent.agent_completed", {"summary": task.summary})
+                        yield _emit(task, "agent.completed", {
+                            "summary": task.summary,
+                            "files_changed": task.files_changed,
+                            "tools_used": task.tools_used,
+                            "hai": hout,
+                        })
+                        return
+                    if hout.get("decision") == StrategicDecision.REPLAN.value:
+                        yield _emit(task, "agent.replan_started", hout)
+                    # Checkpoint after consequential tools
+                    if action in ("apply_patch", "replace_text", "create_file", "write_file", "run_tests"):
+                        try:
+                            from brain.agent_task_store import persist_hai_checkpoint
+                            cp = hai.control.checkpoint(
+                                task.id, correlation_id=task.correlation_id,
+                                state_version=hai.control.iteration_count,
+                            )
+                            await persist_hai_checkpoint(task.id, cp.to_dict())
+                            yield _emit(task, "agent.hai_checkpoint_created", {
+                                "state_version": hai.control.iteration_count,
+                                "lifecycle": hai.control.lifecycle,
+                            })
+                        except Exception:
+                            logger.debug("post-tool checkpoint failed", exc_info=True)
+
                 if result.get("file_changed"):
                     fc = result["file_changed"]
                     task.files_changed.append(fc)
@@ -572,14 +673,28 @@ class AgentRuntime:
                     ),
                 })
 
-            task.status = AgentTaskStatus.SUCCEEDED
-            task.summary = "Reached maximum tool steps. Partial progress may exist."
+            # Budget exhaustion is NOT successful completion (Stage 3J)
+            task.status = AgentTaskStatus.BLOCKED
+            task.summary = (
+                "Agent execution budget exhausted (MAX_STEPS). "
+                "Partial progress may exist; completion criteria not satisfied."
+            )
+            task.error = "max_steps_reached"
             task.completed_at = datetime.now(timezone.utc).isoformat()
+            if hai is not None:
+                hai.control.lifecycle = "blocked"
+                task.lifecycle = "blocked"
+                task.hai_state = hai.control.to_state_dict()
+            yield _emit(task, "agent.agent_blocked", {
+                "reason_code": "max_steps_reached",
+                "summary": task.summary,
+            })
             yield _emit(task, "agent.completed", {
                 "summary": task.summary,
                 "files_changed": task.files_changed,
                 "tools_used": task.tools_used,
                 "max_steps_reached": True,
+                "success": False,
             })
         except Exception as e:
             logger.exception("agent runtime failure")

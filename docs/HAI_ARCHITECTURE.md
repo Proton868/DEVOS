@@ -9,3 +9,9 @@ HAI checkpoint → process interruption → restore + checksum → ExecutionJob 
 UNKNOWN: lifecycle unknown, retry=false always.
 
 Acceptance fixture: tests/fixtures/auth_fail_project/
+
+## Stage 3J — Unified control
+
+Agent mode initializes `StrategicController` inside the existing `AgentRuntime` loop.
+No second agent runtime. Coordinator and Workflow engines are delegation targets only.
+MAX_STEPS exhaustion reports `blocked` with `success: false`.
