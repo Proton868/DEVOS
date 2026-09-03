@@ -410,10 +410,6 @@ export default function SettingsModal() {
                 <div style={{marginTop:16, borderTop:"1px solid var(--border)", paddingTop:12}}>
                   <h4 className="settings-section-title">Security</h4>
                   <button className="btn-secondary" onClick={async () => {
-                    try {
-                      const { usePanelStore } = await import("../../store/panelStore");
-                      usePanelStore.getState().resetLayout?.();
-                    } catch {}
                     const logout = useStore.getState().logout || useStore.getState().logoutUser;
                     if (logout) await logout();
                     setSettingsOpen(false);

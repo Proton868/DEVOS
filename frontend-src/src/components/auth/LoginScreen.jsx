@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Sparkles, Loader, AlertCircle, ArrowRight, Shield, Smartphone, Mail } from "lucide-react";
+import { Loader, AlertCircle, ArrowRight, Shield, Smartphone, Mail } from "lucide-react";
 import useStore from "../../store/useStore";
 import { login, syncSupabaseSession } from "../../services/api";
 import { supabase, signInWithGoogle, signInWithPhone, verifyPhoneOtp } from "../../services/supabase";
+import MenorahLogo from "../../os/MenorahLogo";
 import "./LoginScreen.css";
 
 /* ── Animated particle canvas ─────────────────────────────── */
@@ -221,7 +222,7 @@ export default function LoginScreen() {
       >
         <div className="login-brand">
           <div className="login-mark">
-            <Sparkles size={22} />
+            <MenorahLogo size={26} id="login" />
           </div>
           <div className="login-wordmark">
             <span className="login-wordmark-name">DevOS</span>
