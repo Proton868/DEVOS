@@ -40,6 +40,8 @@ TERMINAL = frozenset({OP_SUCCEEDED, OP_FAILED, OP_UNKNOWN, OP_CANCELLED})
 ALLOWED = {
     OP_RESERVED: frozenset({OP_RUNNING, OP_CANCELLED}),
     OP_RUNNING: frozenset({OP_SUCCEEDED, OP_FAILED, OP_UNKNOWN, OP_CANCELLED}),
+    # Reconcile-proven outcomes only (never auto-retry UNKNOWN)
+    OP_UNKNOWN: frozenset({OP_SUCCEEDED, OP_FAILED}),
 }
 
 
@@ -520,6 +522,15 @@ async def reconcile_operation(
     if status == OP_SUCCEEDED:
         return {"ok": True, "reason_code": "already_succeeded", "execute": False, "retry": False, "status": OP_SUCCEEDED, "operation": op}
     if status == OP_UNKNOWN:
+        # Investigate territory: may promote only with matching evidence (never blind retry)
+        evidence = await find_matching_evidence(operation_id)
+        if evidence:
+            valid, vreason = validate_operation_evidence(op, evidence)
+            if valid:
+                await complete_operation(operation_id, success=True, evidence_id=evidence.get("id"))
+                op = await load_operation(operation_id)
+                return {"ok": True, "reason_code": "reconciled_succeeded", "execute": False, "retry": False, "status": OP_SUCCEEDED, "operation": op}
+            return {"ok": True, "reason_code": f"unknown_evidence_invalid:{vreason}", "execute": False, "retry": False, "status": OP_UNKNOWN, "operation": op}
         return {"ok": True, "reason_code": "unknown", "execute": False, "retry": False, "status": OP_UNKNOWN, "operation": op}
     if status == OP_CANCELLED:
         return {"ok": True, "reason_code": "cancelled", "execute": False, "retry": False, "status": OP_CANCELLED, "operation": op}

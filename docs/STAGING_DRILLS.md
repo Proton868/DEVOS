@@ -215,6 +215,45 @@ Evidence: `data/staging-results/p0-worker-kill-*.json` (not committed).
 Standalone worker: `scripts/run_job_worker.py` (does not load `app.py`).
 
 
+
+
+## Live P1 — external provider drop-response → UNKNOWN → reconciliation
+
+**Purpose:** Prove that when a provider accepts a side effect but the response is lost, DEVOS records **UNKNOWN**, does **not** blind-retry, and reconciliation discovers provider truth with **exactly one** external side effect.
+
+**Topology:** PostgreSQL + Redis + independent provider stub + worker-a + worker-b.
+
+**Provider failure mode:** `POST /execute` records acceptance, then drops the connection. `GET /status/{key}` exposes provider truth.
+
+**Expected state machine:**
+
+```
+provider accepted → response lost → UNKNOWN → no retry → reconciliation → succeeded
+provider.side_effect_count == 1 throughout
+```
+
+**P1 is not proven by a mock provider response.** It is proven only when an independent provider process records the external side effect, DEVOS records UNKNOWN after losing the response, no blind retry occurs, reconciliation discovers the actual provider state, and the operation reaches durable success with exactly one provider-side side effect.
+
+### Stop conditions
+
+| Outcome | Exit | Examples |
+|---------|------|----------|
+| BLOCKED | 2 | PG/Redis/provider/workers unavailable |
+| FAIL | 1 | No UNKNOWN, blind retry, duplicate side effect, reconcile fail |
+| PASS | 0 | All expected_state fields hold |
+
+### Run
+
+```bash
+export DATABASE_URL=postgresql+asyncpg://devos:devos_password@127.0.0.1:5432/devos
+export REDIS_URL=redis://127.0.0.1:6379
+export P1_PROVIDER_URL=http://127.0.0.1:8099
+python scripts/staging_p1_unknown_reconciliation.py
+```
+
+Evidence: `data/staging-results/p1-unknown-reconciliation-*.json`
+
+
 ## Automated pure-logic profile
 
 ```bash

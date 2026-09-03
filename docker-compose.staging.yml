@@ -19,7 +19,21 @@ services:
       POSTGRES_USER: devos
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devos_password}
       POSTGRES_DB: devos
-    volumes:
+    
+  provider-stub:
+    profiles: ["workers"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: devos-staging-provider
+    environment:
+      P1_PROVIDER_PORT: "8099"
+      P1_DROP_RESPONSE: "true"
+    ports:
+      - "8099:8099"
+    command: ["python", "scripts/staging_provider_stub.py"]
+
+volumes:
       - staging_pg:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U devos -d devos"]
@@ -52,6 +66,7 @@ services:
       DEVOS_JOB_LEASE_S: ${DEVOS_JOB_LEASE_S:-5}
       DEVOS_STAGING_HOLD_S: ${DEVOS_STAGING_HOLD_S:-60}
       DEVOS_JOB_POLL_S: "0.25"
+      P1_PROVIDER_URL: http://provider-stub:8099
       JWT_SECRET: ${JWT_SECRET:-staging-drill-jwt-secret-32chars!!}
     command: ["python", "scripts/run_job_worker.py"]
     depends_on:
@@ -74,6 +89,7 @@ services:
       DEVOS_JOB_LEASE_S: ${DEVOS_JOB_LEASE_S:-5}
       DEVOS_STAGING_HOLD_S: ${DEVOS_STAGING_HOLD_S:-60}
       DEVOS_JOB_POLL_S: "0.25"
+      P1_PROVIDER_URL: http://provider-stub:8099
       JWT_SECRET: ${JWT_SECRET:-staging-drill-jwt-secret-32chars!!}
     command: ["python", "scripts/run_job_worker.py"]
     depends_on:
