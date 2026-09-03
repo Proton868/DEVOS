@@ -228,9 +228,9 @@ export default function OrchestrationCanvas() {
       ];
     }
     return [
+      { label: "Edit Script (Cursor)", run: () => openEditor({ scriptId: sid }) },
+      { label: "Check Logs (PyRunner)", run: () => openTerminal(`script-${sid}`) },
       { label: "Execute", run: () => runScript(sid) },
-      { label: "Edit Script (DevOS IDE)", run: () => openEditor({ scriptId: sid }) },
-      { label: "View Live Logs (PyRunner)", run: () => openTerminal(`script-${sid}`) },
       { label: "Inspect Agent", run: () => openInspector(`script-${sid}`) },
       { label: "Ask DevOS", run: () => openCopilot(`script-${sid}`, `The user is looking at the "${node.title}" workflow node.`) },
     ];

@@ -6,7 +6,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Send, X, ChevronRight } from "lucide-react";
+import { Send, X, ChevronRight, Move, PanelRight } from "lucide-react";
 import useOsStore from "../store/osStore";
 import useStore from "../../store/useStore";
 import { api } from "../../services/api";
@@ -28,14 +28,37 @@ function buildSystemPrompt({ node, editorFile, editorContent }) {
   return p;
 }
 
-export default function AICopilot() {
-  const { copilot, closeCopilot, nodes, editor } = useOsStore();
+export default function AICopilot({ floating = false }) {
+  const { copilot, closeCopilot, nodes, editor, chatMode, toggleChatMode } = useOsStore();
+  const [pos, setPos] = useState({ x: null, y: null });
+  const dragRef = useRef(null);
+  const dragging = useRef(false);
+  const offset = useRef({ x: 0, y: 0 });
   const { selectedProvider, selectedModel } = useStore();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const bodyRef = useRef(null);
   const sessionIdRef = useRef(undefined);
+
+  const onDragStart = (e) => {
+    if (!floating) return;
+    dragging.current = true;
+    const rect = dragRef.current?.getBoundingClientRect();
+    offset.current = { x: e.clientX - (rect?.left || 0), y: e.clientY - (rect?.top || 0) };
+    e.preventDefault();
+  };
+  useEffect(() => {
+    if (!floating) return;
+    const move = (e) => {
+      if (!dragging.current) return;
+      setPos({ x: e.clientX - offset.current.x, y: e.clientY - offset.current.y });
+    };
+    const up = () => { dragging.current = false; };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+  }, [floating]);
 
   const node = copilot.nodeId ? nodes.find((n) => n.id === copilot.nodeId) : null;
 
@@ -100,12 +123,30 @@ export default function AICopilot() {
 
   if (!copilot.open) return null;
 
+  const floatStyle = floating && pos.x != null
+    ? { position: "fixed", left: pos.x, top: pos.y, width: 380, height: 480, zIndex: 520, flex: "none" }
+    : floating
+    ? { position: "fixed", right: 18, bottom: 72, width: 380, height: 480, zIndex: 520, flex: "none" }
+    : { flex: "0 0 42%", minHeight: 260 };
+
   return (
-    <div className="sp-surface" style={{ flex: "0 0 42%", minHeight: 260 }}>
-      <div className="sp-surface-head">
+    <div className="sp-surface" style={floatStyle} ref={dragRef}>
+      <div
+        className="sp-surface-head"
+        style={floating ? { cursor: "grab" } : undefined}
+        onMouseDown={onDragStart}
+      >
+        {floating && <Move size={13} style={{ opacity: 0.55, marginRight: 4 }} />}
         <span>AI Copilot Chat</span>
         {node && <span className="sub">· {node.title}</span>}
         <span className="spacer" />
+        <button
+          className="sp-iconbtn"
+          title={floating ? "Dock chat to focus column" : "Float chat (movable)"}
+          onClick={(e) => { e.stopPropagation(); toggleChatMode(); }}
+        >
+          <PanelRight size={14} />
+        </button>
         <button className="sp-iconbtn" title="Close copilot" onClick={closeCopilot}><X size={15} /></button>
       </div>
       <div className="sp-ctx-strip">

@@ -4,7 +4,7 @@
  * user controls.
  */
 import React, { useEffect, useRef, useState } from "react";
-import { Search, Bell, ChevronDown, LogOut, Settings, Check, Zap } from "lucide-react";
+import { Search, Bell, ChevronDown, LogOut, Settings, Check, Zap, Terminal, PanelLeft } from "lucide-react";
 import MenorahLogo from "../MenorahLogo";
 import useOsStore from "../store/osStore";
 import useStore from "../../store/useStore";
@@ -13,6 +13,15 @@ import { api } from "../../services/api";
 export default function MissionBar() {
   const setCommandBar = useOsStore((s) => s.setCommandBar);
   const setOverlay = useOsStore((s) => s.setOverlay);
+  const toggleTerminal = useOsStore((s) => s.toggleTerminal);
+  const terminalOpen = useOsStore((s) => s.terminal.open);
+  const toggleRail = useOsStore((s) => s.toggleRail);
+  const railCollapsed = useOsStore((s) => s.railCollapsed);
+  const toggleChatMode = useOsStore((s) => s.toggleChatMode);
+  const chatMode = useOsStore((s) => s.chatMode);
+  const openCopilot = useOsStore((s) => s.openCopilot);
+  const closeCopilot = useOsStore((s) => s.closeCopilot);
+  const copilotOpen = useOsStore((s) => s.copilot.open);
   const {
     currentProject, setCurrentProject, pendingHitlRequests,
     removePendingHitlRequest, user, logout, setStatus,
@@ -97,6 +106,31 @@ export default function MissionBar() {
       </div>
 
       <div className="sp-mb-right">
+        <button
+          className={`sp-chip ${!railCollapsed ? "active-chip" : ""}`}
+          title={railCollapsed ? "Show Cosmic Sidebar" : "Hide Cosmic Sidebar"}
+          onClick={toggleRail}
+        >
+          <PanelLeft size={13} />
+        </button>
+        <button
+          className={`sp-chip ${terminalOpen ? "active-chip" : ""}`}
+          title={terminalOpen ? "Hide Ghost Terminal" : "Show Ghost Terminal (toggle)"}
+          onClick={toggleTerminal}
+        >
+          <Terminal size={13} />
+        </button>
+        <button
+          className={`sp-chip ${copilotOpen ? "active-chip" : ""}`}
+          title={copilotOpen ? (chatMode === "floating" ? "Chat floating — click to close" : "Chat docked — Shift+click to float") : "Open AI Copilot Chat"}
+          onClick={(e) => {
+            if (e.shiftKey && copilotOpen) { toggleChatMode(); return; }
+            if (copilotOpen) closeCopilot();
+            else openCopilot(null, null);
+          }}
+        >
+          <span style={{ fontSize: 11, fontWeight: 600 }}>AI</span>
+        </button>
         <div className="sp-chip" title={backendUp == null ? "Checking backend…" : backendUp ? "Backend online" : "Backend offline"}>
           <Zap size={12} className={backendUp ? "sp-status-ok" : backendUp === false ? "sp-status-off" : ""} />
           <span className={backendUp ? "sp-status-ok" : backendUp === false ? "sp-status-off" : ""}>

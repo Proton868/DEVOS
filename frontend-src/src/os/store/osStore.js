@@ -62,13 +62,37 @@ const useOsStore = create((set, get) => ({
   openInspector: (nodeId) => set({ inspector: { open: true, nodeId } }),
   closeInspector: () => set({ inspector: { open: false, nodeId: null } }),
 
-  // ── Terminal (Ghost Terminal) ────────────────────────────
-  terminal: { open: false, executionId: null, nodeId: null },
+  // ── Terminal (Ghost Terminal) — contextual + explicit toggle ──
+  terminal: { open: false, pinned: false, executionId: null, nodeId: null },
   openTerminal: (nodeId = null, executionId = null) =>
     set((s) => ({
-      terminal: { open: true, nodeId: nodeId ?? s.terminal.nodeId, executionId },
+      terminal: {
+        open: true,
+        pinned: s.terminal.pinned,
+        nodeId: nodeId ?? s.terminal.nodeId,
+        executionId,
+      },
     })),
-  closeTerminal: () => set({ terminal: { open: false, executionId: null, nodeId: null } }),
+  closeTerminal: () =>
+    set((s) => ({
+      terminal: { open: false, pinned: false, executionId: null, nodeId: null },
+    })),
+  toggleTerminal: () =>
+    set((s) => {
+      if (s.terminal.open) {
+        return { terminal: { open: false, pinned: false, executionId: null, nodeId: null } };
+      }
+      return {
+        terminal: {
+          open: true,
+          pinned: true,
+          nodeId: s.selectedNode || s.terminal.nodeId,
+          executionId: s.terminal.executionId,
+        },
+      };
+    }),
+  setTerminalPinned: (pinned) =>
+    set((s) => ({ terminal: { ...s.terminal, pinned: !!pinned, open: pinned ? true : s.terminal.open } })),
 
   // ── Command bar ──────────────────────────────────────────
   commandBar: { open: false, query: "" },
@@ -79,12 +103,22 @@ const useOsStore = create((set, get) => ({
   setViewport: (v) => set({ viewport: v }),
 
   // ── Sidebar / overlays / HUD ─────────────────────────────
+  // railCollapsed: hide the entire left rail (icon strip). Omni still independent.
+  railCollapsed: false,
+  toggleRail: () => set((s) => ({ railCollapsed: !s.railCollapsed })),
+  setRailCollapsed: (v) => set({ railCollapsed: !!v }),
   omniOpen: true,
   toggleOmni: () => set((s) => ({ omniOpen: !s.omniOpen })),
-  overlay: null, // null | 'files' | 'git' | 'search' | 'memory' | 'mcp' | 'research' | 'settings' | 'history' | 'system'
+  overlay: null, // null | 'files' | 'git' | 'search' | 'memory' | 'mcp' | 'research' | 'settings' | 'history' | 'system' | 'composer'
   setOverlay: (overlay) => set({ overlay }),
   dashboardOpen: true,
   setDashboardOpen: (v) => set({ dashboardOpen: v }),
+
+  // ── Chat / Copilot presentation: docked (focus column) or floating ──
+  chatMode: "docked", // 'docked' | 'floating'
+  setChatMode: (mode) => set({ chatMode: mode === "floating" ? "floating" : "docked" }),
+  toggleChatMode: () =>
+    set((s) => ({ chatMode: s.chatMode === "floating" ? "docked" : "floating" })),
 
   // ── Live agents (real data from /api/workers + agent tasks) ──
   workers: [],

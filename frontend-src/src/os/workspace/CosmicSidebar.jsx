@@ -20,7 +20,7 @@ const dotColor = (st) =>
 export default function CosmicSidebar() {
   const {
     omniOpen, toggleOmni, overlay, setOverlay, nodes, workers, selectNode,
-    openInspector, setDashboardOpen, setCommandBar,
+    openInspector, setDashboardOpen, setCommandBar, railCollapsed, toggleRail,
   } = useOsStore();
 
   const [projects, setProjects] = useState([]);
@@ -48,9 +48,35 @@ export default function CosmicSidebar() {
     { key: "mcp", icon: Blocks, title: "MCP", onClick: () => setOverlay("mcp") },
   ];
 
+  if (railCollapsed) {
+    return (
+      <button
+        className="sp-rail-expand"
+        title="Show Cosmic Sidebar"
+        onClick={toggleRail}
+        style={{
+          position: "absolute", left: 8, top: 56, zIndex: 280,
+          width: 32, height: 32, borderRadius: 8,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "rgba(12,12,22,0.9)", border: "1px solid var(--sp-border)",
+          color: "var(--sp-text-1)", cursor: "pointer",
+        }}
+      >
+        <ChevronRight size={16} />
+      </button>
+    );
+  }
+
   return (
     <>
       <div className="sp-side-rail">
+        <button
+          className="sp-rail-btn"
+          title="Hide sidebar"
+          onClick={toggleRail}
+        >
+          <ChevronLeft size={16} />
+        </button>
         <button
           className="sp-rail-btn"
           title="DevOS"

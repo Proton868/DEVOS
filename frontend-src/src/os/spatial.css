@@ -507,3 +507,33 @@
 
 
 
+
+/* ── Mission bar active chips ───────────────────────────── */
+.sp-chip.active-chip {
+  border-color: rgba(34, 211, 238, 0.45);
+  background: rgba(34, 211, 238, 0.12);
+  color: var(--sp-accent);
+}
+
+/* ── Floating movable chat ──────────────────────────────── */
+.sp-chat-float {
+  pointer-events: none;
+}
+.sp-chat-float .sp-surface {
+  pointer-events: auto;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--sp-border-bright);
+  display: flex;
+  flex-direction: column;
+}
+.sp-chat-float .sp-copilot-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ── Expand rail button ─────────────────────────────────── */
+.sp-rail-expand:hover {
+  border-color: var(--sp-border-bright) !important;
+  color: var(--sp-text-0) !important;
+}
