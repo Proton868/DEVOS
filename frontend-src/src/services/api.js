@@ -451,8 +451,8 @@ const flowApi = {
     const list = await req(`/api/scripts`);
     return { total: list.length, enabled: list.filter((s) => s.is_active).length };
   },
-  // Secrets (Session 22) -- the real gap FlowPanel's old, broken separate
-  // client expected but the backend never had until now.
+    // Secrets management -- connected to the backend secrets endpoint
+  // that was previously missing from the old separate client path.
   listSecrets: () => req(`/api/secrets`),
   createSecret: (name, value, description) =>
     req(`/api/secrets`, { method: "POST", body: JSON.stringify({ name, value, description }) }),

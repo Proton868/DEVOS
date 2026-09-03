@@ -211,7 +211,7 @@ Each line item is tagged:
 | ✅ | Project builder | Full-stack website generator UI | — |
 | ✅ | Terminal | xterm.js with WebSocket backend | — |
 | ✅ | Settings modal | Provider/model selection, workspace settings | — |
-| ✅ | Mobile responsive | MobileLayout with tab-based navigation | — |
+| ✅ | Mobile responsive | Same Spatial OS workspace adapted to small viewport — canvas-first with overlays/sheets, no bottom-tab navigation | — |
 | ✅ | Workflow canvas | `OrchestrationCanvas` — real node-based graph over `/api/scripts` + chains, live run state, webhook triggers, contextual inspector | — |
 | ✅ | Research panel | [`frontend-src/src/components/research/ResearchPanel.jsx`](frontend-src/src/components/research/ResearchPanel.jsx) — Deep Research UI with quick/standard/deep modes, background polling, source/citation display | — |
 | ✅ | Spatial IDE | `DevOSIde` — ephemeral Monaco editor focus surface (replaces old FlowPanel/CodeEditor permanent panels) | — |

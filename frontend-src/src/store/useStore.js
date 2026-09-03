@@ -14,12 +14,11 @@ const useStore = create((set, get) => ({
   isAuthenticated: !!getToken(),
   setUser: (user) => set({ user, isAuthenticated: !!user, authChecked: true }),
   logoutUser: async () => {
-    try { await apiLogout();
     try {
-      const mod = await import("./panelStore");
-      const store = mod.usePanelStore || mod.default;
-      store?.getState?.().resetLayout?.();
-    } catch (e) {} } catch (e) {}
+      await apiLogout();
+    } catch (e) {
+      // ignore network errors on local-only logout; Supabase handles full sign-out
+    }
     set({
       user: null,
       isAuthenticated: false,
@@ -39,11 +38,6 @@ const useStore = create((set, get) => ({
     // active Supabase session (api.js's logout() handles both — see its
     // docstring), so a dual-auth user is fully logged out either way.
     await apiLogout();
-    try {
-      const mod = await import("./panelStore");
-      const store = mod.usePanelStore || mod.default;
-      store?.getState?.().resetLayout?.();
-    } catch (e) {}
     set({
       user: null,
       isAuthenticated: false,

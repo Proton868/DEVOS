@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useEffect, useCallback } from "react";
 import useStore from "./store/useStore";
+import useOsStore from "./os/store/osStore";
 import { api, verifySession, subscribeToEvents } from "./services/api";
 import { ThemeProvider } from "./theme/ThemeContext";
 import LoginScreen from "./components/auth/LoginScreen";
@@ -93,8 +94,7 @@ export default function App() {
   const {
     setFileTree, setProviders, setProvider, setWorkspaceSettings,
     setIndexStats, setGitStatus,
-    setUser, setStatus,
-    setPaletteOpen, setSettingsOpen,
+        setUser, setStatus,
     isAuthenticated, authChecked,
   } = useStore();
 
@@ -192,18 +192,15 @@ export default function App() {
     return () => ws.close();
   }, [isAuthenticated, setFileTree]);
 
-  // Keyboard shortcuts (delegated to useGlobalShortcuts inside DockableLayout)
+       // Keyboard shortcut for CMD+, (open Settings overlay via Spatial OS)
+    // Keyboard shortcut for CMD+, (open Settings overlay via Spatial OS)
   const handleKey = useCallback((e) => {
     const mod = e.ctrlKey || e.metaKey;
-    if (mod && e.key === "p" && !e.shiftKey) {
-      e.preventDefault();
-      setPaletteOpen(true);
-    }
     if (mod && e.key === ",") {
       e.preventDefault();
-      setSettingsOpen(true);
+      useOsStore.getState().setOverlay("settings");
     }
-  }, [setPaletteOpen, setSettingsOpen]);
+  }, []);
 
   useEffect(() => {
     window.addEventListener("keydown", handleKey);

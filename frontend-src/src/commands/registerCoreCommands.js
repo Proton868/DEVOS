@@ -2,7 +2,7 @@
  * Registers the canonical set of IDE commands required by the DEVOS IDE
  * completion standard (Requirement 20).
  *
- * Call once from App or DockableLayout after the store is available.
+    * Call once from App after the store is available.
  * Commands read live state via useStore.getState() so they stay current.
  *
  * One registry only — do not duplicate catalogs elsewhere.
