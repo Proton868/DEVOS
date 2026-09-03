@@ -195,12 +195,11 @@ class Workflow:
 
 
 class WorkflowEngine:
-    """In-memory workflow registry.
+    """Process-local cache / unit-test registry.
 
-    TODO(technical-debt): Persist workflow definitions in the database before
-    production multi-instance deployment. Ownership (owner_id) is enforced, but
-    process restart currently loses definitions. Prefer WorkflowRecord / SQLite
-    or Postgres when promoting beyond single-process hosting.
+    Production API routes persist via brain.workflow_store (WorkflowRecord).
+    This engine remains for pure unit tests and optional runtime caching; it is
+    NOT the authoritative store across restarts or multi-instance deployments.
     """
 
     def __init__(self):

@@ -70,7 +70,7 @@ System `.env` keys remain admin-only via `PUT /api/models/providers/config` (`is
 
 ## Workflow ownership
 
-In-memory workflow engine entries carry `owner_id`. List/get/update/delete are filtered to the authenticated user.
+Workflow definitions are stored in `workflow_records` with `owner_id`. List/get/update/delete are owner-scoped.
 
 ## Model resolution
 

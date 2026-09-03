@@ -235,6 +235,18 @@ async def _migrate_missing_columns(conn):
         "ALTER TABLE users ADD COLUMN default_tenant_id VARCHAR",
     )
     await _add_column_if_missing(
+        "workflow_records", "description",
+        "ALTER TABLE workflow_records ADD COLUMN description TEXT DEFAULT ''",
+    )
+    await _add_column_if_missing(
+        "workflow_records", "enabled",
+        "ALTER TABLE workflow_records ADD COLUMN enabled BOOLEAN DEFAULT 1",
+    )
+    await _add_column_if_missing(
+        "workflow_records", "version",
+        "ALTER TABLE workflow_records ADD COLUMN version INTEGER DEFAULT 1",
+    )
+    await _add_column_if_missing(
         "workflow_records", "tenant_id",
         "ALTER TABLE workflow_records ADD COLUMN tenant_id VARCHAR",
     )
@@ -312,12 +324,19 @@ class Membership(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 class WorkflowRecord(Base):
+    """Durable workflow definition. Database is the source of truth;
+    runtime engines may cache but must reload from this table."""
     __tablename__ = "workflow_records"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
     owner_id: Mapped[str] = mapped_column(String, index=True)
     tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
     name: Mapped[str] = mapped_column(String(256))
-    status: Mapped[str] = mapped_column(String(32), default="draft")
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    # Monotonic integer revision for optimistic concurrency / evidence correlation.
+    # Distinct from any free-form version string stored inside definition JSON.
+    version: Mapped[int] = mapped_column(Integer, default=1)
     definition: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

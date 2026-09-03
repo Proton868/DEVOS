@@ -3,6 +3,9 @@ API — Workflow route (Agency OS Master Plan §6).
 
 CRUD for workflow definitions, plus import/export in YAML, JSON, and
 natural-language formats. All workflows compile to UCIP ExecutionPlan format.
+
+Database (WorkflowRecord) is the source of truth. Runtime objects are hydrated
+per-request from the store.
 """
 import json
 from fastapi import APIRouter, Depends, Request, Query, HTTPException
@@ -16,9 +19,9 @@ from api.deps import tenant_ctx
 from core.database import get_db
 from core.sanitize import sanitize_name, sanitize_freeform, sanitize_name_list
 from brain.workflow import (
-    Workflow, WorkflowStep, StepType, WorkflowEngine,
-    get_workflow_engine, create_workflow,
+    Workflow, WorkflowStep, StepType,
 )
+from brain import workflow_store
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
@@ -39,7 +42,6 @@ class WorkflowStepCreate(BaseModel):
     retry: int = 0
     metadata: dict = {}
 
-    # security-audit P3f
     @field_validator("name", mode="before")
     @classmethod
     def _sanitize_name(cls, value):
@@ -61,6 +63,10 @@ class WorkflowCreate(BaseModel):
     schedule: Optional[str] = None
     tags: list[str] = []
     metadata: dict = {}
+    # Reject client ownership forgery — ignored if present
+    owner_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    user_id: Optional[str] = None
 
     @field_validator("name", mode="before")
     @classmethod
@@ -89,6 +95,9 @@ class WorkflowUpdate(BaseModel):
     tags: Optional[list[str]] = None
     metadata: Optional[dict] = None
     status: Optional[str] = None
+    owner_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    user_id: Optional[str] = None
 
     @field_validator("name", mode="before")
     @classmethod
@@ -107,50 +116,15 @@ class WorkflowUpdate(BaseModel):
 
 
 class WorkflowImport(BaseModel):
-    """Import a workflow from YAML or JSON."""
     format: str = Field(default="yaml")
     content: str = Field(..., min_length=1)
     name: Optional[str] = None
 
 
-@router.get("")
-async def list_workflows(
-    request: Request,
-    status: Optional[str] = Query(None),
-    tag: Optional[str] = Query(None),
-    db=Depends(get_db),
-):
-    """List all workflows, optionally filtered."""
-    user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
-    engine = get_workflow_engine()
-    tags = [tag] if tag else None
-    workflows = engine.list_all(status=status, tags=tags, owner_id=user.id)
-    return {
-        "workflows": [w.to_dict() for w in workflows],
-        "count": len(workflows),
-    }
-
-
-@router.post("")
-async def create_workflow_route(req: WorkflowCreate, request: Request, db=Depends(get_db)):
-    """Create a new workflow."""
-    user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
-
-    workflow = create_workflow(
-        name=req.name,
-        description=req.description,
-        triggers=req.triggers,
-    )
-    workflow.version = req.version
-    workflow.start_step = req.start_step
-    workflow.schedule = req.schedule
-    workflow.tags = req.tags
-    workflow.metadata = req.metadata
-
-    for s in req.steps:
-        workflow.steps.append(WorkflowStep(
+def _steps_from_req(steps: list[WorkflowStepCreate]) -> list[WorkflowStep]:
+    out = []
+    for s in steps:
+        out.append(WorkflowStep(
             id=s.id,
             type=StepType(s.type),
             name=s.name,
@@ -166,42 +140,90 @@ async def create_workflow_route(req: WorkflowCreate, request: Request, db=Depend
             retry=s.retry,
             metadata=s.metadata,
         ))
+    return out
+
+
+def _api_dict(wf: Workflow) -> dict:
+    d = wf.to_dict()
+    if hasattr(wf, "revision"):
+        d["revision"] = getattr(wf, "revision")
+    if hasattr(wf, "enabled"):
+        d["enabled"] = getattr(wf, "enabled")
+    return d
+
+
+@router.get("")
+async def list_workflows(
+    request: Request,
+    status: Optional[str] = Query(None),
+    tag: Optional[str] = Query(None),
+    db=Depends(get_db),
+):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    tags = [tag] if tag else None
+    workflows = await workflow_store.list_workflows_for_owner(
+        db, user.id, status=status, tags=tags
+    )
+    return {
+        "workflows": [_api_dict(w) for w in workflows],
+        "count": len(workflows),
+    }
+
+
+@router.post("")
+async def create_workflow_route(req: WorkflowCreate, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    tenant = await ensure_personal_tenant(db, user)
+
+    import uuid
+    workflow = Workflow(
+        workflow_id=str(uuid.uuid4()),
+        name=req.name,
+        description=req.description,
+        version=req.version,
+        start_step=req.start_step,
+        triggers=req.triggers,
+        schedule=req.schedule,
+        tags=req.tags,
+        metadata={k: v for k, v in (req.metadata or {}).items()
+                  if k not in ("owner_id", "tenant_id", "user_id", "trust_level", "extra_caps")},
+        owner_id=user.id,
+    )
+    workflow.steps = _steps_from_req(req.steps)
+    if workflow.steps and not workflow.start_step:
+        workflow.start_step = workflow.steps[0].id
 
     valid, errors = workflow.validate()
     if not valid:
         raise HTTPException(400, detail=f"Invalid workflow: {'; '.join(errors)}")
 
-    workflow.owner_id = user.id
-    engine = get_workflow_engine()
-    engine.store(workflow)
-
+    saved = await workflow_store.create_workflow_record(
+        db, owner_id=user.id, workflow=workflow, tenant_id=tenant.id
+    )
     return {
-        "workflow": workflow.to_dict(),
-        "yaml": workflow.to_yaml(),
-        "ucip_plan": workflow.to_ucip_plan(),
+        "workflow": _api_dict(saved),
+        "yaml": saved.to_yaml(),
+        "ucip_plan": saved.to_ucip_plan(),
     }
 
 
 @router.get("/{workflow_id}")
 async def get_workflow(workflow_id: str, request: Request, db=Depends(get_db)):
-    """Get a workflow by ID."""
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    engine = get_workflow_engine()
-    workflow = engine.load_for_owner(workflow_id, user.id)
+    workflow = await workflow_store.get_workflow_for_owner(db, workflow_id, user.id)
     if not workflow:
         raise HTTPException(404, f"Workflow not found: {workflow_id}")
-    return {"workflow": workflow.to_dict()}
+    return {"workflow": _api_dict(workflow)}
 
 
 @router.patch("/{workflow_id}")
 async def update_workflow(workflow_id: str, req: WorkflowUpdate,
                           request: Request, db=Depends(get_db)):
-    """Update an existing workflow."""
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    engine = get_workflow_engine()
-    workflow = engine.load_for_owner(workflow_id, user.id)
+    workflow = await workflow_store.get_workflow_for_owner(db, workflow_id, user.id)
     if not workflow:
         raise HTTPException(404, f"Workflow not found: {workflow_id}")
 
@@ -220,48 +242,32 @@ async def update_workflow(workflow_id: str, req: WorkflowUpdate,
     if req.tags is not None:
         workflow.tags = req.tags
     if req.metadata is not None:
-        workflow.metadata = req.metadata
+        workflow.metadata = {k: v for k, v in req.metadata.items()
+                             if k not in ("owner_id", "tenant_id", "user_id", "trust_level")}
     if req.status is not None:
         workflow.status = req.status
-
     if req.steps is not None:
-        workflow.steps = []
-        for s in req.steps:
-            workflow.steps.append(WorkflowStep(
-                id=s.id,
-                type=StepType(s.type),
-                name=s.name,
-                description=s.description,
-                capability=s.capability,
-                inputs=s.inputs,
-                outputs=s.outputs,
-                condition=s.condition,
-                branches=s.branches,
-                next_step=s.next_step,
-                on_error=s.on_error,
-                timeout_s=s.timeout_s,
-                retry=s.retry,
-                metadata=s.metadata,
-            ))
+        workflow.steps = _steps_from_req(req.steps)
 
     valid, errors = workflow.validate()
     if not valid:
         raise HTTPException(400, detail=f"Invalid workflow: {'; '.join(errors)}")
 
-    engine.store(workflow)
-    return {"workflow": workflow.to_dict()}
+    saved = await workflow_store.update_workflow_for_owner(
+        db, workflow_id, user.id, workflow
+    )
+    if not saved:
+        raise HTTPException(404, f"Workflow not found: {workflow_id}")
+    return {"workflow": _api_dict(saved)}
 
 
 @router.delete("/{workflow_id}")
 async def delete_workflow(workflow_id: str, request: Request, db=Depends(get_db)):
-    """Delete a workflow."""
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    engine = get_workflow_engine()
-    workflow = engine.load_for_owner(workflow_id, user.id)
-    if not workflow:
+    ok = await workflow_store.delete_workflow_for_owner(db, workflow_id, user.id)
+    if not ok:
         raise HTTPException(404, f"Workflow not found: {workflow_id}")
-    engine.delete(workflow_id)
     return {"deleted": True}
 
 
@@ -269,26 +275,25 @@ async def delete_workflow(workflow_id: str, request: Request, db=Depends(get_db)
 async def export_workflow(workflow_id: str, request: Request,
                           format: str = Query("yaml"),
                           db=Depends(get_db)):
-    """Export a workflow as YAML or JSON."""
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    engine = get_workflow_engine()
-    workflow = engine.load_for_owner(workflow_id, user.id)
+    workflow = await workflow_store.get_workflow_for_owner(db, workflow_id, user.id)
     if not workflow:
         raise HTTPException(404, f"Workflow not found: {workflow_id}")
-
+    # Export definition without owner authority fields
+    payload = workflow.to_dict()
+    payload.pop("owner_id", None)
     if format == "json":
-        return {"format": "json", "content": workflow.to_json()}
-    return {"format": "yaml", "content": workflow.to_yaml()}
+        return {"format": "json", "content": json.dumps(payload, indent=2)}
+    import yaml
+    return {"format": "yaml", "content": yaml.dump(payload, default_flow_style=False, sort_keys=False)}
 
 
 @router.get("/{workflow_id}/ucip")
 async def workflow_ucip(workflow_id: str, request: Request, db=Depends(get_db)):
-    """Get the UCIP ExecutionPlan for a workflow."""
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    engine = get_workflow_engine()
-    workflow = engine.load_for_owner(workflow_id, user.id)
+    workflow = await workflow_store.get_workflow_for_owner(db, workflow_id, user.id)
     if not workflow:
         raise HTTPException(404, f"Workflow not found: {workflow_id}")
     return {"ucip_plan": workflow.to_ucip_plan()}
@@ -296,27 +301,57 @@ async def workflow_ucip(workflow_id: str, request: Request, db=Depends(get_db)):
 
 @router.post("/import")
 async def import_workflow(req: WorkflowImport, request: Request, db=Depends(get_db)):
-    """Import a workflow from YAML or JSON."""
     user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
+    tenant = await ensure_personal_tenant(db, user)
 
     if req.format == "yaml":
-        workflow = Workflow.from_yaml(req.content)
+        import yaml
+        data = yaml.safe_load(req.content)
     elif req.format == "json":
         data = json.loads(req.content)
-        workflow = Workflow.from_dict(data)
     else:
         raise HTTPException(400, f"Unsupported format: {req.format}")
 
+    data = workflow_store.sanitize_import_dict(data if isinstance(data, dict) else {})
     if req.name:
-        workflow.name = req.name
+        data["name"] = req.name
+    if "name" not in data:
+        raise HTTPException(400, "Imported workflow requires a name")
+
+    import uuid
+    data["workflow_id"] = str(uuid.uuid4())
+    workflow = Workflow.from_dict(data)
+    workflow.owner_id = user.id
 
     valid, errors = workflow.validate()
     if not valid:
         raise HTTPException(400, detail=f"Invalid workflow: {'; '.join(errors)}")
 
-    workflow.owner_id = user.id
-    engine = get_workflow_engine()
-    engine.store(workflow)
+    saved = await workflow_store.create_workflow_record(
+        db, owner_id=user.id, workflow=workflow, tenant_id=tenant.id
+    )
+    return {"workflow": _api_dict(saved)}
 
-    return {"workflow": workflow.to_dict()}
+
+@router.post("/{workflow_id}/execute")
+async def execute_workflow(workflow_id: str, request: Request, db=Depends(get_db)):
+    """Snapshot definition+version then return execution context.
+
+    Actual step execution remains governed by UCIP/capabilities — this endpoint
+    does not grant authority. Jobs should use the returned snapshot, not a live
+    reload of a mutated definition.
+    """
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    snap = await workflow_store.snapshot_workflow_for_execution(db, workflow_id, user.id)
+    if not snap:
+        raise HTTPException(404, f"Workflow not found: {workflow_id}")
+    if not snap.get("enabled", True):
+        raise HTTPException(400, "Workflow is disabled")
+    return {
+        "status": "accepted",
+        "workflow_id": snap["workflow_id"],
+        "workflow_version": snap["version"],
+        "snapshot": snap,
+        "note": "Execution remains subject to governance/capability checks.",
+    }

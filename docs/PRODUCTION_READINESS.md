@@ -6,7 +6,7 @@ DevOS is intended for **single-node** deployment with:
 
 - Backend-owned application data (SQLite or Postgres via `DATABASE_URL`)
 - Supabase for authentication (recommended `AUTH_MODE=supabase`)
-- In-memory workflow definitions (not multi-instance durable)
+- Workflow definitions persisted in application database (multi-instance ready for definitions)
 
 ## Required configuration
 
@@ -22,7 +22,7 @@ DevOS is intended for **single-node** deployment with:
 
 ## Explicit technical debt
 
-- **Workflows** are in-memory; lost on process restart. Persist before multi-instance production.
+- **Workflows** definitions are database-backed (`workflow_records`). Runtime may cache; DB is authoritative.
 - **Google OAuth** requires real Supabase + Google Cloud configuration; not verified in CI without secrets.
 - **Supabase RLS** applies only if tables are exposed via Supabase client; default app data is backend-local.
 

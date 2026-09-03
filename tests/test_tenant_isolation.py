@@ -290,3 +290,62 @@ class TestPathTraversalExtended:
                 pass
         except OSError:
             pass
+
+
+class TestWorkflowPersistence:
+    def test_survives_engine_restart(self, two_clients, tmp_path, monkeypatch):
+        """Database is source of truth — new engine instance must still load."""
+        a = two_clients["alice_c"]
+        r = a.post("/api/workflows", json={
+            "name": "Persist Me",
+            "description": "durable",
+            "steps": [{"id": "s1", "type": "notify", "name": "n"}],
+            "start_step": "s1",
+        })
+        assert r.status_code in (200, 201), r.text
+        wid = r.json()["workflow"]["workflow_id"]
+        rev1 = r.json()["workflow"].get("revision", 1)
+
+        # Mutate in-memory engine if any — should not matter
+        from brain.workflow import get_workflow_engine
+        eng = get_workflow_engine()
+        eng.delete(wid)  # wipe cache
+
+        r2 = a.get(f"/api/workflows/{wid}")
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["workflow"]["name"] == "Persist Me"
+        assert r2.json()["workflow"]["workflow_id"] == wid
+
+        # Update increments revision
+        r3 = a.patch(f"/api/workflows/{wid}", json={"description": "updated"})
+        assert r3.status_code == 200
+        rev2 = r3.json()["workflow"].get("revision", 0)
+        assert int(rev2) >= int(rev1) + 1
+
+    def test_import_strips_owner_and_execute_snapshots(self, two_clients):
+        a, b = two_clients["alice_c"], two_clients["bob_c"]
+        payload = {
+            "name": "Imported",
+            "owner_id": two_clients["bob"].id,
+            "steps": [{"id": "s1", "type": "notify", "name": "n"}],
+            "start_step": "s1",
+        }
+        import json
+        r = a.post("/api/workflows/import", json={
+            "format": "json",
+            "content": json.dumps(payload),
+        })
+        assert r.status_code in (200, 201), r.text
+        wf = r.json()["workflow"]
+        assert wf.get("owner_id") == two_clients["alice"].id
+        wid = wf["workflow_id"]
+
+        # Bob cannot execute
+        assert b.post(f"/api/workflows/{wid}/execute").status_code in (404, 403)
+        # Alice can snapshot execute
+        ex = a.post(f"/api/workflows/{wid}/execute")
+        assert ex.status_code == 200
+        body = ex.json()
+        assert body["workflow_id"] == wid
+        assert "workflow_version" in body
+        assert "snapshot" in body

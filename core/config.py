@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     OLLAMA_DEFAULT_MODEL: str = "llama3"
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-    OPENROUTER_DEFAULT_MODEL: str = "mistralai/mistral-7b-instruct:free"
+    OPENROUTER_DEFAULT_MODEL: str = "openrouter/free"
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
     DEEPSEEK_DEFAULT_MODEL: str = "deepseek-chat"
@@ -118,7 +118,7 @@ class Settings(BaseSettings):
     NARAROUTER_API_KEY: str = ""
     NARAROUTER_BASE_URL: str = "https://router.bynara.id/v1"
     NARAROUTER_DEFAULT_MODEL: str = "deepseek/deepseek-chat"
-    DEFAULT_PROVIDER: str = "ollama"
+    DEFAULT_PROVIDER: str = "openrouter"
 
     # Search
     TAVILY_API_KEY: str = ""
