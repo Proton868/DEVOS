@@ -89,6 +89,16 @@ wrapAsPanel("agent-ops", {
   sidebarItem: false,
 });
 
+// Coding Agent (tool-loop IDE agent)
+wrapAsPanel("coding-agent", {
+  name: "Coding Agent",
+  description: "Wozzy/Nuha governed coding agent with tools",
+  component: lazy(() => import("../agent/CodingAgentPanel")),
+  icon: Bot,
+  category: "agent",
+  defaultSize: { width: 420, height: 640 },
+});
+
 // ── Tools Panels ────────────────────────────────────────────
 // Git Panel
 wrapAsPanel("git", {

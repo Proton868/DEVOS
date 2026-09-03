@@ -758,6 +758,77 @@ export const api = {
   debugPause: () => req(`/api/debug/pause`, { method: "POST" }).catch(() => null),
   debugStop: () => req(`/api/debug/stop`, { method: "POST" }).catch(() => null),
   debugStep: () => req(`/api/debug/step`, { method: "POST" }).catch(() => null),
+
+  // ── Agentic IDE ───────────────────────────────────────────
+  listAgentTools: (mode = "agent") =>
+    req(`/api/agent/tools?mode=${encodeURIComponent(mode)}`),
+  getAgentTask: (taskId) => req(`/api/agent/${encodeURIComponent(taskId)}`),
+  listAgentTasks: () => req(`/api/agent/tasks`),
+  cancelAgentTask: (taskId) =>
+    req(`/api/agent/${encodeURIComponent(taskId)}/cancel`, { method: "POST" }),
+  patchPreview: (body) =>
+    req(`/api/agent/patch/preview`, { method: "POST", body: JSON.stringify(body) }),
+  patchApply: (body) =>
+    req(`/api/agent/patch/apply`, { method: "POST", body: JSON.stringify(body) }),
+  /**
+   * Stream an agentic coding task. onEvent receives parsed SSE event objects.
+   * Returns an abort function.
+   */
+  runAgent: ({ objective, projectId, mode, provider, model, context, onEvent, onError, onDone }) => {
+    const ctrl = new AbortController();
+    const token = getToken();
+    (async () => {
+      try {
+        const res = await fetch(`${baseUrl}/api/agent/run`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            objective,
+            project_id: projectId || getCurrentProject(),
+            mode: mode || "agent",
+            provider,
+            model,
+            context: context || {},
+          }),
+          signal: ctrl.signal,
+        });
+        if (!res.ok) {
+          const t = await res.text();
+          throw new Error(t || res.statusText);
+        }
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const parts = buf.split("
+
+");
+          buf = parts.pop() || "";
+          for (const part of parts) {
+            const line = part.trim();
+            if (!line.startsWith("data:")) continue;
+            const raw = line.slice(5).trim();
+            if (!raw) continue;
+            try {
+              const evt = JSON.parse(raw);
+              onEvent && onEvent(evt);
+            } catch (e) {}
+          }
+        }
+        onDone && onDone();
+      } catch (e) {
+        if (e.name === "AbortError") return;
+        onError && onError(e);
+      }
+    })();
+    return () => ctrl.abort();
+  },
 };
 
 export { subscribeToEvents };
