@@ -792,7 +792,7 @@ export const api = {
     const token = getToken();
     (async () => {
       try {
-        const res = await fetch(`${baseUrl}/api/agent/run`, {
+        const res = await fetch(`${baseUrl()}/api/agent/run`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -819,9 +819,7 @@ export const api = {
           const { done, value } = await reader.read();
           if (done) break;
           buf += dec.decode(value, { stream: true });
-          const parts = buf.split("
-
-");
+          const parts = buf.split("\n\n");
           buf = parts.pop() || "";
           for (const part of parts) {
             const line = part.trim();

@@ -1,27 +1,52 @@
+/**
+ * Monaco ↔ DEVOS LSP manager (WebSocket JSON-RPC proxy).
+ *
+ * Connects to /api/lsp/{projectId}/ws?lang=...
+ * First message authenticates with { token }.
+ * Language servers run on the backend, confined to the project workspace.
+ */
 import { useEffect, useRef, useCallback } from "react";
 import useStore from "../store/useStore";
+import { getToken, getCurrentProject, baseUrl } from "../services/api";
 
-const WS_BASE = (process.env.REACT_APP_BACKEND_URL || "http://localhost:3001")
-  .replace("http://", "ws://")
-  .replace("https://", "wss://");
+const LSP_LANGUAGES = new Set([
+  "typescript", "javascript", "python", "css", "html", "json", "yaml",
+]);
 
-// Languages that have LSP server support
-const LSP_LANGUAGES = new Set(["typescript", "javascript", "python", "css", "html"]);
-
-// Active WebSocket connections per language
+// key: `${projectId}::${language}` → connection
 const connections = new Map();
 let msgId = 1;
 const pendingRequests = new Map();
 const diagnosticHandlers = new Set();
 
-function getOrConnect(language) {
-  if (connections.has(language)) return connections.get(language);
+function wsBase() {
+  const b = (typeof baseUrl === "function" ? baseUrl() : baseUrl) || "";
+  if (b) {
+    return String(b).replace(/^http/, "ws");
+  }
+  const loc = window.location;
+  const proto = loc.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${loc.host}`;
+}
 
-  const ws = new WebSocket(`${WS_BASE}?type=lsp&lang=${language}`);
+function connKey(language) {
+  return `${getCurrentProject()}::${language}`;
+}
+
+function getOrConnect(language) {
+  const key = connKey(language);
+  if (connections.has(key)) return connections.get(key);
+
+  const projectId = getCurrentProject();
+  const url = `${wsBase()}/api/lsp/${encodeURIComponent(projectId)}/ws?lang=${encodeURIComponent(language)}`;
+  const ws = new WebSocket(url);
   const pending = [];
+  let authenticated = false;
 
   ws.onopen = () => {
-    // Flush queued messages
+    const token = getToken() || "";
+    ws.send(JSON.stringify({ token }));
+    authenticated = true;
     for (const msg of pending) ws.send(msg);
     pending.length = 0;
   };
@@ -29,34 +54,39 @@ function getOrConnect(language) {
   ws.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data);
-      // Handle responses to requests
-      if (msg.id && pendingRequests.has(msg.id)) {
+      if (msg && (msg.type === "lsp.unavailable" || msg.type === "lsp.ready")) {
+        return;
+      }
+      if (msg.id != null && pendingRequests.has(msg.id)) {
         const { resolve, reject } = pendingRequests.get(msg.id);
         pendingRequests.delete(msg.id);
-        if (msg.error) reject(new Error(msg.error.message));
+        if (msg.error) reject(new Error(msg.error.message || "LSP error"));
         else resolve(msg.result);
       }
-      // Handle diagnostics notification
       if (msg.method === "textDocument/publishDiagnostics") {
         for (const handler of diagnosticHandlers) handler(msg.params);
       }
-    } catch {}
+    } catch (_) {
+      /* ignore */
+    }
   };
 
   ws.onerror = () => {};
-  ws.onclose = () => { connections.delete(language); };
+  ws.onclose = () => {
+    connections.delete(key);
+  };
 
   const conn = {
     ws,
     pending,
     send: (msg) => {
       const str = JSON.stringify(msg);
-      if (ws.readyState === WebSocket.OPEN) ws.send(str);
+      if (ws.readyState === WebSocket.OPEN && authenticated) ws.send(str);
       else pending.push(str);
     },
   };
 
-  connections.set(language, conn);
+  connections.set(key, conn);
   return conn;
 }
 
@@ -67,13 +97,12 @@ function sendRequest(language, method, params) {
   return new Promise((resolve, reject) => {
     pendingRequests.set(id, { resolve, reject });
     conn.send({ jsonrpc: "2.0", id, method, params });
-    // Timeout after 5s
     setTimeout(() => {
       if (pendingRequests.has(id)) {
         pendingRequests.delete(id);
         resolve(null);
       }
-    }, 5000);
+    }, 8000);
   });
 }
 
@@ -83,56 +112,55 @@ function sendNotification(language, method, params) {
   conn.send({ jsonrpc: "2.0", method, params });
 }
 
-// Convert Monaco URI to LSP URI
 function toUri(path) {
-  return `file://${path.startsWith("/") ? path : "/" + path}`;
+  if (!path) return "file:///workspace/untitled";
+  const clean = String(path).replace(/^\/+/, "");
+  return `file:///workspace/${clean}`;
 }
 
-// Convert LSP severity (1=Error, 2=Warning, 3=Info, 4=Hint)
 function severityName(n) {
-  return n === 1 ? "error" : n === 2 ? "warning" : "info";
+  return n === 1 ? "error" : n === 2 ? "warning" : n === 3 ? "info" : "hint";
 }
 
 export function useLSP(editorRef, monacoRef, filePath, language) {
-  const { setProblems, clearProblemsForFile } = useStore();
   const initializedRef = useRef(false);
 
-  // Register diagnostic handler
   useEffect(() => {
     const handler = (params) => {
-      const uri = params.uri?.replace("file://", "") || "";
-      const relPath = uri.startsWith("/workspace/") ? uri.slice("/workspace/".length) : uri;
-      const diagnostics = (params.diagnostics || []).map(d => ({
+      const uri = params?.uri?.replace("file://", "") || "";
+      const relPath = uri.startsWith("/workspace/")
+        ? uri.slice("/workspace/".length)
+        : uri.replace(/^\/workspace\//, "");
+      const diagnostics = (params.diagnostics || []).map((d) => ({
         path: relPath || filePath,
         line: (d.range?.start?.line || 0) + 1,
         col: (d.range?.start?.character || 0) + 1,
         message: d.message,
         severity: severityName(d.severity),
-        source: d.source,
+        source: d.source || "lsp",
       }));
-      // Replace problems for this file
-      useStore.setState(s => ({
+      useStore.setState((s) => ({
         problems: [
-          ...s.problems.filter(p => p.path !== (relPath || filePath)),
+          ...(s.problems || []).filter((p) => p.path !== (relPath || filePath)),
           ...diagnostics,
         ],
       }));
-      // Also apply Monaco markers
-      if (editorRef.current && monacoRef.current && filePath === (relPath || filePath)) {
-        const model = editorRef.current.getModel();
+      if (monacoRef?.current && editorRef?.current) {
+        const model = editorRef.current.getModel?.();
         if (model) {
-          const markers = (params.diagnostics || []).map(d => ({
+          const markers = (params.diagnostics || []).map((d) => ({
+            severity:
+              d.severity === 1
+                ? monacoRef.current.MarkerSeverity.Error
+                : d.severity === 2
+                  ? monacoRef.current.MarkerSeverity.Warning
+                  : monacoRef.current.MarkerSeverity.Info,
             startLineNumber: (d.range?.start?.line || 0) + 1,
             startColumn: (d.range?.start?.character || 0) + 1,
             endLineNumber: (d.range?.end?.line || 0) + 1,
             endColumn: (d.range?.end?.character || 0) + 1,
             message: d.message,
-            severity: d.severity === 1
-              ? monacoRef.current.MarkerSeverity.Error
-              : d.severity === 2
-              ? monacoRef.current.MarkerSeverity.Warning
-              : monacoRef.current.MarkerSeverity.Info,
-            source: d.source,
+            source: d.source || "lsp",
           }));
           monacoRef.current.editor.setModelMarkers(model, "lsp", markers);
         }
@@ -142,71 +170,100 @@ export function useLSP(editorRef, monacoRef, filePath, language) {
     return () => diagnosticHandlers.delete(handler);
   }, [filePath, editorRef, monacoRef]);
 
-  // Initialize LSP for this file
   useEffect(() => {
     if (!filePath || !language || !LSP_LANGUAGES.has(language)) return;
-
-    const uri = toUri(filePath);
-
-    if (!initializedRef.current) {
-      // Initialize connection
-      sendRequest(language, "initialize", {
-        processId: null,
-        rootUri: "file:///workspace",
-        capabilities: {
-          textDocument: {
-            completion: { completionItem: { snippetSupport: true } },
-            hover: {},
-            definition: {},
-            publishDiagnostics: { relatedInformation: true },
-          },
-        },
-        workspaceFolders: [{ uri: "file:///workspace", name: "workspace" }],
-      }).then(() => {
-        sendNotification(language, "initialized", {});
-        initializedRef.current = true;
-      });
-    }
-
+    sendRequest(language, "initialize", {
+      processId: null,
+      rootUri: "file:///workspace/",
+      capabilities: {},
+    }).catch(() => null);
+    initializedRef.current = true;
     return () => {
-      // Don't close connection on unmount — keep alive for the session
+      if (filePath) {
+        sendNotification(language, "textDocument/didClose", {
+          textDocument: { uri: toUri(filePath) },
+        });
+      }
     };
-  }, [language, filePath]);
-
-  // Notify LSP when file opens
-  const notifyOpen = useCallback((content) => {
-    if (!filePath || !LSP_LANGUAGES.has(language)) return;
-    sendNotification(language, "textDocument/didOpen", {
-      textDocument: { uri: toUri(filePath), languageId: language, version: 1, text: content },
-    });
   }, [filePath, language]);
 
-  // Notify LSP when content changes
-  const notifyChange = useCallback((content, version) => {
-    if (!filePath || !LSP_LANGUAGES.has(language)) return;
-    sendNotification(language, "textDocument/didChange", {
-      textDocument: { uri: toUri(filePath), version },
-      contentChanges: [{ text: content }],
-    });
-  }, [filePath, language]);
+  const notifyOpen = useCallback(
+    (content) => {
+      if (!filePath || !LSP_LANGUAGES.has(language)) return;
+      sendNotification(language, "textDocument/didOpen", {
+        textDocument: {
+          uri: toUri(filePath),
+          languageId: language,
+          version: 1,
+          text: content || "",
+        },
+      });
+    },
+    [filePath, language]
+  );
 
-  // Hover info
-  const getHover = useCallback(async (line, col) => {
+  const notifyChange = useCallback(
+    (content, version = 2) => {
+      if (!filePath || !LSP_LANGUAGES.has(language)) return;
+      sendNotification(language, "textDocument/didChange", {
+        textDocument: { uri: toUri(filePath), version },
+        contentChanges: [{ text: content || "" }],
+      });
+    },
+    [filePath, language]
+  );
+
+  const getHover = useCallback(
+    async (line, col) => {
+      if (!LSP_LANGUAGES.has(language)) return null;
+      return sendRequest(language, "textDocument/hover", {
+        textDocument: { uri: toUri(filePath) },
+        position: { line: line - 1, character: col - 1 },
+      });
+    },
+    [filePath, language]
+  );
+
+  const goToDefinition = useCallback(
+    async (line, col) => {
+      if (!LSP_LANGUAGES.has(language)) return null;
+      return sendRequest(language, "textDocument/definition", {
+        textDocument: { uri: toUri(filePath) },
+        position: { line: line - 1, character: col - 1 },
+      });
+    },
+    [filePath, language]
+  );
+
+  const findReferences = useCallback(
+    async (line, col) => {
+      if (!LSP_LANGUAGES.has(language)) return null;
+      return sendRequest(language, "textDocument/references", {
+        textDocument: { uri: toUri(filePath) },
+        position: { line: line - 1, character: col - 1 },
+        context: { includeDeclaration: true },
+      });
+    },
+    [filePath, language]
+  );
+
+  const documentSymbols = useCallback(async () => {
     if (!LSP_LANGUAGES.has(language)) return null;
-    return sendRequest(language, "textDocument/hover", {
+    return sendRequest(language, "textDocument/documentSymbol", {
       textDocument: { uri: toUri(filePath) },
-      position: { line: line - 1, character: col - 1 },
     });
   }, [filePath, language]);
 
-  // Go to definition
-  const goToDefinition = useCallback(async (line, col) => {
-    if (!LSP_LANGUAGES.has(language)) return null;
-    return sendRequest(language, "textDocument/definition", {
-      textDocument: { uri: toUri(filePath) },
-      position: { line: line - 1, character: col - 1 },
-    });
-  }, [filePath, language]);
+  return {
+    notifyOpen,
+    notifyChange,
+    getHover,
+    goToDefinition,
+    findReferences,
+    documentSymbols,
+  };
+}
 
-  return { notifyOpen, notifyChange, getHover, goToDefinition };
+export function getLspSupportedLanguages() {
+  return Array.from(LSP_LANGUAGES);
 }

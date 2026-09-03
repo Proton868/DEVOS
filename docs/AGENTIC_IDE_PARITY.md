@@ -78,7 +78,7 @@ Parity target: a competent developer can perform the same *class* of real softwa
 |------------|---------|--------|--------|-------|------------|
 | Problems panel | `ProblemsPanel.jsx` | Surface errors | PARTIAL | — | Weak LSP coupling |
 | Fix from diagnostic | Not first-class | Structured Fix action | NOT_IMPLEMENTED | — | — |
-| LSP diagnostics | `useLSP` hook (limited) | Language server manager | NOT_IMPLEMENTED | — | No external LSP manager |
+| LSP diagnostics | `execution/lsp_manager.py` + `/api/lsp` + `useLSP` | External server manager | PARTIAL | VERIFIED (path isolation unit tests) | Servers must be installed on host; live hover/definition not CI-verified |
 
 ## G. Testing
 
@@ -147,7 +147,7 @@ Parity target: a competent developer can perform the same *class* of real softwa
 | Evidence correlation | Best-effort | Full | PARTIAL | — | record_evidence API mismatch |
 | Tool extensibility | register_agent_tool | Trusted only | IMPLEMENTED | VERIFIED | MCP adapter governed only partially (existing MCP routes) |
 | UI non-blocking | SSE async | Responsive | PARTIAL | — | Not load-tested |
-| LSP / DAP | Missing manager | External servers | NOT_IMPLEMENTED | — | Deferred stages |
+| LSP manager | `/api/lsp` + stdio proxy | External servers | PARTIAL | path isolation | DAP still NOT_IMPLEMENTED; rebuild may be needed for frontend |
 
 ---
 
