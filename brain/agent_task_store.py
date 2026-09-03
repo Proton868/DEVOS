@@ -6,6 +6,8 @@ It does NOT replace ExecutionJob. Evidence remains the audit system.
 """
 from __future__ import annotations
 
+import json
+
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -65,10 +67,28 @@ async def persist_task(task) -> bool:
         return False
 
 
+def _event_identity(event: dict) -> tuple:
+    """Stable identity for seq collision detection (no nondeterministic fields)."""
+    data = event.get("data") if isinstance(event.get("data"), dict) else event.get("data")
+    try:
+        data_s = json.dumps(data, sort_keys=True, default=str) if data is not None else ""
+    except Exception:
+        data_s = str(data)
+    return (
+        str(event.get("task_id") or ""),
+        event.get("seq"),
+        str(event.get("type") or ""),
+        str(event.get("correlation_id") or ""),
+        str(event.get("timestamp") or ""),
+        data_s,
+    )
+
+
 async def append_event(task_id: str, event: dict) -> bool:
     """Append event to durable ring buffer (bounded). Returns True if durable.
 
-    Dedupes by seq: same seq for a task is not stored twice.
+    Same seq + identical event → idempotent success.
+    Same seq + different event → False (fail closed).
     """
     try:
         from core.database import AsyncSessionLocal, AgentTaskRecord
@@ -82,7 +102,12 @@ async def append_event(task_id: str, event: dict) -> bool:
             if seq is not None:
                 for e in events:
                     if e.get("seq") == seq:
-                        return True  # already durable
+                        if _event_identity(e) == _event_identity(event):
+                            return True
+                        logger.warning(
+                            "event seq collision task=%s seq=%s", task_id, seq
+                        )
+                        return False
             events.append(event)
             if len(events) > MAX_EVENTS_PER_TASK:
                 events = events[-MAX_EVENTS_PER_TASK:]
@@ -310,14 +335,15 @@ async def load_task_identity(task_id: str) -> Optional[dict]:
         return None
 
 
-async def mark_task_cancelled(task_id: str, user_id: str) -> dict:
-    """Durable cancel for tasks not in memory. Does not execute tools.
+async def mark_task_cancel_requested(task_id: str, user_id: str) -> dict:
+    """Persist cancellation *request* only. Runtime owns terminal cancelled.
 
-    Returns status dict. Ownership enforced: user_id must match.
-    Terminal states are left unchanged.
+    Conditional: non-terminal → cancel_requested; terminal unchanged.
+    Does not execute tools. Does not alter ExecutionOperation state.
     """
     try:
         from core.database import AsyncSessionLocal, AgentTaskRecord
+        from sqlalchemy import text
         async with AsyncSessionLocal() as db:
             row = await db.get(AgentTaskRecord, task_id)
             if row is None or row.user_id != user_id:
@@ -326,9 +352,91 @@ async def mark_task_cancelled(task_id: str, user_id: str) -> dict:
             terminal = {"succeeded", "failed", "cancelled", "blocked", "unknown"}
             if status in terminal:
                 return {"ok": True, "task_id": task_id, "status": row.status, "already_terminal": True}
-            row.status = "cancelled"
+            # CAS-style: only update if still non-terminal
+            result = await db.execute(
+                text(
+                    "UPDATE agent_tasks SET status = :st, updated_at = :ts "
+                    "WHERE id = :id AND lower(status) NOT IN "
+                    "('succeeded','failed','cancelled','blocked','unknown')"
+                ),
+                {"st": "cancel_requested", "ts": _now(), "id": task_id},
+            )
+            if int(getattr(result, "rowcount", 0) or 0) == 0:
+                # raced with terminal transition
+                await db.refresh(row)
+                return {
+                    "ok": True,
+                    "task_id": task_id,
+                    "status": row.status,
+                    "already_terminal": (row.status or "").lower() in terminal,
+                }
+            events = list(row.events or [])
+            last_seq = 0
+            for e in events:
+                try:
+                    last_seq = max(last_seq, int(e.get("seq") or 0))
+                except Exception:
+                    pass
+            events.append({
+                "type": "agent.cancel_requested",
+                "task_id": task_id,
+                "seq": last_seq + 1,
+                "timestamp": _now().isoformat(),
+                "data": {"source": "cancel_api"},
+            })
+            if len(events) > MAX_EVENTS_PER_TASK:
+                events = events[-MAX_EVENTS_PER_TASK:]
+            row.events = events
+            row.status = "cancel_requested"
             row.updated_at = _now()
-            # Append cancel event if possible
+            await db.commit()
+            return {
+                "ok": True,
+                "task_id": task_id,
+                "status": "cancel_requested",
+                "already_terminal": False,
+            }
+    except Exception:
+        logger.exception("mark_task_cancel_requested failed")
+        return {"ok": False, "reason": "error"}
+
+
+async def mark_task_cancelled(task_id: str, user_id: str, *, durable_only: bool = False) -> dict:
+    """Cancel path used by API.
+
+    Live tasks should call mark_task_cancel_requested (request only).
+    Durable-only tasks (no in-memory worker) may transition to terminal cancelled
+    because no tool execution is in flight.
+    """
+    if not durable_only:
+        return await mark_task_cancel_requested(task_id, user_id)
+    try:
+        from core.database import AsyncSessionLocal, AgentTaskRecord
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as db:
+            row = await db.get(AgentTaskRecord, task_id)
+            if row is None or row.user_id != user_id:
+                return {"ok": False, "reason": "not_found"}
+            status = (row.status or "").lower()
+            terminal = {"succeeded", "failed", "cancelled", "blocked", "unknown"}
+            if status in terminal:
+                return {"ok": True, "task_id": task_id, "status": row.status, "already_terminal": True}
+            result = await db.execute(
+                text(
+                    "UPDATE agent_tasks SET status = :st, updated_at = :ts "
+                    "WHERE id = :id AND lower(status) NOT IN "
+                    "('succeeded','failed','cancelled','blocked','unknown')"
+                ),
+                {"st": "cancelled", "ts": _now(), "id": task_id},
+            )
+            if int(getattr(result, "rowcount", 0) or 0) == 0:
+                await db.refresh(row)
+                return {
+                    "ok": True,
+                    "task_id": task_id,
+                    "status": row.status,
+                    "already_terminal": (row.status or "").lower() in terminal,
+                }
             events = list(row.events or [])
             last_seq = 0
             for e in events:
@@ -341,11 +449,13 @@ async def mark_task_cancelled(task_id: str, user_id: str) -> dict:
                 "task_id": task_id,
                 "seq": last_seq + 1,
                 "timestamp": _now().isoformat(),
-                "data": {"source": "durable_cancel"},
+                "data": {"source": "durable_only_cancel"},
             })
             if len(events) > MAX_EVENTS_PER_TASK:
                 events = events[-MAX_EVENTS_PER_TASK:]
             row.events = events
+            row.status = "cancelled"
+            row.updated_at = _now()
             await db.commit()
             return {"ok": True, "task_id": task_id, "status": "cancelled", "already_terminal": False}
     except Exception:

@@ -201,16 +201,16 @@ async def cancel_task(task_id: str, request: Request, db=Depends(get_db)):
         if task.user_id != user.id:
             raise HTTPException(404, "task not found")
         ok = request_cancel(task_id)
-        # Mirror durable cancel for live tasks
+        # Persist request only — runtime owns terminal cancelled
         try:
-            from brain.agent_task_store import mark_task_cancelled
-            await mark_task_cancelled(task_id, user.id)
+            from brain.agent_task_store import mark_task_cancel_requested
+            await mark_task_cancel_requested(task_id, user.id)
         except Exception:
             pass
         return {"ok": ok, "task_id": task_id, "status": "cancel_requested"}
-    # Durable-only task: cancel without executing
-    from brain.agent_task_store import mark_task_cancelled, load_task
-    result = await mark_task_cancelled(task_id, user.id)
+    # Durable-only: no worker — may terminal-cancel without tool execution
+    from brain.agent_task_store import mark_task_cancelled
+    result = await mark_task_cancelled(task_id, user.id, durable_only=True)
     if not result.get("ok"):
         raise HTTPException(404, "task not found")
     return {
