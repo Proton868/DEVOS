@@ -20,6 +20,11 @@ class FakeFS:
         self.files[path] = content
         return {"path": path}
 
+    def read(self, path):
+        if path not in self.files:
+            raise FileNotFoundError(path)
+        return {"path": path, "content": self.files[path]}
+
     def delete(self, path):
         if path not in self.files:
             raise FileNotFoundError(path)

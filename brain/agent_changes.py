@@ -154,10 +154,42 @@ def list_task_changes_detailed(task_id: str, user_id: str) -> list[dict]:
     return out
 
 
-def revert_change(change_id: str, user_id: str, file_service) -> dict:
+def _disk_matches_after(rec: ChangeRecord, file_service) -> tuple:
+    """Return (matches, reason). Refuse silent overwrite when disk diverged."""
+    if rec.change_kind == "created":
+        try:
+            cur = file_service.read(rec.path)
+            content = cur.get("content") if isinstance(cur, dict) else None
+        except FileNotFoundError:
+            return True, "missing"
+        if rec.after_hash and _hash(content) != rec.after_hash:
+            return False, "stale_content: file changed after agent write"
+        return True, "ok"
+    if rec.change_kind == "deleted":
+        try:
+            file_service.read(rec.path)
+            return False, "stale_content: file reappeared after agent delete"
+        except FileNotFoundError:
+            return True, "missing"
+        except Exception:
+            return True, "ok"
+    try:
+        cur = file_service.read(rec.path)
+        content = cur.get("content") if isinstance(cur, dict) else None
+    except FileNotFoundError:
+        return False, "stale_content: file missing (expected agent after-state)"
+    except Exception as e:
+        return False, f"stale_content: read failed ({e})"
+    if rec.after_hash and _hash(content) != rec.after_hash:
+        return False, "stale_content: concurrent user modification detected"
+    return True, "ok"
+
+
+def revert_change(change_id: str, user_id: str, file_service, *, force: bool = False) -> dict:
     """
     Restore workspace file to before_content using FileService.
-    file_service must be an execution.files.FileService for the same user/project.
+    Refuses to overwrite when disk content no longer matches the agent's
+    after_hash unless force=True (explicit operator override).
     """
     rec = get_change(change_id, user_id)
     if not rec:
@@ -165,25 +197,32 @@ def revert_change(change_id: str, user_id: str, file_service) -> dict:
     if rec.status == "reverted":
         return {"ok": True, "already": True, "path": rec.path}
 
+    if not force:
+        matches, reason = _disk_matches_after(rec, file_service)
+        if not matches:
+            return {
+                "ok": False,
+                "error": reason,
+                "stale": True,
+                "path": rec.path,
+                "change_id": rec.id,
+            }
+
     try:
         if rec.change_kind == "created":
-            # File was created by agent — delete it
             try:
                 file_service.delete(rec.path)
             except FileNotFoundError:
                 pass
         elif rec.change_kind == "deleted":
-            # Restore prior content
             if rec.before_content is None:
                 return {"ok": False, "error": "no snapshot to restore"}
-            # create if needed then write
             try:
                 file_service.write(rec.path, rec.before_content)
             except Exception:
                 file_service.create(rec.path, is_dir=False)
                 file_service.write(rec.path, rec.before_content)
         elif rec.change_kind == "renamed":
-            # meta may contain from path; best-effort: write before to original if known
             from_path = (rec.meta or {}).get("from") or rec.path
             to_path = (rec.meta or {}).get("to") or rec.path
             try:
@@ -193,7 +232,6 @@ def revert_change(change_id: str, user_id: str, file_service) -> dict:
             if rec.before_content is not None:
                 file_service.write(from_path, rec.before_content)
         else:
-            # patched / replaced — restore before
             if rec.before_content is None:
                 return {"ok": False, "error": "no before snapshot"}
             file_service.write(rec.path, rec.before_content)
