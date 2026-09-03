@@ -61,8 +61,9 @@ def _fingerprint(tool: str, args: Optional[dict], subgoal_id: Optional[str], out
 
 def interpret_test_outcome(result: dict) -> Optional[bool]:
     """
-    Distinguish command execution success from tests passing.
-    Returns True/False if determinable, None if unknown/malformed.
+    Test-specific interpreter for run_tests results.
+    Returns True/False if determinable, None if inconclusive.
+    Generic exit_code==0 alone is NOT sufficient.
     """
     if not isinstance(result, dict):
         return None
@@ -74,34 +75,89 @@ def interpret_test_outcome(result: dict) -> Optional[bool]:
         return True
     if result.get("verification_passed") is False:
         return False
-    # exit code
+
+    out = str(result.get("stdout") or result.get("output") or "").lower()
+    err = str(result.get("stderr") or result.get("error") or "").lower()
+    blob = (out + "\n" + err).strip()
+
     code = result.get("exit_code")
     if code is None:
         code = result.get("returncode")
-    if code is not None:
-        try:
-            return int(code) == 0
-        except Exception:
-            return None
-    out = str(result.get("stdout") or result.get("output") or "").lower()
-    err = str(result.get("stderr") or result.get("error") or "").lower()
-    blob = out + "\n" + err
-    if not blob.strip() and result.get("ok") is True:
-        # Unrelated successful command with no test signal → not verification of tests
-        return None
-    if re.search(r"\b(failed|failure|error|errors=)\b", blob) and "passed" not in blob.split("failed")[0][-40:]:
-        if "passed" in blob and "failed" in blob:
-            # pytest summary often has both
-            if re.search(r"\b\d+\s+failed\b", blob):
-                return False
-        elif "failed" in blob:
+    try:
+        code_i = int(code) if code is not None else None
+    except Exception:
+        code_i = None
+
+    # Explicit failure signals
+    if code_i is not None and code_i != 0:
+        return False
+    if re.search(r"\b\d+\s+failed\b", blob):
+        return False
+    if re.search(r"\b(failed|failure)\b", blob) and not re.search(r"\b\d+\s+passed\b", blob):
+        if "error" in blob or "failed" in blob:
             return False
+
+    # Explicit success signals (require test-like evidence, not empty ok)
     if re.search(r"\b\d+\s+passed\b", blob) and not re.search(r"\b\d+\s+failed\b", blob):
         return True
-    if "passed" in blob and "failed" not in blob and result.get("ok"):
+    if blob and "passed" in blob and "failed" not in blob and result.get("ok"):
         return True
-    if result.get("ok") is False:
+
+    # Empty/ambiguous success — inconclusive
+    return None
+
+
+def interpret_command_verification(result: dict) -> Optional[bool]:
+    """Generic run_command: exit_code==0 is NEVER enough."""
+    if not isinstance(result, dict):
+        return None
+    if result.get("verification_passed") is True:
+        return True
+    if result.get("verification_passed") is False:
         return False
+    if result.get("tests_passed") is True:
+        return True
+    if result.get("tests_passed") is False:
+        return False
+    # Prefer structured metadata only; do not invent verification from stdout heuristics
+    return None
+
+
+def interpret_diagnostics_verification(result: dict) -> Optional[bool]:
+    """get_diagnostics: tool ok is not proof the repo is clean."""
+    if not isinstance(result, dict):
+        return None
+    if result.get("verification_passed") is True:
+        return True
+    if result.get("verification_passed") is False:
+        return False
+    if result.get("diagnostics_clean") is True:
+        return True
+    if result.get("diagnostics_clean") is False:
+        return False
+    # Explicit error counts if provided by existing tool contract
+    if "error_count" in result:
+        try:
+            return int(result["error_count"]) == 0
+        except Exception:
+            return None
+    return None
+
+
+def interpret_verification_outcome(tool: str, result: dict) -> Optional[bool]:
+    """
+    Authoritative dispatcher: tool type matters.
+    True = verification evidence proves success
+    False = verification evidence proves failure
+    None = not verification evidence / inconclusive
+    """
+    name = (tool or "").strip()
+    if name == "run_tests":
+        return interpret_test_outcome(result if isinstance(result, dict) else {})
+    if name == "run_command":
+        return interpret_command_verification(result if isinstance(result, dict) else {})
+    if name == "get_diagnostics":
+        return interpret_diagnostics_verification(result if isinstance(result, dict) else {})
     return None
 
 
@@ -313,7 +369,7 @@ class StrategicController:
         result = result or {}
         outcome = "ok" if ok else "error"
         if tool in VERIFY_TOOLS:
-            passed = interpret_test_outcome(result)
+            passed = interpret_verification_outcome(tool, result)
             if passed is True:
                 outcome = "tests_passed"
             elif passed is False:
@@ -346,11 +402,13 @@ class StrategicController:
             return self._out(StrategicDecision.VERIFY, "verification_required", "Edit applied; verification required")
 
         if tool in VERIFY_TOOLS:
-            self.control.verify_loop_count += 1
+            passed = interpret_verification_outcome(tool, result)
+            # Count only unresolved/inconclusive or failed verification attempts toward loop limit
+            if passed is not True:
+                self.control.verify_loop_count += 1
             if self.control.verify_loop_count > MAX_VERIFY_LOOPS:
                 self.control.lifecycle = "blocked"
                 return self._out(StrategicDecision.BLOCK, "max_verify_loops", "Verification loop limit")
-            passed = interpret_test_outcome(result)
             if passed is True:
                 self.control.verification_status = "passed"
                 self.control.verification_required = False

@@ -10,6 +10,7 @@ from cognitive.hai_control import (
     classify_delegation,
     derive_subgoals,
     interpret_test_outcome,
+    interpret_verification_outcome,
 )
 
 
@@ -146,3 +147,57 @@ def test_security_no_identity_in_state():
 def test_delegation_signals():
     assert classify_delegation("Run the nightly workflow pipeline") == StrategicDecision.DELEGATE_WORKFLOW
     assert classify_delegation("Use multi-worker coordinator") == StrategicDecision.DELEGATE_COORDINATOR
+
+
+def test_successful_run_command_is_not_verification():
+    s = StrategicController()
+    s.start("Fix authentication bug")
+    s.on_tool_result("apply_patch", True, result={"ok": True})
+    out = s.on_tool_result(
+        "run_command",
+        True,
+        arguments={"command": "echo hello"},
+        result={"ok": True, "exit_code": 0, "stdout": "hello"},
+    )
+    assert s.control.verification_status == "required"
+    assert out["decision"] == StrategicDecision.VERIFY.value
+
+
+def test_successful_readonly_command_is_not_verification():
+    result = {"ok": True, "exit_code": 0, "stdout": "README.md\n"}
+    assert interpret_verification_outcome("run_command", result) is None
+
+
+def test_run_command_explicit_verification_passes():
+    result = {"ok": True, "exit_code": 0, "verification_passed": True}
+    assert interpret_verification_outcome("run_command", result) is True
+
+
+def test_run_tests_real_test_evidence_passes():
+    result = {"ok": True, "exit_code": 0, "stdout": "2 passed"}
+    assert interpret_verification_outcome("run_tests", result) is True
+
+
+def test_run_tests_empty_success_is_inconclusive():
+    result = {"ok": True, "exit_code": 0, "stdout": ""}
+    assert interpret_verification_outcome("run_tests", result) is None
+
+
+def test_run_tests_failure_is_failure():
+    result = {"ok": True, "exit_code": 1, "stdout": "1 failed"}
+    assert interpret_verification_outcome("run_tests", result) is False
+
+
+def test_nl_cannot_bypass_inconclusive_command():
+    s = StrategicController()
+    s.start("Fix authentication bug")
+    s.on_tool_result("apply_patch", True, result={"ok": True})
+    s.on_tool_result(
+        "run_command", True,
+        arguments={"command": "echo hello"},
+        result={"ok": True, "exit_code": 0, "stdout": "hello"},
+    )
+    gate = s.evaluate_natural_language_completion("The bug is fixed.")
+    assert gate["decision"] != StrategicDecision.COMPLETE.value
+    assert s.control.verification_status == "required"
+

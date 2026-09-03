@@ -29,3 +29,7 @@ HAI controls cognitive lifecycle and may **veto** natural-language completion wh
 Stage 3J = checkpoint/reconciliation infrastructure.
 Stage 3K = verification-authoritative AgentRuntime control.
 Future = true process crash/restart, GoalDecomposer-backed planning, full Coordinator execution.
+
+## Stage 3K.1 — Verification semantics
+
+Tool execution success and verification success are distinct. Generic `run_command` success (including `exit_code=0`) is **not** sufficient evidence that a consequential edit is correct. HAI requires explicit or recognized verification evidence (`tests_passed`, `verification_passed`, or clear test summary output from `run_tests`) before treating verification as passed.
