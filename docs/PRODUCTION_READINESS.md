@@ -132,3 +132,21 @@ Registered on `JobWorker` at app startup. Retries use the same snapshot.
 - No recursive subflows
 - No automatic external rollback
 - No concurrent parallel worker fan-out
+
+## OS sandbox isolation policy
+
+| Backend | Network | Filesystem | Process | Untrusted workflow code |
+|---------|---------|------------|---------|-------------------------|
+| Docker (`DEVOS_USE_DOCKER_SANDBOX=1`) | none/bridge | read-only root + work tmpfs | strong | **YES** |
+| bubblewrap | unshare-net | RO system binds + work | restricted | **YES** |
+| firejail | net=none | --private | restricted | **YES** |
+| unshare --net | yes | **host FS** | network_only | **NO** |
+| degraded host | no | **host FS** | degraded | **NO** |
+| none | — | — | none | **NO** |
+
+- UCIP/authority = authorization; isolation = process boundary.
+- Static analysis = defense-in-depth only (bypassable).
+- Untrusted workflow `inputs.code` requires strength `strong` or `restricted`.
+- `DEVOS_ALLOW_DEGRADED_ISOLATION=1` is **development only**.
+- Production recommendation: `DEVOS_USE_DOCKER_SANDBOX=1`.
+- Diagnostics: `GET /api/health/isolation`.

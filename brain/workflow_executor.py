@@ -300,8 +300,11 @@ async def _run_capability_step(step: WorkflowStep, context: dict, attempt: int) 
     if code and lang in ("python", "bash", "node"):
         try:
             from governance.sandbox import SandboxedExecutor
+            # Untrusted workflow code: no secret injection; require restricted+ isolation
             exe = SandboxedExecutor(allow_network=False)
-            result = await exe.run(str(code), language=lang)
+            result = await exe.run(
+                str(code), language=lang, inject_secrets=None, policy="untrusted",
+            )
             status_s = getattr(result, "status", "") or ""
             if status_s == "sandbox_denied" or "isolation" in status_s:
                 rec.status = STEP_FAILED

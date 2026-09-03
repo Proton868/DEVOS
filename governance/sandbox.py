@@ -1,6 +1,9 @@
 """
 DevOS Sandbox — Execution Layer with isolation.
 ═══════════════════════════════════════════════════════════════════════════════
+Static analysis is defense-in-depth only. OS isolation is the primary
+security boundary (see execution/isolation.py strength policy).
+
 Implements the CRITICAL gap #1 from the audit:
   - Process-level resource limits (CPU time, memory, file descriptors)
   - Filesystem jail (chroot-style restricted working dir)
@@ -123,7 +126,8 @@ class SandboxedExecutor:
     async def run(self, code: str, language: str = "python",
                   run_id: Optional[str] = None,
                   inject_secrets: Optional[dict] = None,
-                  timeout: int = 60) -> SandboxResult:
+                  timeout: int = 60,
+                  policy: str = "trusted") -> SandboxResult:
         run_id = run_id or str(uuid.uuid4())
         violations: list[str] = []
 
@@ -159,13 +163,20 @@ class SandboxedExecutor:
 
         start_ns = time.perf_counter_ns()
         try:
-            use_isolation = not self.allow_network
-            if use_isolation:
-                from execution.isolation import run_isolated
+            # Isolation is the primary boundary. allow_network only tunes the
+            # backend (e.g. Docker network mode); it must never mean bare host exec
+            # for untrusted policy.
+            from execution.isolation import run_isolated, POLICY_UNTRUSTED, POLICY_TRUSTED
+            pol = policy if policy in (POLICY_UNTRUSTED, POLICY_TRUSTED) else (
+                POLICY_UNTRUSTED if policy == "untrusted" else POLICY_TRUSTED
+            )
+            if pol == POLICY_UNTRUSTED or not self.allow_network:
                 iso = await run_isolated(
                     cmd, cwd=str(work_dir), env=env,
                     timeout_s=min(timeout, self.max_cpu_seconds + 5),
                     language=language, require_isolation=True,
+                    allow_network=bool(self.allow_network),
+                    policy=pol,
                 )
                 if iso.status == "isolation_unavailable":
                     violations.append(f"[ISOLATION] {iso.stderr}")
@@ -301,10 +312,10 @@ class SandboxedExecutor:
         import re
         violations = []
         patterns = [
-            (r"\bos\.system\s*\(", "[WARN] os.system() call — consider subprocess"),
+            (r"\bos\.system\s*\(", "[CRITICAL] os.system() call"),
             (r"\bsubprocess\.(call|run|Popen)\s*\(.*shell\s*=\s*True", "[WARN] shell=True in subprocess"),
-            (r"\beval\s*\(", "[WARN] eval() detected"),
-            (r"\bexec\s*\(", "[WARN] exec() detected"),
+            (r"\beval\s*\(", "[CRITICAL] eval() detected"),
+            (r"\bexec\s*\(", "[CRITICAL] exec() detected"),
             (r"\b__import__\s*\(", "[WARN] __import__() dynamic import"),
             (r"open\s*\(\s*['\"]\/", "[WARN] Absolute path file access"),
             (r"shutil\.rmtree\s*\(\s*['\"]\/", "[CRITICAL] rmtree on root path"),
