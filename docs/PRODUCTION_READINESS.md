@@ -44,3 +44,36 @@ cd frontend-src && npm ci && npm run build
 - Deleting a workflow removes the definition only; jobs and evidence retain historical IDs/versions.
 - Workflow `schedule`/`cron` fields are stored but **not** auto-scheduled (script scheduler only).
 - Governance/capability checks remain authoritative at step execution time.
+
+## WorkflowExecutionSnapshot contract (schema_version = 1)
+
+Canonical fields: `schema_version`, `workflow_id`, `workflow_version`, `owner_id`,
+`definition` (self-contained), `captured_at`, plus `tenant_id` / `correlation_id` when applicable.
+
+### Guarantees
+
+| Guarantee | Detail |
+|-----------|--------|
+| Immutability | Editing WorkflowRecord does not mutate existing job snapshots |
+| Identity match | `job.workflow_id/version` must equal snapshot fields |
+| No live fallback | Corrupt/missing snapshot → failed/invalid; never reload current definition |
+| Secrets | `scrub_secrets()` before persist |
+| Job states | `queued` → `running` → `succeeded` \| `failed` (existing model) |
+| Evidence | Records version from snapshot/job, not current WorkflowRecord |
+
+### Failure matrix (summary)
+
+| Failure | Job? | Execution? | Evidence of success? |
+|---------|------|------------|----------------------|
+| Not found / not owner | No | No | No |
+| Invalid definition | No | No | No |
+| Disabled workflow | No | No | No |
+| Enqueue success | Yes (`queued`) | Not yet | Acceptance evidence only |
+| Step failure | Yes | Partial | FAILED, snapshot retained |
+| External side effect then fail | Yes | Yes | FAILED; **no false rollback claim** |
+
+### Limitations
+
+- External side effects are **not** automatically reversible.
+- Workflow `schedule` metadata is **not** an active scheduler registration.
+- Compensation engines are not implemented.

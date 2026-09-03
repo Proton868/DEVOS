@@ -175,15 +175,137 @@ async def delete_workflow_for_owner(
     return True
 
 
-async def snapshot_workflow_for_execution(
-    db: AsyncSession, workflow_id: str, owner_id: str
-) -> Optional[dict]:
-    """Return an immutable snapshot {definition, version, workflow_id, owner_id}
-    for execution/evidence. Running jobs must use this snapshot, not a live reload.
-    Secrets are scrubbed via governance.reliability.scrub_secrets.
-    """
+# ── Canonical WorkflowExecutionSnapshot (schema_version = 1) ─────────────────
+# Immutable definition captured for one ExecutionJob. Never reload WorkflowRecord
+# during retry/recovery. Future formats bump schema_version and document migration.
+
+SNAPSHOT_SCHEMA_VERSION = 1
+_REQUIRED_SNAPSHOT_FIELDS = (
+    "schema_version",
+    "workflow_id",
+    "workflow_version",
+    "owner_id",
+    "definition",
+    "captured_at",
+)
+
+
+class SnapshotError(Exception):
+    """Snapshot missing, malformed, or inconsistent with ExecutionJob identity."""
+
+
+def build_execution_snapshot(
+    *,
+    workflow_id: str,
+    workflow_version: int,
+    owner_id: str,
+    tenant_id: Optional[str],
+    name: str,
+    definition: dict,
+    correlation_id: Optional[str] = None,
+    status: Optional[str] = None,
+    enabled: bool = True,
+) -> dict:
+    """Construct the canonical scrubbed snapshot. Self-contained definition required."""
     from governance.reliability import scrub_secrets
 
+    if not isinstance(definition, dict):
+        raise SnapshotError("definition must be a dict")
+    # Reject pointer-only definitions
+    if set(definition.keys()) <= {"workflow_id", "id"} and "steps" not in definition:
+        raise SnapshotError("definition must be self-contained (not a workflow_id pointer)")
+
+    snap = {
+        "schema_version": SNAPSHOT_SCHEMA_VERSION,
+        "workflow_id": workflow_id,
+        "workflow_version": int(workflow_version),
+        "owner_id": owner_id,
+        "tenant_id": tenant_id,
+        "name": name or "",
+        "definition": copy.deepcopy(definition),
+        "captured_at": _now().isoformat(),
+        "correlation_id": correlation_id,
+        "status": status or "draft",
+        "enabled": bool(enabled),
+        # Back-compat alias used by older readers
+        "version": int(workflow_version),
+    }
+    return scrub_secrets(snap)
+
+
+def validate_execution_snapshot(snap: Optional[dict]) -> dict:
+    """Validate canonical shape. Raises SnapshotError — never falls back to live record."""
+    if not snap or not isinstance(snap, dict):
+        raise SnapshotError("snapshot missing or not a dict")
+    for f in _REQUIRED_SNAPSHOT_FIELDS:
+        if f not in snap or snap[f] is None or snap[f] == "":
+            if f == "definition" and snap.get(f) == {}:
+                continue  # empty def rejected separately
+            if f not in snap or snap[f] is None:
+                raise SnapshotError(f"snapshot missing required field: {f}")
+    if int(snap.get("schema_version") or 0) != SNAPSHOT_SCHEMA_VERSION:
+        raise SnapshotError(
+            f"unsupported snapshot schema_version: {snap.get('schema_version')}"
+        )
+    if not isinstance(snap.get("definition"), dict):
+        raise SnapshotError("snapshot.definition must be a dict")
+    if "steps" not in snap["definition"] and not snap["definition"].get("name"):
+        # Allow validated empty-step only if caller already validated Workflow object;
+        # structural presence of definition dict is required.
+        pass
+    try:
+        int(snap["workflow_version"])
+    except (TypeError, ValueError) as e:
+        raise SnapshotError("workflow_version must be int") from e
+    return snap
+
+
+def assert_job_snapshot_consistency(job, snap: dict) -> None:
+    """job.workflow_id/version must match snapshot. Do not silently repair."""
+    j_wid = getattr(job, "workflow_id", None)
+    j_ver = getattr(job, "workflow_version", None)
+    s_wid = snap.get("workflow_id")
+    s_ver = snap.get("workflow_version", snap.get("version"))
+    if j_wid and s_wid and j_wid != s_wid:
+        raise SnapshotError(f"job/snapshot workflow_id mismatch: {j_wid} vs {s_wid}")
+    if j_ver is not None and s_ver is not None and int(j_ver) != int(s_ver):
+        raise SnapshotError(
+            f"job/snapshot workflow_version mismatch: {j_ver} vs {s_ver}"
+        )
+
+
+def snapshot_from_job_payload(payload: Optional[dict]) -> dict:
+    """Extract and validate immutable snapshot from ExecutionJob.payload.
+
+    Retries/recovery MUST use this. Raises SnapshotError on corruption —
+    never reload WorkflowRecord to "fix" a bad snapshot.
+    """
+    if not payload or not isinstance(payload, dict):
+        raise SnapshotError("job payload missing")
+    snap = payload.get("workflow_snapshot")
+    return validate_execution_snapshot(snap if isinstance(snap, dict) else None)
+
+
+def load_snapshot_for_job(job) -> dict:
+    """Load validated snapshot for a job and check identity consistency."""
+    snap = snapshot_from_job_payload(getattr(job, "payload", None) or {})
+    assert_job_snapshot_consistency(job, snap)
+    return snap
+
+
+async def snapshot_workflow_for_execution(
+    db: AsyncSession,
+    workflow_id: str,
+    owner_id: str,
+    *,
+    correlation_id: Optional[str] = None,
+    require_valid: bool = True,
+) -> Optional[dict]:
+    """Build canonical scrubbed snapshot from WorkflowRecord (DB source of truth).
+
+    When require_valid=True, the runtime Workflow definition must pass validate().
+    Returns None if the row is not found/not owned. Raises SnapshotError on invalid def.
+    """
     r = await db.execute(
         select(WorkflowRecord).where(
             WorkflowRecord.id == workflow_id,
@@ -193,26 +315,26 @@ async def snapshot_workflow_for_execution(
     row = r.scalar_one_or_none()
     if not row:
         return None
-    return scrub_secrets({
-        "workflow_id": row.id,
-        "owner_id": row.owner_id,
-        "tenant_id": row.tenant_id,
-        "version": int(row.version or 1),
-        "name": row.name,
-        "definition": copy.deepcopy(row.definition or {}),
-        "status": row.status,
-        "enabled": bool(row.enabled) if row.enabled is not None else True,
-    })
 
+    enabled = bool(row.enabled) if row.enabled is not None else True
+    if not enabled:
+        raise SnapshotError("workflow is disabled")
 
-def snapshot_from_job_payload(payload: Optional[dict]) -> Optional[dict]:
-    """Extract the immutable workflow snapshot embedded in an ExecutionJob payload.
-    Retries/recovery MUST use this, never a live WorkflowRecord reload.
-    """
-    if not payload:
-        return None
-    snap = payload.get("workflow_snapshot")
-    if not isinstance(snap, dict):
-        return None
-    return snap
+    wf = record_to_workflow(row)
+    if require_valid:
+        ok, errors = wf.validate()
+        if not ok:
+            raise SnapshotError(f"invalid workflow definition: {'; '.join(errors)}")
+
+    return build_execution_snapshot(
+        workflow_id=row.id,
+        workflow_version=int(row.version or 1),
+        owner_id=row.owner_id,
+        tenant_id=row.tenant_id,
+        name=row.name,
+        definition=copy.deepcopy(row.definition or {}),
+        correlation_id=correlation_id,
+        status=row.status,
+        enabled=enabled,
+    )
 

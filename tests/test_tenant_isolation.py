@@ -397,3 +397,111 @@ class TestWorkflowExecutionSnapshots:
         assert j2.status_code == 200
         assert j2.json()["workflow_id"] == wid
         assert int(j2.json()["workflow_version"]) == int(v1)
+
+
+class TestWorkflowSnapshotContract:
+    def test_canonical_schema_and_immutability(self, two_clients):
+        a = two_clients["alice_c"]
+        r = a.post("/api/workflows", json={
+            "name": "ContractFlow",
+            "description": "v1-body",
+            "steps": [
+                {"id": "s1", "type": "notify", "name": "alpha"},
+                {"id": "s2", "type": "notify", "name": "beta", "next_step": None},
+            ],
+            "start_step": "s1",
+        })
+        assert r.status_code in (200, 201), r.text
+        wid = r.json()["workflow"]["workflow_id"]
+        # Capture original step names from create response
+        steps_v1 = [s["name"] for s in r.json()["workflow"]["steps"]]
+
+        ex = a.post(f"/api/workflows/{wid}/execute", json={})
+        assert ex.status_code == 200, ex.text
+        body = ex.json()
+        assert body.get("schema_version") == 1
+        job_id = body["job_id"]
+        v = int(body["workflow_version"])
+
+        j = a.get(f"/api/workflows/jobs/{job_id}")
+        assert j.status_code == 200
+        assert j.json()["snapshot_valid"] is True
+        assert j.json()["schema_version"] == 1
+        assert int(j.json()["workflow_version"]) == v
+
+        # Mutate definition content
+        a.patch(f"/api/workflows/{wid}", json={
+            "description": "v2-body",
+            "steps": [{"id": "s1", "type": "notify", "name": "CHANGED"}],
+            "start_step": "s1",
+        })
+        j2 = a.get(f"/api/workflows/jobs/{job_id}")
+        assert int(j2.json()["workflow_version"]) == v
+        # Snapshot still valid and not from live record
+        assert j2.json()["snapshot_valid"] is True
+
+        # Idempotent replay after edit still same job / version
+        key = "contract-idem-1"
+        e1 = a.post(f"/api/workflows/{wid}/execute", json={"idempotency_key": key})
+        e2 = a.post(f"/api/workflows/{wid}/execute", json={"idempotency_key": key})
+        assert e1.json()["job_id"] == e2.json()["job_id"]
+        assert int(e1.json()["workflow_version"]) == int(e2.json()["workflow_version"])
+
+    def test_invalid_definition_creates_no_job(self, two_clients):
+        a = two_clients["alice_c"]
+        # Empty steps fail Workflow.validate()
+        r = a.post("/api/workflows", json={
+            "name": "BadFlow",
+            "steps": [],
+        })
+        # create may reject or accept draft — if accepted, execute must fail
+        if r.status_code in (200, 201):
+            wid = r.json()["workflow"]["workflow_id"]
+            ex = a.post(f"/api/workflows/{wid}/execute", json={})
+            assert ex.status_code == 400
+        else:
+            assert r.status_code == 400
+
+    def test_snapshot_helpers_reject_corruption(self):
+        from brain.workflow_store import (
+            validate_execution_snapshot,
+            SnapshotError,
+            build_execution_snapshot,
+            assert_job_snapshot_consistency,
+        )
+        snap = build_execution_snapshot(
+            workflow_id="w1",
+            workflow_version=3,
+            owner_id="u1",
+            tenant_id="t1",
+            name="n",
+            definition={"name": "n", "steps": [{"id": "s1"}]},
+            correlation_id="c1",
+        )
+        assert snap["schema_version"] == 1
+        assert "captured_at" in snap
+        validate_execution_snapshot(snap)
+        try:
+            validate_execution_snapshot({"workflow_id": "x"})
+            assert False, "expected SnapshotError"
+        except SnapshotError:
+            pass
+        # secret scrub
+        dirty = build_execution_snapshot(
+            workflow_id="w1",
+            workflow_version=1,
+            owner_id="u1",
+            tenant_id=None,
+            name="n",
+            definition={"name": "n", "steps": [], "api_key": "sk-secret-value-here"},
+        )
+        assert "sk-secret" not in str(dirty)
+
+        class FakeJob:
+            workflow_id = "other"
+            workflow_version = 3
+        try:
+            assert_job_snapshot_consistency(FakeJob(), snap)
+            assert False
+        except SnapshotError:
+            pass

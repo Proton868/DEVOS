@@ -188,15 +188,26 @@ async def get_workflow_job(job_id: str, request: Request, db=Depends(get_db)):
     job = r.scalar_one_or_none()
     if not job:
         raise HTTPException(404, "Job not found")
-    snap = (job.payload or {}).get("workflow_snapshot") if isinstance(job.payload, dict) else None
+    corrupt = None
+    snap = None
+    try:
+        snap = workflow_store.load_snapshot_for_job(job)
+    except workflow_store.SnapshotError as e:
+        corrupt = str(e)
+        # Do NOT reload WorkflowRecord — surface corruption only.
+        raw = (job.payload or {}).get("workflow_snapshot") if isinstance(job.payload, dict) else None
+        snap = raw if isinstance(raw, dict) else None
     return {
         "job_id": job.id,
-        "status": job.status,
+        "status": "failed" if corrupt else job.status,
         "job_type": job.job_type,
         "workflow_id": job.workflow_id,
         "workflow_version": job.workflow_version,
         "has_snapshot": bool(snap),
-        "snapshot_version": (snap or {}).get("version") if isinstance(snap, dict) else None,
+        "snapshot_version": (snap or {}).get("workflow_version", (snap or {}).get("version")) if isinstance(snap, dict) else None,
+        "schema_version": (snap or {}).get("schema_version") if isinstance(snap, dict) else None,
+        "snapshot_valid": corrupt is None and bool(snap),
+        "corruption": corrupt,
         "correlation": job.correlation,
         "attempts": job.attempts,
         "created_at": job.created_at.isoformat() if job.created_at else None,
@@ -396,22 +407,32 @@ async def execute_workflow(
 
     user = await get_current_user(request, db)
     tenant = await ensure_personal_tenant(db, user)
-    snap = await workflow_store.snapshot_workflow_for_execution(db, workflow_id, user.id)
-    if not snap:
-        raise HTTPException(404, f"Workflow not found: {workflow_id}")
-    if not snap.get("enabled", True):
-        raise HTTPException(400, "Workflow is disabled")
-
     body = body or WorkflowExecuteReq()
     correlation_id = body.request_id or new_request_id()
-    version = int(snap.get("version") or 1)
 
+    try:
+        snap = await workflow_store.snapshot_workflow_for_execution(
+            db, workflow_id, user.id, correlation_id=correlation_id, require_valid=True
+        )
+    except workflow_store.SnapshotError as e:
+        raise HTTPException(400, str(e)) from e
+    if not snap:
+        raise HTTPException(404, f"Workflow not found: {workflow_id}")
+
+    # Canonical validation before any job/evidence persistence
+    try:
+        snap = workflow_store.validate_execution_snapshot(snap)
+    except workflow_store.SnapshotError as e:
+        raise HTTPException(400, str(e)) from e
+
+    version = int(snap["workflow_version"])
     correlation = scrub_secrets({
         "correlation_id": correlation_id,
         "workflow_id": snap["workflow_id"],
         "workflow_version": version,
         "owner_id": user.id,
         "tenant_id": tenant.id,
+        "schema_version": snap.get("schema_version"),
     })
     payload = scrub_secrets({
         "workflow_snapshot": snap,
@@ -432,7 +453,8 @@ async def execute_workflow(
         workflow_version=version,
     )
 
-    # Durable evidence identity (does not cascade on workflow delete)
+    # Evidence only after durable job exists — identity from snapshot, not live record
+    evidence_id = None
     try:
         ev = EvidenceRecord(
             id=_gen_id(),
@@ -440,13 +462,15 @@ async def execute_workflow(
             tenant_id=tenant.id,
             goal=f"workflow:{snap['workflow_id']}:v{version}",
             body=scrub_secrets({
-                "kind": "workflow_execution",
+                "kind": "workflow_execution_accepted",
                 "workflow_id": snap["workflow_id"],
                 "workflow_version": version,
                 "job_id": job.id,
                 "correlation_id": correlation_id,
                 "owner_id": user.id,
                 "tenant_id": tenant.id,
+                "schema_version": snap.get("schema_version"),
+                "job_status": job.status,
             }),
             created_at=datetime.now(timezone.utc),
         )
@@ -454,20 +478,20 @@ async def execute_workflow(
         await db.commit()
         evidence_id = ev.id
     except Exception:
-        evidence_id = None
         try:
             await db.rollback()
         except Exception:
             pass
 
     return {
-        "status": "queued" if job.status == "queued" else job.status,
+        "status": job.status,  # queued|running|succeeded|failed — not "executed"
         "workflow_id": snap["workflow_id"],
         "workflow_version": version,
         "job_id": job.id,
         "correlation_id": correlation_id,
         "evidence_id": evidence_id,
-        "note": "Job payload holds immutable workflow_snapshot; governance applies at step execution.",
+        "schema_version": snap.get("schema_version"),
+        "note": "Job accepted with immutable snapshot; step execution subject to governance.",
     }
 
 
