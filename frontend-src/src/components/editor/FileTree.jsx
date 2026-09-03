@@ -78,8 +78,15 @@ function TreeNode({ node, depth = 0, onOpenFile, selectedPath, setSelectedPath, 
   const [expanded, setExpanded] = useState(depth === 0);
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(node.name);
-  const { openFile, setFileTree, setStatus, setActiveView, openTabs } = useStore();
-  const isDirty = openTabs?.some((t) => t.path === node.path && t.dirty);
+  const { openFile, setFileTree, setStatus, setActiveView, openTabs, gitStatus } = useStore();
+  // Store uses `modified`; keep backward-compat with any `dirty` flag
+  const isDirty = openTabs?.some((t) => t.path === node.path && (t.modified || t.dirty));
+  const gitEntry = (gitStatus?.files || gitStatus?.changed || []).find?.(
+    (f) => (f.path || f) === node.path
+  );
+  const gitMark = gitEntry
+    ? (gitEntry.status || gitEntry.xy || "?").toString().trim().charAt(0).toUpperCase()
+    : null;
   const isActive = selectedPath === node.path;
   const indent = depth * 14;
 
@@ -226,7 +233,20 @@ function TreeNode({ node, depth = 0, onOpenFile, selectedPath, setSelectedPath, 
         ) : (
           <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {node.name}
-            {isDirty ? <span style={{ color: "#fbbf24", marginLeft: 4 }}>●</span> : null}
+            {isDirty ? <span style={{ color: "#fbbf24", marginLeft: 4 }} title="Unsaved">●</span> : null}
+            {gitMark ? (
+              <span
+                style={{
+                  color: gitMark === "M" ? "#fbbf24" : gitMark === "A" ? "#4ade80" : gitMark === "D" ? "#f87171" : "#94a3b8",
+                  marginLeft: 4,
+                  fontSize: 10,
+                  fontWeight: 600,
+                }}
+                title={`Git: ${gitMark}`}
+              >
+                {gitMark}
+              </span>
+            ) : null}
           </span>
         )}
       </div>
@@ -249,6 +269,20 @@ export function ProjectExplorer({ title = "EXPLORER", onOpenFile }) {
   const { fileTree, setFileTree, setStatus, openFile, setActiveView } = useStore();
   const [selectedPath, setSelectedPath] = useState(null);
   const [ctx, setCtx] = useState(null);
+  const [showHidden, setShowHidden] = useState(false);
+
+  const filterTree = useCallback((nodes) => {
+    if (!nodes) return [];
+    return nodes
+      .filter((n) => showHidden || !n.name?.startsWith("."))
+      .map((n) =>
+        n.type === "directory" && n.children
+          ? { ...n, children: filterTree(n.children) }
+          : n
+      );
+  }, [showHidden]);
+
+  const visibleTree = filterTree(fileTree);
 
   const refresh = useCallback(async () => {
     setStatus("Refreshing…");
@@ -315,19 +349,30 @@ export function ProjectExplorer({ title = "EXPLORER", onOpenFile }) {
       }}>
         <span>{title}</span>
         <div className="file-tree-header-actions" style={{ display: "flex", gap: 4 }}>
+          <button
+            title={showHidden ? "Hide hidden files" : "Show hidden files"}
+            onClick={() => setShowHidden((v) => !v)}
+            style={{
+              background: showHidden ? "var(--bg-3,#2a2a3c)" : "transparent",
+              border: "none", color: "inherit", cursor: "pointer",
+              fontSize: 10, padding: "0 4px", borderRadius: 3,
+            }}
+          >
+            .{showHidden ? "" : "·"}
+          </button>
           <button title="New File" onClick={newRootFile} style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer" }}><Plus size={13} /></button>
           <button title="New Folder" onClick={newRootFolder} style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer" }}><FolderPlus size={13} /></button>
           <button title="Refresh" onClick={refresh} style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer" }}><RefreshCw size={13} /></button>
         </div>
       </div>
-      <div className="file-tree-body" style={{ flex: 1, overflow: "auto" }}>
-        {(!fileTree || fileTree.length === 0) ? (
+      <div className="file-tree-body" style={{ flex: 1, overflow: "auto" }} role="tree">
+        {(!visibleTree || visibleTree.length === 0) ? (
           <div className="empty-workspace" style={{ padding: 16, textAlign: "center", color: "#64748b", fontSize: 12 }}>
             <p>No files yet</p>
             <button className="btn-primary" onClick={newRootFile} style={{ marginTop: 8 }}>Create a file</button>
           </div>
         ) : (
-          fileTree.map((node) => (
+          visibleTree.map((node) => (
             <TreeNode
               key={node.path}
               node={node}

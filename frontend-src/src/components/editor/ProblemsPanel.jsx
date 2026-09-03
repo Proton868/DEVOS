@@ -10,14 +10,31 @@ const SEVERITY = {
 };
 
 export default function ProblemsPanel() {
-  const { problems, problemsOpen, setProblemsOpen, openFile } = useStore();
+  const { problems, problemsOpen, setProblemsOpen, openFile, setProblems, setStatus } = useStore();
   const [filter, setFilter] = useState("all"); // all | error | warning | info
+  const [refreshing, setRefreshing] = useState(false);
 
   if (!problemsOpen) return null;
 
-  const byFile = problems.reduce((acc, p) => {
-    if (!acc[p.path]) acc[p.path] = [];
-    acc[p.path].push(p);
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      // Prefer structured diagnostics endpoint when available
+      const res = await api.getDiagnostics?.() || api.getProblems?.();
+      const list = res?.problems || res?.diagnostics || res || [];
+      setProblems?.(Array.isArray(list) ? list : []);
+      setStatus?.(`Diagnostics: ${list.length || 0}`);
+    } catch (e) {
+      setStatus?.("Diagnostics unavailable");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const byFile = (problems || []).reduce((acc, p) => {
+    const path = p.path || p.file || "unknown";
+    if (!acc[path]) acc[path] = [];
+    acc[path].push({ ...p, path, line: p.line || p.range?.start?.line || 1, col: p.col || p.column || p.range?.start?.character || 1 });
     return acc;
   }, {});
 
@@ -56,7 +73,10 @@ export default function ProblemsPanel() {
             </button>
           ))}
         </div>
-        <button onClick={() => setProblemsOpen(false)}><X size={13} /></button>
+        <button onClick={refresh} disabled={refreshing} title="Refresh diagnostics" aria-label="Refresh">
+          {refreshing ? "…" : "↻"}
+        </button>
+        <button onClick={() => setProblemsOpen(false)} aria-label="Close problems"><X size={13} /></button>
       </div>
 
       <div className="problems-body">

@@ -65,34 +65,121 @@ const useStore = create((set, get) => ({
   openTabs: [],
   activeTab: null,
   splitTab: null,
+  // Bounded stack of recently closed tabs for "Reopen Closed Editor"
+  recentlyClosed: [],
 
   openFile: (file) => {
     const { openTabs } = get();
     const existing = openTabs.find((t) => t.path === file.path);
-    if (existing) { set({ activeTab: file.path }); return; }
-    set({ openTabs: [...openTabs, { ...file, modified: false }], activeTab: file.path });
+    if (existing) {
+      if (file.content != null && existing.content !== file.content && !existing.modified) {
+        set({
+          openTabs: openTabs.map((t) =>
+            t.path === file.path
+              ? { ...t, content: file.content, language: file.language || t.language }
+              : t
+          ),
+          activeTab: file.path,
+        });
+      } else {
+        set({ activeTab: file.path });
+      }
+      return;
+    }
+    set({
+      openTabs: [...openTabs, { ...file, modified: false, openedAt: Date.now() }],
+      activeTab: file.path,
+    });
   },
   openFileSplit: (file) => {
     const { openTabs } = get();
     if (!openTabs.find((t) => t.path === file.path)) {
-      set({ openTabs: [...openTabs, { ...file, modified: false }] });
+      set({ openTabs: [...openTabs, { ...file, modified: false, openedAt: Date.now() }] });
     }
     set({ splitTab: file.path });
   },
   closeSplit: () => set({ splitTab: null }),
-  closeTab: (filePath) => {
-    const { openTabs, activeTab, splitTab } = get();
+
+  /**
+   * Close a tab. If dirty and force is false, returns { needsConfirm: true, path }.
+   * Caller should prompt the user and re-call with force=true.
+   */
+  closeTab: (filePath, { force = false } = {}) => {
+    const { openTabs, activeTab, splitTab, recentlyClosed } = get();
+    const tab = openTabs.find((t) => t.path === filePath);
+    if (!tab) return { closed: false };
+    if (tab.modified && !force) {
+      return { needsConfirm: true, path: filePath, name: tab.name || filePath };
+    }
     const idx = openTabs.findIndex((t) => t.path === filePath);
     const newTabs = openTabs.filter((t) => t.path !== filePath);
     let newActive = activeTab;
     if (activeTab === filePath) newActive = newTabs[Math.max(0, idx - 1)]?.path || null;
-    set({ openTabs: newTabs, activeTab: newActive, splitTab: splitTab === filePath ? null : splitTab });
+    const closedEntry = {
+      path: tab.path,
+      name: tab.name,
+      content: tab.content,
+      language: tab.language,
+      closedAt: Date.now(),
+    };
+    const nextClosed = [closedEntry, ...recentlyClosed.filter((c) => c.path !== tab.path)].slice(0, 20);
+    set({
+      openTabs: newTabs,
+      activeTab: newActive,
+      splitTab: splitTab === filePath ? null : splitTab,
+      recentlyClosed: nextClosed,
+    });
+    return { closed: true };
   },
+
+  closeOtherTabs: (keepPath, { force = false } = {}) => {
+    const { openTabs } = get();
+    const dirty = openTabs.filter((t) => t.path !== keepPath && t.modified);
+    if (dirty.length && !force) {
+      return { needsConfirm: true, count: dirty.length, paths: dirty.map((t) => t.path) };
+    }
+    for (const t of openTabs) {
+      if (t.path !== keepPath) get().closeTab(t.path, { force: true });
+    }
+    return { closed: true };
+  },
+
+  closeAllTabs: ({ force = false } = {}) => {
+    const { openTabs } = get();
+    const dirty = openTabs.filter((t) => t.modified);
+    if (dirty.length && !force) {
+      return { needsConfirm: true, count: dirty.length, paths: dirty.map((t) => t.path) };
+    }
+    for (const t of [...openTabs]) {
+      get().closeTab(t.path, { force: true });
+    }
+    return { closed: true };
+  },
+
+  reopenLastClosed: () => {
+    const { recentlyClosed, openTabs } = get();
+    if (!recentlyClosed.length) return null;
+    const [entry, ...rest] = recentlyClosed;
+    if (openTabs.find((t) => t.path === entry.path)) {
+      set({ activeTab: entry.path, recentlyClosed: rest });
+      return entry.path;
+    }
+    set({
+      openTabs: [...openTabs, { ...entry, modified: false, openedAt: Date.now() }],
+      activeTab: entry.path,
+      recentlyClosed: rest,
+    });
+    return entry.path;
+  },
+
   updateTabContent: (filePath, content) => set((s) => ({
     openTabs: s.openTabs.map((t) => t.path === filePath ? { ...t, content, modified: true } : t),
   })),
   markTabSaved: (filePath) => set((s) => ({
     openTabs: s.openTabs.map((t) => t.path === filePath ? { ...t, modified: false } : t),
+  })),
+  markTabDirty: (filePath) => set((s) => ({
+    openTabs: s.openTabs.map((t) => t.path === filePath ? { ...t, modified: true } : t),
   })),
 
   // ── AI Settings ───────────────────────────────────────────
@@ -202,15 +289,24 @@ const useStore = create((set, get) => ({
   problems: [],
   problemsOpen: false,
   setProblemsOpen: (v) => set({ problemsOpen: v }),
-  setProblems: (p) => set({ problems: p }),
+  setProblems: (p) => set({ problems: Array.isArray(p) ? p : [] }),
+  clearProblems: () => set({ problems: [] }),
+
+  // Diff / agent change review
+  diffOpen: false,
+  setDiffOpen: (v) => set({ diffOpen: v }),
 
   // ── Agent ─────────────────────────────────────────────────
   agentOpen: false,
   setAgentOpen: (v) => set({ agentOpen: v }),
   agentActions: [],
   agentRunning: false,
+  agentMode: "agent", // ask | edit | agent | review
+  setAgentMode: (m) => set({ agentMode: m }),
+  activeAgentTaskId: null,
+  setActiveAgentTaskId: (id) => set({ activeAgentTaskId: id }),
   addAgentAction: (a) => set((s) => ({ agentActions: [...s.agentActions, a] })),
-  clearAgentActions: () => set({ agentActions: [] }),
+  clearAgentActions: () => set({ agentActions: [], activeAgentTaskId: null }),
   setAgentRunning: (v) => set({ agentRunning: v }),
 
   // ── Background agents ─────────────────────────────────────

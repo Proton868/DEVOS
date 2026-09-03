@@ -79,8 +79,14 @@ export function registerCoreCommands() {
     shortcut: "Ctrl+W",
     when: () => !!s().activeTab,
     run: () => {
-      const { activeTab, closeTab } = s();
-      if (activeTab) closeTab?.(activeTab);
+      const { activeTab, closeTab, setStatus } = s();
+      if (!activeTab) return;
+      const result = closeTab?.(activeTab);
+      if (result?.needsConfirm) {
+        if (window.confirm(`"${result.name}" has unsaved changes. Close anyway?`)) {
+          closeTab?.(activeTab, { force: true });
+        }
+      }
     },
   });
 
@@ -88,12 +94,16 @@ export function registerCoreCommands() {
     id: "file.closeOthers",
     label: "Close Others",
     category: "File",
-    when: () => Object.keys(s().openTabs || {}).length > 1,
+    when: () => (s().openTabs || []).length > 1,
     run: () => {
-      const { activeTab, openTabs, closeTab } = s();
-      Object.keys(openTabs || {}).forEach((p) => {
-        if (p !== activeTab) closeTab?.(p);
-      });
+      const { activeTab, closeOtherTabs } = s();
+      if (!activeTab) return;
+      const result = closeOtherTabs?.(activeTab);
+      if (result?.needsConfirm) {
+        if (window.confirm(`${result.count} file(s) have unsaved changes. Close anyway?`)) {
+          closeOtherTabs?.(activeTab, { force: true });
+        }
+      }
     },
   });
 
@@ -102,8 +112,26 @@ export function registerCoreCommands() {
     label: "Close All Editors",
     category: "File",
     run: () => {
-      const { openTabs, closeTab } = s();
-      Object.keys(openTabs || {}).forEach((p) => closeTab?.(p));
+      const { closeAllTabs } = s();
+      const result = closeAllTabs?.();
+      if (result?.needsConfirm) {
+        if (window.confirm(`${result.count} file(s) have unsaved changes. Close anyway?`)) {
+          closeAllTabs?.({ force: true });
+        }
+      }
+    },
+  });
+
+  registerCommand({
+    id: "file.reopenClosed",
+    label: "Reopen Closed Editor",
+    category: "File",
+    shortcut: "Ctrl+Shift+T",
+    keywords: ["reopen", "undo close"],
+    when: () => (s().recentlyClosed || []).length > 0,
+    run: () => {
+      const path = s().reopenLastClosed?.();
+      if (path) s().setStatus?.(`Reopened ${path}`);
     },
   });
 

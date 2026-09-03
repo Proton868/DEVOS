@@ -11,6 +11,7 @@ import { registerCoreCommands } from "./commands/registerCoreCommands";
 const SettingsModal = lazy(() => import("./components/settings/SettingsModal"));
 const CmdKModal = lazy(() => import("./components/editor/CmdKModal"));
 const CommandPalette = lazy(() => import("./components/editor/CommandPalette"));
+const DiffViewer = lazy(() => import("./components/editor/DiffViewer"));
 
 const Spin = () => (
   <div className="flex items-center justify-center h-full text-slate-400 text-xs">
@@ -234,6 +235,7 @@ export default function App() {
               <SettingsModal />
               <CmdKModal />
               <CommandPalette />
+              <DiffViewer />
             </Suspense>
           </>
         )}

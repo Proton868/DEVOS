@@ -236,7 +236,19 @@ export default function CodeEditor() {
             title={tab.path}
           >
             <span className="tab-name">{tab.modified ? "● " : ""}{tab.name}</span>
-            <button className="tab-close" onClick={e => { e.stopPropagation(); closeTab(tab.path); }}>
+            <button
+              className="tab-close"
+              title="Close"
+              onClick={(e) => {
+                e.stopPropagation();
+                const result = closeTab(tab.path);
+                if (result?.needsConfirm) {
+                  if (window.confirm(`"${result.name || tab.path}" has unsaved changes. Close anyway?`)) {
+                    closeTab(tab.path, { force: true });
+                  }
+                }
+              }}
+            >
               <X size={11} />
             </button>
           </div>
