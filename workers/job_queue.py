@@ -421,16 +421,36 @@ async def complete(job_id, *, status, result=None, error=None, isolation=None):
                 error = (error or "") + " | missing_operation"
             else:
                 try:
-                    from governance.execution_operations import load_operation, OP_SUCCEEDED, OP_UNKNOWN
+                    from governance.execution_operations import (
+                        load_operation, complete_operation, mark_running,
+                        OP_SUCCEEDED, OP_UNKNOWN, OP_RESERVED, OP_RUNNING, OP_FAILED, OP_CANCELLED,
+                    )
                     op = await load_operation(op_id)
                     if not op:
                         status = "failed"
                         error = (error or "") + " | operation_missing"
                     elif op.get("status") == OP_UNKNOWN:
+                        # UNKNOWN is investigate territory — never promote job to success
                         status = "failed"
                         error = (error or "") + " | operation_unknown"
-                    elif op.get("status") != OP_SUCCEEDED:
-                        # Do not promote job to succeeded while operation not terminal success
+                    elif op.get("status") == OP_SUCCEEDED:
+                        pass  # ledger already authoritative success
+                    elif op.get("status") == OP_RESERVED:
+                        # Side effect never left the process: local handler completion
+                        # is sufficient to close the ledger (kill-before-start recovery path).
+                        await mark_running(op_id)
+                        ok = await complete_operation(op_id, success=True)
+                        if not ok:
+                            status = "failed"
+                            error = (error or "") + " | operation_close_failed"
+                    elif op.get("status") == OP_RUNNING:
+                        # Ambiguous external window — do not invent success without evidence
+                        status = "failed"
+                        error = (error or "") + " | operation_state_running"
+                    elif op.get("status") in (OP_FAILED, OP_CANCELLED):
+                        status = "failed"
+                        error = (error or "") + f" | operation_state_{op.get('status')}"
+                    else:
                         status = "failed"
                         error = (error or "") + f" | operation_state_{op.get('status')}"
                 except Exception as e:
