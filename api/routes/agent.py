@@ -133,18 +133,62 @@ async def list_tasks(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from brain.agent_runtime import list_tasks_for_user
-    return {"tasks": list_tasks_for_user(user.id)}
+    live = list_tasks_for_user(user.id)
+    # Merge durable history for completed/prior sessions
+    try:
+        from brain.agent_task_store import list_user_tasks
+        durable = await list_user_tasks(user.id, limit=20)
+        seen = {t["id"] for t in live}
+        for t in durable:
+            if t["id"] not in seen:
+                live.append(t)
+    except Exception:
+        pass
+    return {"tasks": live[:30]}
 
 
 @router.get("/{task_id}")
 async def get_task(task_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    from brain.agent_runtime import get_task
-    task = get_task(task_id)
-    if not task or task.user_id != user.id:
+    from brain.agent_runtime import get_task as get_live
+    task = get_live(task_id)
+    if task:
+        if task.user_id != user.id:
+            raise HTTPException(404, "task not found")
+        return task.to_dict()
+    from brain.agent_task_store import load_task
+    row = await load_task(task_id)
+    if not row or row.get("user_id") != user.id:
         raise HTTPException(404, "task not found")
-    return task.to_dict()
+    return row
+
+
+@router.get("/{task_id}/events")
+async def get_task_events(
+    task_id: str,
+    after_seq: int = 0,
+    request: Request = None,
+    db=Depends(get_db),
+):
+    """Reconnect helper: return buffered agent events after a sequence number.
+
+    Events are scoped to the authenticated user. Never leaks cross-tenant streams.
+    """
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from brain.agent_runtime import get_task as get_live, get_task_events as live_events
+    task = get_live(task_id)
+    if task:
+        if task.user_id != user.id:
+            raise HTTPException(404, "task not found")
+        return {"task_id": task_id, "events": live_events(task_id, after_seq)}
+    from brain.agent_task_store import load_task, load_task_events
+    row = await load_task(task_id)
+    if not row or row.get("user_id") != user.id:
+        raise HTTPException(404, "task not found")
+    events = await load_task_events(task_id, after_seq)
+    return {"task_id": task_id, "events": events, "status": row.get("status")}
 
 
 @router.post("/{task_id}/cancel")

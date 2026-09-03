@@ -159,7 +159,7 @@ Parity target: a competent developer can perform the same *class* of real softwa
 | Agent gate | PARTIAL |
 | Tool gate | PARTIAL |
 | Context gate | PARTIAL |
-| Recovery gate | NOT_IMPLEMENTED |
+| Recovery gate | PARTIAL |
 | Safety gate | PARTIAL |
 | Review gate | PARTIAL |
 | Verification gate | NOT_IMPLEMENTED |
@@ -180,3 +180,12 @@ Parity target: a competent developer can perform the same *class* of real softwa
 7. Controlled fixture E2E acceptance  
 
 Each stage must update this matrix honestly.
+
+
+### Update (durable tasks)
+
+- `AgentTaskRecord` SQLite model
+- `brain/agent_task_store.py`
+- `GET /api/agent/{id}/events?after_seq=`
+- Event `seq` field on agent SSE events
+- Recovery gate: PARTIAL

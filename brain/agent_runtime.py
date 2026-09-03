@@ -139,14 +139,23 @@ class AgentTask:
         }
 
 
-# In-process task store (durable job system remains ExecutionJob for heavy work)
+# In-process task store (hot path). Durable mirror is AgentTaskRecord via agent_task_store.
+# ExecutionJob remains the durable work unit for scripts/workflows — do not conflate.
 _TASKS: dict[str, AgentTask] = {}
 _TASK_EVENTS: dict[str, list[dict]] = {}
 _CANCEL_FLAGS: dict[str, asyncio.Event] = {}
+_EVENT_SEQ: dict[str, int] = {}
 
 
 def get_task(task_id: str) -> Optional[AgentTask]:
     return _TASKS.get(task_id)
+
+
+def get_task_events(task_id: str, after_seq: int = 0) -> list[dict]:
+    events = _TASK_EVENTS.get(task_id) or []
+    if after_seq <= 0:
+        return list(events)
+    return [e for e in events if int(e.get("seq") or 0) > after_seq]
 
 
 def list_tasks_for_user(user_id: str, limit: int = 20) -> list[dict]:
@@ -167,18 +176,33 @@ def request_cancel(task_id: str) -> bool:
 
 
 def _emit(task: AgentTask, event_type: str, data: Optional[dict] = None) -> dict:
+    seq = _EVENT_SEQ.get(task.id, 0) + 1
+    _EVENT_SEQ[task.id] = seq
     evt = {
         "type": event_type,
         "task_id": task.id,
         "correlation_id": task.correlation_id,
         "project_id": task.project_id,
+        "seq": seq,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "data": data or {},
     }
     _TASK_EVENTS.setdefault(task.id, []).append(evt)
-    # Bound event history
     if len(_TASK_EVENTS[task.id]) > 500:
         _TASK_EVENTS[task.id] = _TASK_EVENTS[task.id][-500:]
+    # Best-effort durable mirror (async scheduled by caller when possible)
+    try:
+        loop = asyncio.get_running_loop()
+        from brain.agent_task_store import append_event, persist_task
+        loop.create_task(append_event(task.id, evt))
+        # Persist status snapshots on lifecycle events
+        if event_type in (
+            "agent.started", "agent.completed", "agent.cancelled",
+            "agent.error", "agent.file_changed",
+        ):
+            loop.create_task(persist_task(task))
+    except RuntimeError:
+        pass
     return evt
 
 
@@ -310,6 +334,11 @@ class AgentRuntime:
         )
         _TASKS[task.id] = task
         _CANCEL_FLAGS[task.id] = asyncio.Event()
+        try:
+            from brain.agent_task_store import persist_task
+            await persist_task(task)
+        except Exception:
+            logger.debug("initial task persist failed", exc_info=True)
 
         yield _emit(task, "agent.started", {
             "objective": objective,

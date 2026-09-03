@@ -786,6 +786,10 @@ export const api = {
     req(`/api/agent/${encodeURIComponent(taskId)}/changes/reject-all`, { method: "POST" }),
   listAgentChanges: (taskId) =>
     req(`/api/agent/${encodeURIComponent(taskId)}/changes`),
+  listAgentEvents: (taskId, afterSeq = 0) =>
+    req(`/api/agent/${encodeURIComponent(taskId)}/events?after_seq=${afterSeq}`),
+  getAgentTask: (taskId) =>
+    req(`/api/agent/${encodeURIComponent(taskId)}`),
   runAgent: ({ objective, projectId, mode, provider, model, context, onEvent, onError, onDone }) => {
 
     const ctrl = new AbortController();

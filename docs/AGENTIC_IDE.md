@@ -148,3 +148,23 @@ Concurrent modification → patch conflict (no silent overwrite).
 
 LSP server farm, multi-agent swarm, automatic Git push, automatic production
 deploy, speculative vector DB, custom container runtime.
+
+## Durable AgentTask (Recovery)
+
+AgentTask orchestration state is mirrored to SQLite (`agent_tasks` table) via
+`brain/agent_task_store.py`. This is **not** ExecutionJob:
+
+| Concern | System |
+|---------|--------|
+| Script/workflow durable work | `ExecutionJob` |
+| IDE coding-agent session state | `AgentTask` / `AgentTaskRecord` |
+| Audit trail | `Evidence` |
+
+Events carry a monotonic `seq` per task. Clients may reconnect with:
+
+```
+GET /api/agent/{task_id}/events?after_seq=N
+```
+
+Events are user-scoped; cross-tenant access is denied.
+

@@ -438,3 +438,35 @@ class WorkerTrustRecord(Base):
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class AgentTaskRecord(Base):
+    """Durable agent coding-task orchestration state (not ExecutionJob).
+
+    AgentTask is session/orchestration state for the IDE coding agent.
+    ExecutionJob remains the durable work unit for scripts/workflows.
+    Events are kept in a bounded JSON ring for reconnect, not a second audit log.
+    """
+    __tablename__ = "agent_tasks"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    project_id: Mapped[str] = mapped_column(String, index=True, default="default")
+    session_id: Mapped[str] = mapped_column(String, index=True)
+    objective: Mapped[str] = mapped_column(Text, default="")
+    mode: Mapped[str] = mapped_column(String(32), default="agent")
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    current_tool: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    files_changed: Mapped[list] = mapped_column(JSON, default=list)
+    tools_used: Mapped[list] = mapped_column(JSON, default=list)
+    correlation_id: Mapped[str] = mapped_column(String, index=True, default=gen_id)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    # Bounded recent events for SSE reconnect (not Evidence substitute)
+    events: Mapped[list] = mapped_column(JSON, default=list)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
