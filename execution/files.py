@@ -38,12 +38,15 @@ class FileService:
         Canonicalize before authorization: resolve() follows symlinks, then
         we verify the final target still lives under the project root.
         """
-        rel_path = (rel_path or "").replace("\\", "/").lstrip("/")
-        # Reject empty / absolute / null-byte paths early
-        if not rel_path or "\x00" in rel_path or rel_path.startswith("/"):
-            if not rel_path:
-                return self.root
-            raise PathViolation(f"Invalid path: {rel_path!r}")
+        raw = (rel_path or "").replace("\\", "/")
+        # Reject absolute and null-byte paths BEFORE stripping leading slashes
+        if "\x00" in raw:
+            raise PathViolation(f"Invalid path: {raw!r}")
+        if raw.startswith("/") or (len(raw) > 1 and raw[1] == ":"):
+            raise PathViolation(f"Absolute path refused: {raw!r}")
+        rel_path = raw.lstrip("/")
+        if not rel_path:
+            return self.root
         candidate = (self.root / rel_path).resolve()
         try:
             candidate.relative_to(self.root)
@@ -51,22 +54,84 @@ class FileService:
             raise PathViolation(f"Path escapes project root: {rel_path}")
         return candidate
 
-    def tree(self) -> list[dict]:
-        """Flat list of every file/dir under the project root, relative paths.
-        Excludes .git internals — version control state belongs in the git
-        panel (execution/vcs.py), not the file tree."""
-        items = []
-        for p in sorted(self.root.rglob("*")):
-            rel = str(p.relative_to(self.root))
+    def tree(self, max_depth: int | None = None) -> list[dict]:
+        """Hierarchical tree under the project root.
+
+        max_depth=None → full tree (bounded by MAX_TREE_ENTRIES).
+        max_depth=1    → root listing only (lazy expand uses list_dir).
+        Excludes .git internals.
+        """
+        MAX_TREE_ENTRIES = 5000
+        return self._build_tree(
+            self.root, depth=0, max_depth=max_depth, budget=[MAX_TREE_ENTRIES]
+        )
+
+    def list_dir(self, rel_path: str = "") -> list[dict]:
+        """Lazy one-level listing of a directory (IDE expand-on-demand)."""
+        p = self._resolve(rel_path) if rel_path else self.root
+        if not p.exists() or not p.is_dir():
+            raise FileNotFoundError(rel_path or ".")
+        items: list[dict] = []
+        try:
+            entries = sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+        except OSError as e:
+            raise PathViolation(f"Cannot list {rel_path}: {e}") from e
+        for child in entries:
+            rel = str(child.relative_to(self.root))
             if rel == ".git" or rel.startswith(".git/"):
                 continue
+            is_dir = child.is_dir()
             items.append({
                 "path": rel,
-                "type": "dir" if p.is_dir() else "file",
-                "size": p.stat().st_size if p.is_file() else None,
-                "is_binary": p.suffix.lower() in BINARY_EXTENSIONS,
+                "name": child.name,
+                "type": "directory" if is_dir else "file",
+                "size": child.stat().st_size if child.is_file() else None,
+                "is_binary": (not is_dir) and child.suffix.lower() in BINARY_EXTENSIONS,
+                "children": [] if is_dir else None,
+                "lazy": is_dir,
             })
         return items
+
+    def _build_tree(
+        self,
+        dir_path: Path,
+        depth: int,
+        max_depth: int | None,
+        budget: list[int],
+    ) -> list[dict]:
+        if budget[0] <= 0:
+            return []
+        if max_depth is not None and depth >= max_depth:
+            return []
+        nodes: list[dict] = []
+        try:
+            entries = sorted(dir_path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+        except OSError:
+            return []
+        for child in entries:
+            if budget[0] <= 0:
+                break
+            rel = str(child.relative_to(self.root))
+            if rel == ".git" or rel.startswith(".git/"):
+                continue
+            budget[0] -= 1
+            is_dir = child.is_dir()
+            node: dict = {
+                "path": rel,
+                "name": child.name,
+                "type": "directory" if is_dir else "file",
+                "size": child.stat().st_size if child.is_file() else None,
+                "is_binary": (not is_dir) and child.suffix.lower() in BINARY_EXTENSIONS,
+            }
+            if is_dir:
+                if max_depth is None or depth + 1 < max_depth:
+                    node["children"] = self._build_tree(child, depth + 1, max_depth, budget)
+                    node["lazy"] = False
+                else:
+                    node["children"] = []
+                    node["lazy"] = True
+            nodes.append(node)
+        return nodes
 
     def read(self, rel_path: str) -> dict:
         p = self._resolve(rel_path)

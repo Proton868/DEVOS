@@ -49,6 +49,21 @@ function EditorPane({ tabPath, isSplit = false, onClose }) {
     return () => window.removeEventListener("keydown", handler);
   }, [saveFile, setCmdkOpen, tabData]);
 
+  // Problems panel / search: jump to line+column in this pane when path matches
+  useEffect(() => {
+    const onGoto = (e) => {
+      const { path, line, column } = e.detail || {};
+      if (!path || path !== tabPath || !editorRef.current) return;
+      const ln = Math.max(1, Number(line) || 1);
+      const col = Math.max(1, Number(column) || 1);
+      editorRef.current.revealPositionInCenter({ lineNumber: ln, column: col });
+      editorRef.current.setPosition({ lineNumber: ln, column: col });
+      editorRef.current.focus();
+    };
+    window.addEventListener("devos:goto-line", onGoto);
+    return () => window.removeEventListener("devos:goto-line", onGoto);
+  }, [tabPath]);
+
   const setupAutocomplete = useCallback((monaco) => {
     if (compRef.current) { compRef.current.dispose(); compRef.current = null; }
     if (!workspaceSettings?.ai?.autocompleteEnabled) return;

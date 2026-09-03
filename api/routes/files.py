@@ -24,10 +24,36 @@ def _service(user_id: str, project_id: str) -> FileService:
 
 
 @router.get("/{project_id}/tree")
-async def get_tree(project_id: str, request: Request, db=Depends(get_db)):
+async def get_tree(
+    project_id: str,
+    request: Request,
+    db=Depends(get_db),
+    depth: Optional[int] = None,
+):
+    """Hierarchical tree. depth=1 returns root only (lazy); omit for full (bounded)."""
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    return {"files": _service(user.id, project_id).tree()}
+    tree = _service(user.id, project_id).tree(max_depth=depth)
+    # Dual keys for compatibility: frontend prefers `tree`, older clients used `files`
+    return {"tree": tree, "files": tree}
+
+
+@router.get("/{project_id}/list")
+async def list_dir(
+    project_id: str,
+    request: Request,
+    db=Depends(get_db),
+    path: str = "",
+):
+    """Lazy one-level directory listing for expand-on-demand."""
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    try:
+        return {"entries": _service(user.id, project_id).list_dir(path)}
+    except FileNotFoundError:
+        raise HTTPException(404, f"Not found: {path or '.'}")
+    except PathViolation as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get("/{project_id}/read")

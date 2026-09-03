@@ -55,6 +55,16 @@ export default function ProblemsPanel() {
         content,
         language: getLanguageFromPath(problem.path),
       });
+      // Reveal line/column in Monaco after the tab activates
+      const line = Math.max(1, Number(problem.line) || 1);
+      const col = Math.max(1, Number(problem.col) || 1);
+      setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent("devos:goto-line", {
+            detail: { path: problem.path, line, column: col },
+          })
+        );
+      }, 80);
     } catch {}
   };
 

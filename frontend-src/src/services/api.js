@@ -227,15 +227,40 @@ function notImplemented(name, reason) {
 // success, since a UI that assumes instant deletion would be actively
 // misleading here.
 const filesApi = {
-  getTree:    () => req(`/api/files/${getCurrentProject()}/tree`),
-  readFile:   (path) => req(`/api/files/${getCurrentProject()}/read?path=${encodeURIComponent(path)}`),
-  writeFile:  (path, content) => req(`/api/files/${getCurrentProject()}/write`, { method: "POST", body: JSON.stringify({ path, content }) }),
-  createFile: (path, type = "file") => req(`/api/files/${getCurrentProject()}/create`, { method: "POST", body: JSON.stringify({ path, is_dir: type === "dir" }) }),
-  renameFile: (oldPath, newPath) => req(`/api/files/${getCurrentProject()}/rename`, { method: "POST", body: JSON.stringify({ path: oldPath, new_path: newPath }) }),
-  deleteFile: (path) => req(`/api/files/${getCurrentProject()}/delete?path=${encodeURIComponent(path)}`, { method: "DELETE" }),
-  downloadUrl: (path) => {
-    return `${BASE}/api/files/${getCurrentProject()}/download?path=${encodeURIComponent(path)}`;
+  getTree: (opts = {}) => {
+    const q = opts.depth != null ? `?depth=${opts.depth}` : "";
+    return req(`/api/files/${getCurrentProject()}/tree${q}`).then((r) => ({
+      tree: r.tree || r.files || [],
+      files: r.files || r.tree || [],
+    }));
   },
+  listDir: (path = "") =>
+    req(`/api/files/${getCurrentProject()}/list?path=${encodeURIComponent(path || "")}`).then(
+      (r) => r.entries || r || []
+    ),
+  readFile: (path) =>
+    req(`/api/files/${getCurrentProject()}/read?path=${encodeURIComponent(path)}`),
+  writeFile: (path, content) =>
+    req(`/api/files/${getCurrentProject()}/write`, {
+      method: "POST",
+      body: JSON.stringify({ path, content }),
+    }),
+  createFile: (path, type = "file") =>
+    req(`/api/files/${getCurrentProject()}/create`, {
+      method: "POST",
+      body: JSON.stringify({ path, is_dir: type === "dir" || type === "directory" }),
+    }),
+  renameFile: (oldPath, newPath) =>
+    req(`/api/files/${getCurrentProject()}/rename`, {
+      method: "POST",
+      body: JSON.stringify({ path: oldPath, new_path: newPath }),
+    }),
+  deleteFile: (path) =>
+    req(`/api/files/${getCurrentProject()}/delete?path=${encodeURIComponent(path)}`, {
+      method: "DELETE",
+    }),
+  downloadUrl: (path) =>
+    `${BASE}/api/files/${getCurrentProject()}/download?path=${encodeURIComponent(path)}`,
 };
 
 const searchApi = {

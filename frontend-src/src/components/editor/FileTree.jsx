@@ -74,12 +74,22 @@ function ContextMenu({ x, y, items, onClose }) {
   );
 }
 
-function TreeNode({ node, depth = 0, onOpenFile, selectedPath, setSelectedPath, onContext }) {
-  const [expanded, setExpanded] = useState(depth === 0);
+function TreeNode({
+  node,
+  depth = 0,
+  onOpenFile,
+  selectedPath,
+  setSelectedPath,
+  onContext,
+  onNavigate,
+  flatIndex,
+}) {
+  const [expanded, setExpanded] = useState(depth === 0 && !node.lazy);
+  const [loading, setLoading] = useState(false);
+  const [children, setChildren] = useState(node.children || []);
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(node.name);
   const { openFile, setFileTree, setStatus, setActiveView, openTabs, gitStatus } = useStore();
-  // Store uses `modified`; keep backward-compat with any `dirty` flag
   const isDirty = openTabs?.some((t) => t.path === node.path && (t.modified || t.dirty));
   const gitEntry = (gitStatus?.files || gitStatus?.changed || []).find?.(
     (f) => (f.path || f) === node.path
@@ -89,19 +99,44 @@ function TreeNode({ node, depth = 0, onOpenFile, selectedPath, setSelectedPath, 
     : null;
   const isActive = selectedPath === node.path;
   const indent = depth * 14;
+  const isDir = node.type === "directory" || node.type === "dir";
 
   const refreshTree = async () => {
-    const { tree } = await api.getTree();
+    const { tree } = await api.getTree({ depth: 1 });
     setFileTree(tree || []);
+  };
+
+  const expand = async () => {
+    if (!isDir) return;
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    // Lazy load children when marked lazy or children empty
+    if (node.lazy || (Array.isArray(children) && children.length === 0 && !loading)) {
+      setLoading(true);
+      try {
+        const entries = await api.listDir(node.path);
+        setChildren(Array.isArray(entries) ? entries : []);
+      } catch (e) {
+        setStatus("Expand failed: " + e.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+    setExpanded(true);
   };
 
   const handleClick = async () => {
     setSelectedPath(node.path);
-    if (node.type === "directory") {
-      setExpanded((e) => !e);
+    if (isDir) {
+      await expand();
       return;
     }
-    if (onOpenFile) { onOpenFile(node); return; }
+    if (onOpenFile) {
+      onOpenFile(node);
+      return;
+    }
     try {
       const { content } = await api.readFile(node.path);
       openFile({
@@ -199,17 +234,25 @@ function TreeNode({ node, depth = 0, onOpenFile, selectedPath, setSelectedPath, 
         onContextMenu={openCtx}
         onDoubleClick={() => node.type === "file" && handleClick()}
         tabIndex={0}
+        role="treeitem"
+        aria-expanded={isDir ? expanded : undefined}
+        aria-selected={isActive}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleClick(); }
           if (e.key === "F2") { e.preventDefault(); setRenaming(true); setNewName(node.name); }
           if (e.key === "Delete") { e.preventDefault(); handleDelete(); }
-          if (e.key === "ArrowRight" && node.type === "directory") setExpanded(true);
-          if (e.key === "ArrowLeft" && node.type === "directory") setExpanded(false);
+          if (e.key === "ArrowRight" && isDir) { e.preventDefault(); if (!expanded) expand(); }
+          if (e.key === "ArrowLeft" && isDir) { e.preventDefault(); setExpanded(false); }
+          if (e.key === "ArrowDown") { e.preventDefault(); onNavigate?.(flatIndex, 1); }
+          if (e.key === "ArrowUp") { e.preventDefault(); onNavigate?.(flatIndex, -1); }
+          if (e.key === "Home") { e.preventDefault(); onNavigate?.(0, 0, true); }
+          if (e.key === "End") { e.preventDefault(); onNavigate?.(-1, 0, true); }
         }}
         title={node.path}
       >
-        {node.type === "directory" ? (
-          expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />
+        {isDir ? (
+          loading ? <span style={{ width: 12, fontSize: 9 }}>…</span>
+            : expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />
         ) : (
           <span style={{ width: 12 }} />
         )}
@@ -250,7 +293,7 @@ function TreeNode({ node, depth = 0, onOpenFile, selectedPath, setSelectedPath, 
           </span>
         )}
       </div>
-      {node.type === "directory" && expanded && node.children?.map((child) => (
+      {isDir && expanded && (children || []).map((child, i) => (
         <TreeNode
           key={child.path}
           node={child}
@@ -259,6 +302,8 @@ function TreeNode({ node, depth = 0, onOpenFile, selectedPath, setSelectedPath, 
           selectedPath={selectedPath}
           setSelectedPath={setSelectedPath}
           onContext={onContext}
+          onNavigate={onNavigate}
+          flatIndex={(flatIndex ?? 0) + 1 + i}
         />
       ))}
     </div>
@@ -287,13 +332,49 @@ export function ProjectExplorer({ title = "EXPLORER", onOpenFile }) {
   const refresh = useCallback(async () => {
     setStatus("Refreshing…");
     try {
-      const { tree } = await api.getTree();
+      // Lazy root listing — expand loads children on demand
+      const { tree } = await api.getTree({ depth: 1 });
       setFileTree(tree || []);
       setStatus("Ready");
     } catch (e) {
       setStatus("Refresh failed: " + e.message);
     }
   }, [setFileTree, setStatus]);
+
+  // Flatten visible paths for ArrowUp/Down navigation
+  const flatPaths = useCallback(() => {
+    const out = [];
+    const walk = (nodes) => {
+      for (const n of nodes || []) {
+        out.push(n.path);
+        // only walk already-expanded children held in DOM via recursive TreeNode state
+      }
+    };
+    walk(visibleTree);
+    return out;
+  }, [visibleTree]);
+
+  const onNavigate = useCallback((fromIndex, delta, absolute) => {
+    const paths = [];
+    // Collect from DOM treeitems for accurate expanded state
+    document.querySelectorAll('.file-tree-body [role="treeitem"]').forEach((el) => {
+      const title = el.getAttribute("title");
+      if (title) paths.push(title);
+    });
+    if (!paths.length) return;
+    let idx;
+    if (absolute) {
+      idx = delta === 0 && fromIndex === 0 ? 0 : paths.length - 1;
+    } else {
+      idx = Math.max(0, Math.min(paths.length - 1, (fromIndex || 0) + delta));
+    }
+    const path = paths[idx];
+    if (path) {
+      setSelectedPath(path);
+      const el = document.querySelector(`.file-tree-body [role="treeitem"][title="${CSS.escape(path)}"]`);
+      el?.focus();
+    }
+  }, []);
 
   const handleOpen = async (node) => {
     try {
@@ -372,7 +453,7 @@ export function ProjectExplorer({ title = "EXPLORER", onOpenFile }) {
             <button className="btn-primary" onClick={newRootFile} style={{ marginTop: 8 }}>Create a file</button>
           </div>
         ) : (
-          visibleTree.map((node) => (
+          visibleTree.map((node, i) => (
             <TreeNode
               key={node.path}
               node={node}
@@ -381,6 +462,8 @@ export function ProjectExplorer({ title = "EXPLORER", onOpenFile }) {
               selectedPath={selectedPath}
               setSelectedPath={setSelectedPath}
               onContext={onContext}
+              onNavigate={onNavigate}
+              flatIndex={i}
             />
           ))
         )}

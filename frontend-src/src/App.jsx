@@ -177,7 +177,7 @@ export default function App() {
       }
     }).catch(() => useStore.getState().setStatus("⚠️ Backend offline — start the server"));
 
-    api.getTree().then(({ tree }) => setFileTree(tree || [])).catch(() => {});
+    api.getTree({ depth: 1 }).then(({ tree }) => setFileTree(tree || [])).catch(() => {});
     api.getIndexStatus().then(setIndexStats).catch(() => {});
     api.getSettings().then((s) => setWorkspaceSettings(s)).catch(() => {});
     api.gitStatus().then(setGitStatus).catch(() => {});
@@ -190,7 +190,7 @@ export default function App() {
       ? process.env.REACT_APP_DEVOS_URL.replace(/^http/, "ws")
       : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
     const ws = new WebSocket(`${wsBase}?type=filewatcher`);
-    ws.onmessage = () => api.getTree().then(({ tree }) => setFileTree(tree || [])).catch(() => {});
+    ws.onmessage = () => api.getTree({ depth: 1 }).then(({ tree }) => setFileTree(tree || [])).catch(() => {});
     ws.onerror = () => {};
     return () => ws.close();
   }, [isAuthenticated, setFileTree]);
