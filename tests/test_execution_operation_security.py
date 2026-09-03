@@ -185,3 +185,62 @@ def test_validate_operation_job_binding_mismatch():
     ok, reason = validate_operation_job_binding(op, job)
     assert ok is False
     assert "job" in reason
+
+
+def test_canonical_column_required_payload_cannot_rescue():
+    from governance.execution_operations import validate_operation_job_binding
+    op = {"id": "op1", "execution_job_id": "job1", "tenant_id": "t", "owner_id": "u"}
+    job = {
+        "id": "job1",
+        "operation_id": None,
+        "payload": {"operation_id": "op1"},
+        "tenant_id": "t",
+        "owner_id": "u",
+    }
+    ok, reason = validate_operation_job_binding(op, job)
+    assert ok is False
+    assert "job_operation_id" in reason
+
+
+def test_payload_mismatch_fails():
+    from governance.execution_operations import validate_operation_job_binding
+    op = {"id": "op1", "execution_job_id": "job1", "tenant_id": "t", "owner_id": "u"}
+    job = {
+        "id": "job1",
+        "operation_id": "op1",
+        "payload": {"operation_id": "op2"},
+        "tenant_id": "t",
+        "owner_id": "u",
+    }
+    ok, reason = validate_operation_job_binding(op, job)
+    assert ok is False
+    assert "payload" in reason
+
+
+def test_canonical_column_correct():
+    from governance.execution_operations import validate_operation_job_binding
+    op = {"id": "op1", "execution_job_id": "job1", "tenant_id": "t", "owner_id": "u"}
+    job = {
+        "id": "job1",
+        "operation_id": "op1",
+        "payload": {"operation_id": "op1"},
+        "tenant_id": "t",
+        "owner_id": "u",
+    }
+    ok, reason = validate_operation_job_binding(op, job)
+    assert ok is True
+
+
+def test_correlation_cannot_rescue_missing_column():
+    from governance.execution_operations import validate_operation_job_binding
+    op = {"id": "op1", "execution_job_id": "job1", "tenant_id": "t", "owner_id": "u"}
+    job = {
+        "id": "job1",
+        "operation_id": None,
+        "correlation": {"operation_id": "op1"},
+        "payload": {},
+        "tenant_id": "t",
+        "owner_id": "u",
+    }
+    ok, reason = validate_operation_job_binding(op, job)
+    assert ok is False

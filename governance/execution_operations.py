@@ -417,19 +417,33 @@ def validate_operation_evidence(op: dict, evidence: dict) -> tuple[bool, str]:
 
 
 def validate_operation_job_binding(op: dict, job: dict) -> tuple[bool, str]:
-    """Bidirectional operation ↔ ExecutionJob binding."""
+    """Bidirectional operation ↔ ExecutionJob binding.
+
+    Canonical job-side authority is ONLY job.operation_id (first-class column).
+    payload/correlation operation_id are mirrors: if present and wrong → fail.
+    They never rescue a missing or wrong canonical column.
+    """
     if not op or not job:
         return False, "missing"
     jid = str(job.get("id") or "")
     oid = str(op.get("id") or "")
     if not jid or not oid:
         return False, "missing_id"
-    payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
-    job_op = payload.get("operation_id") or job.get("operation_id")
+    # Sole job-side authority
+    job_op = job.get("operation_id")
     if job_op is None or str(job_op) != oid:
         return False, "job_operation_id_mismatch"
     if op.get("execution_job_id") is None or str(op["execution_job_id"]) != jid:
         return False, "operation_job_id_mismatch"
+    # Mirror consistency (optional fields — mismatch fails closed)
+    payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+    if "operation_id" in payload and payload.get("operation_id") is not None:
+        if str(payload["operation_id"]) != oid:
+            return False, "payload_operation_id_mismatch"
+    corr = job.get("correlation") if isinstance(job.get("correlation"), dict) else {}
+    if "operation_id" in corr and corr.get("operation_id") is not None:
+        if str(corr["operation_id"]) != oid:
+            return False, "correlation_operation_id_mismatch"
     if op.get("tenant_id") is not None:
         jt = job.get("tenant_id")
         if jt is None or str(jt) != str(op["tenant_id"]):
