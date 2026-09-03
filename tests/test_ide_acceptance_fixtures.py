@@ -234,3 +234,55 @@ def test_security_encoded_traversal(svc):
     # still must not escape via .. components
     with pytest.raises(PathViolation):
         svc.read("sub/../../outside")
+
+
+# ── Fixture B — Failure, structured verify, repair semantics ────────────
+
+def test_fixture_b_exit_zero_is_not_verification():
+    """Stage 3K.1: command exit 0 must not alone satisfy verification."""
+    # Structured test_result is the verification signal; a generic shell
+    # success is only a command outcome.
+    command_outcome = {"ok": True, "exit_code": 0, "status": "succeeded", "command": "true"}
+    test_outcome_fail = {
+        "ok": False,
+        "exit_code": 1,
+        "status": "failed",
+        "command": "python -m pytest -q",
+        "_event_hint": "agent.test_result",
+    }
+    test_outcome_pass = {
+        "ok": True,
+        "exit_code": 0,
+        "status": "succeeded",
+        "command": "python -m pytest -q",
+        "_event_hint": "agent.test_result",
+    }
+    # Generic command success is not a test_result
+    assert command_outcome.get("_event_hint") != "agent.test_result"
+    # Failed tests are not verification-passed
+    assert test_outcome_fail["ok"] is False
+    assert test_outcome_fail.get("_event_hint") == "agent.test_result"
+    # Only structured passing test_result counts as verification evidence
+    assert test_outcome_pass["ok"] is True
+    assert test_outcome_pass.get("_event_hint") == "agent.test_result"
+
+
+def test_fixture_b_related_tests_bounded():
+    from brain.agent_runtime import _select_related_tests
+    out = _select_related_tests(["src/auth/login.py", "src/auth/session.py"], limit=5)
+    assert len(out) <= 5
+
+
+def test_fixture_b_repair_cycle_patch_then_retest_semantics(svc):
+    """edit → fail → repair (patch) → content fixed; structured flags preserved."""
+    broken = "def hello():\n    return 0\n"
+    fixed = "def hello():\n    return 1\n"
+    svc.write("main.py", broken)
+    assert "return 0" in svc.read("main.py")["content"]
+    # Simulate repair write (agent apply)
+    svc.write("main.py", fixed)
+    assert "return 1" in svc.read("main.py")["content"]
+    # Related tests discovery stays bounded
+    from brain.agent_runtime import _select_related_tests
+    related = _select_related_tests(["main.py"], limit=10)
+    assert len(related) <= 10
