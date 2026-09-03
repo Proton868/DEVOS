@@ -212,9 +212,9 @@ Each line item is tagged:
 | ✅ | Terminal | xterm.js with WebSocket backend | — |
 | ✅ | Settings modal | Provider/model selection, workspace settings | — |
 | ✅ | Mobile responsive | MobileLayout with tab-based navigation | — |
-| ✅ | Workflow editor | [`frontend-src/src/components/workflow/WorkflowEditor.jsx`](frontend-src/src/components/workflow/WorkflowEditor.jsx) — Visual + YAML workflow authoring, CRUD, import/export, capability selector | — |
+| ✅ | Workflow canvas | `OrchestrationCanvas` — real node-based graph over `/api/scripts` + chains, live run state, webhook triggers, contextual inspector | — |
 | ✅ | Research panel | [`frontend-src/src/components/research/ResearchPanel.jsx`](frontend-src/src/components/research/ResearchPanel.jsx) — Deep Research UI with quick/standard/deep modes, background polling, source/citation display | — |
-| ✅ | FlowPanel | Fully functional script editor with cron scheduling, secrets, AI debug, run history | — |
+| ✅ | Spatial IDE | `DevOSIde` — ephemeral Monaco editor focus surface (replaces old FlowPanel/CodeEditor permanent panels) | — |
 | ✅ | SearchPanel | File search with semantic + text modes, results display, file opening | — |
 | ✅ | File content search | Backend at [`api/routes/search.py`](api/routes/search.py) — grep-based text search across project files | — |
 

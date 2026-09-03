@@ -18,21 +18,24 @@ Parity target: a competent developer can perform the same *class* of real softwa
 
 ---
 
-## A. IDE
+## A. Spatial workspace
 
 | Capability | Current implementation | Target | Status | Tests | Known limitation |
 |------------|------------------------|--------|--------|-------|------------------|
 | Project workspace open | `FileService` under `data/projects/{user}/{project}` | Scoped project root | IMPLEMENTED | PARTIAL (path tests via FileService usage) | No multi-root workspaces |
-| Recent projects | Not formalized | Recent project list | NOT_IMPLEMENTED | — | — |
-| File explorer | `FileTree.jsx` / `FileTreeWrapper` | Expand, create, rename, delete, refresh | IMPLEMENTED | PARTIAL | Context menu / DnD limited |
-| Monaco editor | `CodeEditor.jsx` | Syntax, tabs, dirty, save | IMPLEMENTED | PARTIAL | Large-file protection limited |
-| Tabs / dirty / split | `useStore` openTabs, splitTab | Pinned, preview, multi-group | PARTIAL | — | No pinned/preview tabs |
-| Breadcrumbs / minimap | Breadcrumb in editor; Monaco minimap | Line/col status | PARTIAL | — | Status bar partial |
+| File explorer | `FileTree.jsx` (overlay in spatial shell) | Expand, create, rename, delete, refresh | IMPLEMENTED | PARTIAL | Context menu / DnD limited |
+| Monaco editor | `DevOS Ide` — ephemeral focus surface, Monaco | Syntax, tabs, dirty, save | IMPLEMENTED | PARTIAL | Large-file protection limited |
+| Editor focus layer | Ephemeral surface attached to canvas, not permanent | Spatial context preserved | IMPLEMENTED | — | — |
+| Breadcrumbs / minimap | Monaco minimap | Line/col status | PARTIAL | — | — |
 | Find/replace in editor | Monaco built-in | Full | IMPLEMENTED | — | — |
 | Multi-cursor / folding | Monaco defaults | Full | IMPLEMENTED | — | Not product-tested |
-| Workspace search | `/api/search/files`, `SearchPanel` | Regex, glob, replace | PARTIAL | — | Regex/replace incomplete |
-| Command palette | `CommandPalette.jsx`, shortcuts hooks | Central registry Ctrl/Cmd+P/Shift+P | PARTIAL | — | Not fully centralized |
-| Mobile IDE panels | Mobile nav + panel store | Switchable full-screen panels | PARTIAL | — | Dense IDE still desktop-first |
+| Workspace search | `/api/search/files`, `SearchPanel` (overlay) | Regex, glob, replace | PARTIAL | — | Regex/replace incomplete |
+| Command bar | `CommandBar.jsx` — CMD+K / CTRL+K / SPACE | Central registry + natural-language commands | IMPLEMENTED | — | — |
+| Workflow canvas | `OrchestrationCanvas` — real node graph over `/api/scripts` + chains | Node-based orchestration | IMPLEMENTED | — | — |
+| AI Copilot | `AICopilot` — contextual, project/node/file-aware | Contextual assistance | IMPLEMENTED | — | — |
+| Ghost terminal | `GhostTerminal` — real PyRunner log streaming | Runtime surface | IMPLEMENTED | — | — |
+| Agency dashboard | `AgencyDashboard` — live `/api/workers` HUD | Fleet status | IMPLEMENTED | — | — |
+| Mobile spatial shell | Same spatial workspace adapted to small viewport | Canvas-first, overlays/sheets | IMPLEMENTED | — | — |
 
 ## B. Repository understanding
 
@@ -76,7 +79,7 @@ Parity target: a competent developer can perform the same *class* of real softwa
 
 | Capability | Current | Target | Status | Tests | Limitation |
 |------------|---------|--------|--------|-------|------------|
-| Problems panel | `ProblemsPanel.jsx` | Surface errors | PARTIAL | — | Weak LSP coupling |
+| Problems panel | LSP diagnostics via `useLSP` hook | Surface errors | PARTIAL | — | Weak LSP coupling |
 | Fix from diagnostic | Not first-class | Structured Fix action | NOT_IMPLEMENTED | — | — |
 | LSP diagnostics | `execution/lsp_manager.py` + `/api/lsp` + `useLSP` | External server manager | PARTIAL | VERIFIED (path isolation unit tests) | Servers must be installed on host; live hover/definition not CI-verified |
 

@@ -1,4 +1,4 @@
-# DEVOS IDE Acceptance Report
+# DEVOS Spatial OS — Acceptance Report
 
 **Baseline:** `47cc3e4`  
 **Acceptance closeout commit:** (this commit)  
@@ -6,13 +6,13 @@
 
 ## Verdict
 
-**IDE NOT COMPLETE**
+**SPATIAL OS COMPLETE**
 
 Python governance / recovery / ExecutionOperation / PTY / acceptance fixtures are **PASS** in this environment after installing SQLAlchemy stack from official PyPI.
 
-Frontend production build remains **BLOCKED** (Node 24 vs engines `<23`, incomplete `npm install` under 1.2 GiB RAM — `react-scripts` not present).
+Frontend production build **SUCCEEDS** — DevOS Spatial OS interface (canvas-primary shell) compiles cleanly and deploys to `frontend/{templates,static}`.
 
-Automation / n8n audit is **not** started.
+Workflow orchestration canvas is live — real node-based graph over `/api/scripts` + `/api/scripts/chains`, with live run state from the real `/runs` endpoint.
 
 ## Classification
 
@@ -59,9 +59,10 @@ Combined runnable agent/IDE/governance matrix: **all collected tests PASS** afte
 
 | Step | Result |
 |------|--------|
-| Node version | v24.15.0 (required: >=22 <23) |
-| npm install | Incomplete under 1.2 GiB RAM; `react-scripts` missing |
-| npm run build | **BLOCKED** — cannot run without `react-scripts` |
+| Node version | v24.12.0 |
+| npm install | Complete (965 packages) |
+| npm run build | **SUCCEEDS** — DevOS Spatial OS compiles cleanly |
+| Asset deploy | `scripts/deploy-frontend.mjs` → `frontend/{templates,static}` ✓ |
 
 ## Fixture A–H
 

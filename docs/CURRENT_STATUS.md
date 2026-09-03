@@ -41,9 +41,15 @@ Aligned with **Governance v1 + Reliability v1** freeze (`main` tip including cha
 | Area | Status |
 |------|--------|
 | Prebuilt SPA in `frontend/` | ✓ |
-| Automation Hub (Graph + Matrix) | ✓ |
-| IDE dock, agents, files, terminal | ✓ |
-| Onboarding wizard | ✓ |
+| Spatial OS workspace (canvas-primary shell) | ✓ |
+| Workflow orchestration canvas (real graph over `/api/scripts` + chains) | ✓ |
+| DevOS IDE — ephemeral Monaco editor | ✓ |
+| AI Copilot (contextual, project/node/file-aware) | ✓ |
+| Ghost Terminal (PyRunner runtime, real log streaming) | ✓ |
+| Agency Dashboard (live agent-fleet HUD) | ✓ |
+| Command bar (CMD+K / CTRL+K / SPACE) | ✓ |
+| Files / Git / Search / Memory / MCP / Research / Composer / Settings overlays | ✓ |
+| Supabase + local login | ✓ |
 
 ## Honest limits
 

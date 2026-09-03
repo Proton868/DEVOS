@@ -70,9 +70,10 @@ Identity → UCI/UCIP capability → PathClass → Isolation
 |------|------|
 | Brain + Loop | Plan/execute goals under UCIP |
 | Workers | Specialized personas + earned autonomy |
-| Scripts / Flow | Sandboxed or human-terminal runs |
+| Workflow canvas | Node-based orchestration (scripts, webhooks, chains) |
 | Memory / Evidence | Durable audit and learning |
-| Terminal / Files / Git | IDE-style tools in the UI |
+| Spatial workspace | DevOS IDE, Copilot, Ghost Terminal, Agency Dashboard, command bar |
+| Files / Git / Search | Contextual overlays in the spatial shell |
 
 ---
 

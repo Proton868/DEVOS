@@ -47,20 +47,17 @@ the point they'd matter.
   the real API and watched it genuinely auto-execute three times over 7
   seconds with zero manual trigger, then confirmed it also survives and
   reloads correctly across a real server restart.
-- **`FlowPanel.jsx` (the actual automation UI) was completely
-  disconnected from reality** — its own separate fetch client pointed at
-  `localhost:3001` (the Node backend retired in Session 1), a `/api/flow`
-  path prefix that never existed on the real backend, and field names
-  (`packages`, `schedule`, `scheduleType`, `s.status`) that don't match the
-  real `Script` model at all. Also expected a live SSE-streaming run view
-  the backend has never supported (`/run` is fire-and-forget; results only
-  show up via polling `/runs`). Fully rewritten against the real API and
-  real field names, with a genuine polling-based run view instead of a
-  fake stream. **Verified end-to-end with a real compiled React component,
-  rendered in jsdom, driving the actual live backend**: logged in for
-  real, created a script through the real form, saved it via a real POST,
-  watched it appear, clicked Run, watched it poll the real `/runs`
-  endpoint, and saw the actual real stdout appear in the UI.
+- **The automation UI was completely disconnected from reality** — its own
+  separate fetch client pointed at `localhost:3001` (the Node backend retired
+  in Session 1), a `/api/flow` path prefix that never existed on the real
+  backend, and field names (`packages`, `schedule`, `scheduleType`,
+  `s.status`) that don't match the real `Script` model at all. Also expected
+  a live SSE-streaming run view the backend has never supported (`/run` is
+  fire-and-forget; results only show up via polling `/runs`). **Replaced with
+  the spatial workflow orchestration canvas** — a real node-based graph over
+  `/api/scripts` + `/api/scripts/chains`, with live run state derived from the
+  real `/runs` endpoint, webhook trigger nodes, and a contextual inspector.
+  Node state is never fabricated.
 - Found and fixed a smaller bug in the same pass: `api.js`'s `flowStats()`
   filtered by a field (`s.enabled`) the real backend doesn't have; the
   real field is `is_active`.
@@ -92,7 +89,7 @@ websites easily").
 1. Add `api.js` methods: `listStacks()`, `buildProject(spec)`,
    `getBuildStatus`/result retrieval, matching `api/routes/extras.py`'s
    real routes exactly (audit those routes' actual request/response shape
-   first — don't assume, the FlowPanel lesson from this session applies
+   first — don't assume, the automation-UI lesson from this session applies
    here too).
 2. Build a real "New Project" UI: pick a stack (fastapi/nextjs/react/vite/
    flutter/html), describe it, list desired features, trigger a real
