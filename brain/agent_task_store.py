@@ -21,7 +21,7 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def persist_task(task) -> None:
+async def persist_task(task) -> bool:
     """Upsert AgentTask into SQLite. Best-effort; never raises into tool loop."""
     try:
         from core.database import AsyncSessionLocal, AgentTaskRecord
@@ -59,28 +59,40 @@ async def persist_task(task) -> None:
                 if task.completed_at:
                     row.completed_at = _parse_iso(task.completed_at)
             await db.commit()
+        return True
     except Exception:
         logger.debug("persist_task failed", exc_info=True)
+        return False
 
 
-async def append_event(task_id: str, event: dict) -> None:
-    """Append event to durable ring buffer (bounded)."""
+async def append_event(task_id: str, event: dict) -> bool:
+    """Append event to durable ring buffer (bounded). Returns True if durable.
+
+    Dedupes by seq: same seq for a task is not stored twice.
+    """
     try:
         from core.database import AsyncSessionLocal, AgentTaskRecord
 
         async with AsyncSessionLocal() as db:
             row = await db.get(AgentTaskRecord, task_id)
             if row is None:
-                return
+                return False
             events = list(row.events or [])
+            seq = event.get("seq")
+            if seq is not None:
+                for e in events:
+                    if e.get("seq") == seq:
+                        return True  # already durable
             events.append(event)
             if len(events) > MAX_EVENTS_PER_TASK:
                 events = events[-MAX_EVENTS_PER_TASK:]
             row.events = events
             row.updated_at = _now()
             await db.commit()
+            return True
     except Exception:
         logger.debug("append_event failed", exc_info=True)
+        return False
 
 
 async def load_task(task_id: str) -> Optional[dict]:
@@ -296,3 +308,46 @@ async def load_task_identity(task_id: str) -> Optional[dict]:
     except Exception:
         logger.debug("load_task_identity failed", exc_info=True)
         return None
+
+
+async def mark_task_cancelled(task_id: str, user_id: str) -> dict:
+    """Durable cancel for tasks not in memory. Does not execute tools.
+
+    Returns status dict. Ownership enforced: user_id must match.
+    Terminal states are left unchanged.
+    """
+    try:
+        from core.database import AsyncSessionLocal, AgentTaskRecord
+        async with AsyncSessionLocal() as db:
+            row = await db.get(AgentTaskRecord, task_id)
+            if row is None or row.user_id != user_id:
+                return {"ok": False, "reason": "not_found"}
+            status = (row.status or "").lower()
+            terminal = {"succeeded", "failed", "cancelled", "blocked", "unknown"}
+            if status in terminal:
+                return {"ok": True, "task_id": task_id, "status": row.status, "already_terminal": True}
+            row.status = "cancelled"
+            row.updated_at = _now()
+            # Append cancel event if possible
+            events = list(row.events or [])
+            last_seq = 0
+            for e in events:
+                try:
+                    last_seq = max(last_seq, int(e.get("seq") or 0))
+                except Exception:
+                    pass
+            events.append({
+                "type": "agent.cancelled",
+                "task_id": task_id,
+                "seq": last_seq + 1,
+                "timestamp": _now().isoformat(),
+                "data": {"source": "durable_cancel"},
+            })
+            if len(events) > MAX_EVENTS_PER_TASK:
+                events = events[-MAX_EVENTS_PER_TASK:]
+            row.events = events
+            await db.commit()
+            return {"ok": True, "task_id": task_id, "status": "cancelled", "already_terminal": False}
+    except Exception:
+        logger.exception("mark_task_cancelled failed")
+        return {"ok": False, "reason": "error"}

@@ -122,7 +122,7 @@ export default function CodingAgentPanel() {
   const reconnectTask = useCallback(async (id) => {
     if (!id) return;
     try {
-      const res = await api.getAgentTaskEvents?.(id, lastSeqRef.current) || await api.getAgentTaskEvents?.(id, lastSeqRef.current);
+      const res = await api.getAgentTaskEvents(id, lastSeqRef.current);
       const missed = res?.events || [];
       if (missed.length) {
         setEvents((prev) => {

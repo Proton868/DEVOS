@@ -206,6 +206,34 @@ def request_cancel(task_id: str) -> bool:
     return True
 
 
+async def _emit_durable(task: AgentTask, event_type: str, data: Optional[dict] = None) -> dict:
+    """Emit in-memory event and await durable acknowledgement.
+
+    Browser still receives the event immediately via the returned dict;
+    durable=True only when append_event succeeded.
+    """
+    evt = _emit(task, event_type, data)
+    try:
+        from brain.agent_task_store import append_event, persist_task
+        ok = await append_event(task.id, evt)
+        evt["durable"] = bool(ok)
+        if event_type in (
+            "agent.started", "agent.completed", "agent.cancelled",
+            "agent.error", "agent.agent_blocked", "agent.stream_end",
+        ):
+            pok = await persist_task(task)
+            if not pok:
+                evt["status_durable"] = False
+            else:
+                evt["status_durable"] = True
+        if not ok:
+            logger.warning("event not durable task=%s type=%s seq=%s", task.id, event_type, evt.get("seq"))
+    except Exception:
+        evt["durable"] = False
+        logger.exception("durable emit failed")
+    return evt
+
+
 def _emit(task: AgentTask, event_type: str, data: Optional[dict] = None) -> dict:
     seq = _EVENT_SEQ.get(task.id, 0) + 1
     _EVENT_SEQ[task.id] = seq
@@ -217,21 +245,30 @@ def _emit(task: AgentTask, event_type: str, data: Optional[dict] = None) -> dict
         "seq": seq,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "data": data or {},
+        "durable": None,  # None = not yet acknowledged; True/False set by _emit_durable
     }
     _TASK_EVENTS.setdefault(task.id, []).append(evt)
     if len(_TASK_EVENTS[task.id]) > 500:
         _TASK_EVENTS[task.id] = _TASK_EVENTS[task.id][-500:]
-    # Best-effort durable mirror (async scheduled by caller when possible)
+    # Schedule best-effort mirror for sync call sites; prefer await _emit_durable in async paths
     try:
         loop = asyncio.get_running_loop()
         from brain.agent_task_store import append_event, persist_task
-        loop.create_task(append_event(task.id, evt))
-        # Persist status snapshots on lifecycle events
-        if event_type in (
-            "agent.started", "agent.completed", "agent.cancelled",
-            "agent.error", "agent.file_changed",
-        ):
-            loop.create_task(persist_task(task))
+
+        async def _mirror():
+            try:
+                ok = await append_event(task.id, evt)
+                evt["durable"] = bool(ok)
+                if event_type in (
+                    "agent.started", "agent.completed", "agent.cancelled",
+                    "agent.error", "agent.agent_blocked",
+                ):
+                    await persist_task(task)
+            except Exception:
+                evt["durable"] = False
+                logger.debug("event mirror failed", exc_info=True)
+
+        loop.create_task(_mirror())
     except RuntimeError:
         pass
     return evt

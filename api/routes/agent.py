@@ -197,10 +197,28 @@ async def cancel_task(task_id: str, request: Request, db=Depends(get_db)):
     await ensure_personal_tenant(db, user)
     from brain.agent_runtime import get_task, request_cancel
     task = get_task(task_id)
-    if not task or task.user_id != user.id:
+    if task:
+        if task.user_id != user.id:
+            raise HTTPException(404, "task not found")
+        ok = request_cancel(task_id)
+        # Mirror durable cancel for live tasks
+        try:
+            from brain.agent_task_store import mark_task_cancelled
+            await mark_task_cancelled(task_id, user.id)
+        except Exception:
+            pass
+        return {"ok": ok, "task_id": task_id, "status": "cancel_requested"}
+    # Durable-only task: cancel without executing
+    from brain.agent_task_store import mark_task_cancelled, load_task
+    result = await mark_task_cancelled(task_id, user.id)
+    if not result.get("ok"):
         raise HTTPException(404, "task not found")
-    ok = request_cancel(task_id)
-    return {"ok": ok, "task_id": task_id, "status": "cancel_requested"}
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "status": result.get("status", "cancelled"),
+        "already_terminal": result.get("already_terminal", False),
+    }
 
 
 @router.post("/patch/preview")
