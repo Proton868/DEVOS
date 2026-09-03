@@ -51,14 +51,14 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "get_job", "get_job_logs", "get_evidence",
         "list_workflows", "inspect_workflow",
         "get_project_metadata", "get_test_files", "get_build_system",
-        "get_package_dependencies", "find_symbol",
+        "get_package_dependencies", "find_symbol", "select_related_tests",
     },
     AgentMode.EDIT: {
         "list_files", "read_file", "search_files", "get_file_metadata",
         "create_file", "apply_patch", "replace_text", "rename_file", "delete_file",
         "git_status", "git_diff", "git_log", "git_show", "git_branch",
         "get_project_metadata", "get_test_files", "get_build_system",
-        "get_package_dependencies", "find_symbol",
+        "get_package_dependencies", "find_symbol", "select_related_tests",
     },
     AgentMode.AGENT: {
         "list_files", "read_file", "search_files", "get_file_metadata",
@@ -69,14 +69,14 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "get_job", "get_job_logs", "get_evidence",
         "list_workflows", "inspect_workflow", "execute_workflow",
         "get_project_metadata", "get_test_files", "get_build_system",
-        "get_package_dependencies", "find_symbol",
+        "get_package_dependencies", "find_symbol", "select_related_tests",
     },
     AgentMode.REVIEW: {
         "list_files", "read_file", "search_files", "get_file_metadata",
         "git_status", "git_diff", "git_log", "git_show", "git_branch",
         "get_evidence",
         "get_project_metadata", "get_test_files", "get_build_system",
-        "get_package_dependencies", "find_symbol",
+        "get_package_dependencies", "find_symbol", "select_related_tests",
     },
 }
 
@@ -708,3 +708,19 @@ def make_line_diff(old: str, new: str) -> list[dict]:
         else:
             out.append({"type": "ctx", "text": line[1:] if line.startswith(" ") else line})
     return out
+
+
+register_agent_tool(AgentTool(
+    name="select_related_tests",
+    description="Heuristic test selection for changed files (bounded). Returns candidate test paths.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "changed_files": {"type": "array", "items": {"type": "string"}},
+            "limit": {"type": "integer", "default": 20},
+        },
+        "required": ["changed_files"],
+    },
+    capability="devos.fs.read",
+    side_effect=SideEffect.NONE,
+))

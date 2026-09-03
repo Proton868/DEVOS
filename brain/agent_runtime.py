@@ -47,6 +47,30 @@ for _name, _cap in AGENT_ACTION_TO_CAP.items():
         ACTION_TO_CAP[_name] = _cap
 
 
+
+def _select_related_tests(changed_files: list, limit: int = 20) -> list[str]:
+    """Deterministic bounded test selection from changed paths."""
+    out = []
+    seen = set()
+    for path in changed_files or []:
+        p = str(path).replace("\\", "/")
+        base = p.rsplit("/", 1)[-1]
+        stem = base[:-3] if base.endswith(".py") else base
+        candidates = [
+            f"tests/test_{stem}.py",
+            f"test_{stem}.py",
+            f"tests/{stem}_test.py",
+            p.replace("/src/", "/tests/").replace(".py", "_test.py"),
+        ]
+        for c in candidates:
+            if c not in seen:
+                seen.add(c)
+                out.append(c)
+            if len(out) >= limit:
+                return out
+    return out[:limit]
+
+
 class AgentTaskStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -980,6 +1004,10 @@ class AgentRuntime:
                 "get_package_dependencies", "find_symbol",
             ):
                 return await self._repo_intel(name, args)
+            if name == "select_related_tests":
+                files = args.get("changed_files") or []
+                limit = int(args.get("limit") or 20)
+                return {"ok": True, "tests": _select_related_tests(files, limit)}
             return {"ok": False, "error": f"handler not implemented: {name}"}
         except Exception as e:
             logger.exception("tool %s failed", name)

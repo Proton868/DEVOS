@@ -112,10 +112,50 @@ export default function CodingAgentPanel() {
   const [filesChanged, setFilesChanged] = useState([]);
   const abortRef = useRef(null);
   const endRef = useRef(null);
+  const lastSeqRef = useRef(0);
+  const taskIdRef = useRef(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [events]);
+
+  const reconnectTask = useCallback(async (id) => {
+    if (!id) return;
+    try {
+      const res = await api.getAgentTaskEvents?.(id, lastSeqRef.current) || await api.getAgentTaskEvents?.(id, lastSeqRef.current);
+      const missed = res?.events || [];
+      if (missed.length) {
+        setEvents((prev) => {
+          const seen = new Set(prev.map((e) => e.seq).filter((s) => typeof s === "number"));
+          const merged = [...prev];
+          for (const e of missed) {
+            if (typeof e.seq === "number") {
+              if (seen.has(e.seq)) continue;
+              seen.add(e.seq);
+              lastSeqRef.current = Math.max(lastSeqRef.current, e.seq);
+            }
+            merged.push(e);
+          }
+          return merged.slice(-300);
+        });
+      }
+      const task = await api.getAgentTask?.(id);
+      if (task?.status && ["succeeded", "failed", "cancelled", "blocked"].includes(String(task.status).toLowerCase())) {
+        setRunning(false);
+      }
+    } catch (_) { /* view only */ }
+  }, []);
+
+  // Visibility reconnect: browser is a view; server is authoritative
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible" && taskIdRef.current) {
+        reconnectTask(taskIdRef.current);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [reconnectTask]);
 
   const stop = useCallback(() => {
     if (abortRef.current) abortRef.current();
@@ -131,6 +171,8 @@ export default function CodingAgentPanel() {
     if (!text || running) return;
     setEvents([]);
     setFilesChanged([]);
+    lastSeqRef.current = 0;
+    taskIdRef.current = null;
     setRunning(true);
     setStatus("Agent running…");
 
@@ -152,7 +194,13 @@ export default function CodingAgentPanel() {
       onEvent: (evt) => {
         if (evt.task_id) setTaskId(evt.task_id);
         if (evt.type === "agent.stream_end") return;
-        setEvents((prev) => [...prev.slice(-200), evt]);
+        if (evt.task_id) { taskIdRef.current = evt.task_id; setTaskId(evt.task_id); }
+        if (typeof evt.seq === "number" && evt.seq > lastSeqRef.current) lastSeqRef.current = evt.seq;
+        setEvents((prev) => {
+          // dedupe by seq when present
+          if (typeof evt.seq === "number" && prev.some((e) => e.seq === evt.seq)) return prev;
+          return [...prev.slice(-200), evt];
+        });
         if (evt.type === "agent.file_changed" && evt.data) {
           setFilesChanged((prev) => {
             const next = prev.filter((f) => f.path !== evt.data.path);

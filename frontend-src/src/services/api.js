@@ -762,6 +762,8 @@ export const api = {
   // ── Agentic IDE ───────────────────────────────────────────
   listAgentTools: (mode = "agent") =>
     req(`/api/agent/tools?mode=${encodeURIComponent(mode)}`),
+  getAgentTaskEvents: (taskId, afterSeq = 0) =>
+    req(`/api/agent/${encodeURIComponent(taskId)}/events?after_seq=${afterSeq}`),
   getAgentTask: (taskId) => req(`/api/agent/${encodeURIComponent(taskId)}`),
   listAgentTasks: () => req(`/api/agent/tasks`),
   cancelAgentTask: (taskId) =>

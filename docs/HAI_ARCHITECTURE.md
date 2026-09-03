@@ -130,3 +130,21 @@ Idempotency: same owner + operation_type + idempotency_key returns existing oper
 - Operation + job creation in **one DB transaction** via `reserve_operation_tx` + job insert + binding validation before commit.
 - Canonical binding: `ExecutionJob.operation_id` ↔ `ExecutionOperation.execution_job_id` (payload is mirror only).
 - Historical consequential jobs with `operation_id=NULL` → permanent failed on recovery, never requeued.
+
+
+## Stage 3N — Durable agentic IDE execution
+
+Architecture:
+
+```
+User → AgentTask → AgentRuntime → HAI → governed tools
+     → ExecutionOperation (consequential) → Evidence → verification → HAI completion
+```
+
+- **One AgentRuntime** — no parallel coding/IDE runtimes.
+- **Durable events** — monotonic `seq` per task; `GET /api/agent/{id}/events?after_seq=` for reconnect.
+- **Frontend** — visibility reconnect replays missed events; dedupes by `seq`; server state is authoritative.
+- **Cancellation** — `cancel_requested` stops further tool execution; terminal.
+- **Test selection** — `select_related_tests` heuristic (bounded).
+- **Verification** — Stage 3K.1 semantics preserved (command exit ≠ verification).
+- **Recovery** — Stages 3L–3M: execute=false during recovery; UNKNOWN non-retryable.
