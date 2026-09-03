@@ -1577,6 +1577,7 @@ class AgentRuntime:
                     "correlation_id": task.correlation_id,
                     "project_id": self.project_id,
                     "tenant_id": self.tenant_id,
+                    "owner_id": self.user_id,
                     "tool": tool.name,
                     "capability": tool.capability,
                     "side_effect": tool.side_effect.value,
@@ -1584,6 +1585,8 @@ class AgentRuntime:
                     "args_keys": list(args.keys()),
                     "operation_id": result.get("operation_id"),
                     "outcome": "succeeded" if result.get("ok") else "failed",
+                    "input_digest": result.get("input_digest"),
+                    "target_digest": result.get("target_digest"),
                 },
             )
         except Exception:

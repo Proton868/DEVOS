@@ -110,8 +110,36 @@ async def enqueue(
                 )
                 return existing
 
+        # Stage 3M.2 — bind consequential jobs to ExecutionOperation
+        NON_CONSEQUENTIAL = frozenset({
+            "read", "inspect", "list", "status", "health", "ping",
+        })
+        op_id = None
+        job_id = gen_id()
+        jt = (job_type or "").lower()
+        is_consequential = jt not in NON_CONSEQUENTIAL and not jt.startswith("read_")
+        if is_consequential:
+            from governance.execution_operations import reserve_operation
+            corr = None
+            if isinstance(correlation, dict):
+                corr = correlation.get("correlation_id") or correlation.get("id")
+            op_id = await reserve_operation(
+                owner_id=owner_id,
+                tenant_id=tenant_id,
+                actor_id=actor_id or owner_id,
+                execution_job_id=job_id,
+                operation_type=f"job:{jt}",
+                tool_name=jt,
+                correlation_id=corr,
+                idempotency_key=idempotency_key,
+                args=safe_payload if isinstance(safe_payload, dict) else {},
+            )
+            if not op_id:
+                raise RuntimeError("operation_reservation_failed: consequential job requires operation")
+            safe_payload = dict(safe_payload or {})
+            safe_payload["operation_id"] = op_id
         job = ExecutionJob(
-            id=gen_id(),
+            id=job_id,
             tenant_id=tenant_id,
             owner_id=owner_id,
             actor_id=actor_id,
@@ -199,7 +227,22 @@ async def recover_stale_leases(db=None) -> int:
                         continue
                 except Exception:
                     logger.debug("operation-aware lease recovery failed", exc_info=True)
-            # Safe non-consequential or no op: existing requeue
+            # Stage 3M.2 — missing operation on potentially consequential job: fail closed
+            jt = (job.job_type or "").lower()
+            NON_CONSEQUENTIAL = frozenset({"read", "inspect", "list", "status", "health", "ping"})
+            is_consequential = jt not in NON_CONSEQUENTIAL and not jt.startswith("read_")
+            if is_consequential and not op_id:
+                job.status = "failed"
+                job.error = json.dumps({
+                    "reason_code": "missing_operation",
+                    "retryable": False,
+                })
+                job.worker_id = None
+                job.locked_at = None
+                job.lease_expires_at = None
+                recovered += 1
+                continue
+            # Safe non-consequential: existing requeue
             job.status = "queued"
             job.worker_id = None
             job.locked_at = None

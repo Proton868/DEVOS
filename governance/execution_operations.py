@@ -148,13 +148,12 @@ async def reserve_operation(
                         ExecutionOperation.owner_id == owner_id,
                         ExecutionOperation.idempotency_key == idempotency_key,
                         ExecutionOperation.operation_type == operation_type,
+                        ExecutionOperation.tenant_id == tenant_id if tenant_id is not None
+                        else ExecutionOperation.tenant_id.is_(None),
                     )
                 )
                 existing = q.scalars().first()
                 if existing:
-                    # Same tenant if both set
-                    if tenant_id and existing.tenant_id and existing.tenant_id != tenant_id:
-                        return None
                     return existing.id
 
             op_id = str(uuid.uuid4())
@@ -176,9 +175,28 @@ async def reserve_operation(
                 attempt=1,
                 created_at=_now(),
             )
-            db.add(row)
-            await db.commit()
-            return op_id
+            try:
+                db.add(row)
+                await db.commit()
+                return op_id
+            except Exception as ie:
+                # Concurrent insert race: re-select existing idempotent op
+                await db.rollback()
+                if idempotency_key:
+                    q2 = await db.execute(
+                        select(ExecutionOperation).where(
+                            ExecutionOperation.owner_id == owner_id,
+                            ExecutionOperation.idempotency_key == idempotency_key,
+                            ExecutionOperation.operation_type == operation_type,
+                            ExecutionOperation.tenant_id == tenant_id if tenant_id is not None
+                            else ExecutionOperation.tenant_id.is_(None),
+                        )
+                    )
+                    existing2 = q2.scalars().first()
+                    if existing2:
+                        return existing2.id
+                logger.exception("reserve_operation insert failed: %s", ie)
+                return None
     except Exception:
         logger.exception("reserve_operation failed")
         return None
@@ -285,35 +303,72 @@ def validate_operation_identity(
 
 
 def validate_operation_evidence(op: dict, evidence: dict) -> tuple[bool, str]:
-    """Strict evidence binding for RUNNING → SUCCEEDED."""
-    body = evidence.get("body") if isinstance(evidence.get("body"), dict) else evidence
-    if not body:
-        return False, "empty_evidence"
-    if body.get("operation_id") != op.get("id") and evidence.get("operation_id") != op.get("id"):
+    """Strict evidence binding: missing required field is NOT a match."""
+    body = evidence.get("body") if isinstance(evidence.get("body"), dict) else {}
+    if not isinstance(body, dict):
+        body = {}
+
+    def _ev(field: str):
+        if field in body and body[field] is not None:
+            return body[field]
+        if field in evidence and evidence[field] is not None:
+            return evidence[field]
+        return None
+
+    # operation_id required always
+    eoid = _ev("operation_id")
+    if eoid is None or str(eoid) != str(op.get("id")):
         return False, "operation_id_mismatch"
-    if body.get("outcome") != "succeeded":
+
+    # outcome must be succeeded for SUCCESS transition
+    if _ev("outcome") != "succeeded":
         return False, "outcome_not_succeeded"
-    if op.get("tool_name") and body.get("tool") and body.get("tool") != op.get("tool_name"):
-        return False, "tool_mismatch"
+
+    # For each binding on the operation, evidence MUST present and match
+    checks = [
+        ("owner_id", "owner_id"),
+        ("tenant_id", "tenant_id"),
+        ("task_id", "task_id"),
+        ("correlation_id", "correlation_id"),
+        ("tool_name", "tool"),
+        ("input_digest", "input_digest"),
+        ("target_digest", "target_digest"),
+    ]
+    for op_field, ev_field in checks:
+        op_val = op.get(op_field)
+        if op_val is None:
+            continue  # operation did not set binding — skip
+        ev_val = _ev(ev_field)
+        if ev_val is None:
+            return False, f"{ev_field}_missing"
+        if str(ev_val) != str(op_val):
+            return False, f"{ev_field}_mismatch"
+
+    return True, "ok"
+
+
+def validate_operation_job_binding(op: dict, job: dict) -> tuple[bool, str]:
+    """Bidirectional operation ↔ ExecutionJob binding."""
+    if not op or not job:
+        return False, "missing"
+    jid = str(job.get("id") or "")
+    oid = str(op.get("id") or "")
+    if not jid or not oid:
+        return False, "missing_id"
+    payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+    job_op = payload.get("operation_id") or job.get("operation_id")
+    if job_op is None or str(job_op) != oid:
+        return False, "job_operation_id_mismatch"
+    if op.get("execution_job_id") is None or str(op["execution_job_id"]) != jid:
+        return False, "operation_job_id_mismatch"
     if op.get("tenant_id") is not None:
-        et = body.get("tenant_id") if body.get("tenant_id") is not None else evidence.get("tenant_id")
-        if et is None or str(et) != str(op["tenant_id"]):
+        jt = job.get("tenant_id")
+        if jt is None or str(jt) != str(op["tenant_id"]):
             return False, "tenant_mismatch"
     if op.get("owner_id") is not None:
-        eo = body.get("owner_id") if body.get("owner_id") is not None else evidence.get("owner_id")
-        # owner may be actor_id in evidence path
-        if eo is not None and str(eo) != str(op["owner_id"]):
-            # allow match against actor in body
-            if str(body.get("actor_id") or "") != str(op["owner_id"]):
-                return False, "owner_mismatch"
-    if op.get("task_id") and body.get("task_id") and str(body["task_id"]) != str(op["task_id"]):
-        return False, "task_mismatch"
-    if op.get("correlation_id") and body.get("correlation_id") and str(body["correlation_id"]) != str(op["correlation_id"]):
-        return False, "correlation_mismatch"
-    if op.get("input_digest") and body.get("input_digest") and body["input_digest"] != op["input_digest"]:
-        return False, "input_digest_mismatch"
-    if op.get("target_digest") and body.get("target_digest") and body["target_digest"] != op["target_digest"]:
-        return False, "target_digest_mismatch"
+        jo = job.get("owner_id")
+        if jo is None or str(jo) != str(op["owner_id"]):
+            return False, "owner_mismatch"
     return True, "ok"
 
 

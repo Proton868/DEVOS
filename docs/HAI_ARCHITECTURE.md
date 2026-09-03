@@ -105,3 +105,12 @@ Idempotency: same owner + operation_type + idempotency_key returns existing oper
 `mark_running` failure in AgentRuntime **blocks** the side effect.
 
 `operation_id` ≠ `idempotency_key` ≠ `attempt`.
+
+
+## Stage 3M.2 — Integrity gaps closed
+
+- Evidence: every operation-bound field requires a matching evidence field (missing ≠ match).
+- Idempotency: unique index + concurrent insert recovery; tenant is never a wildcard.
+- Consequential `enqueue()` reserves an operation and sets `payload.operation_id`.
+- Stale lease: consequential job without operation → failed/non-retryable (not requeued).
+- Identities: `operation_id` ≠ `idempotency_key` ≠ `attempt`.

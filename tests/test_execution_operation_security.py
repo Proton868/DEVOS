@@ -133,3 +133,39 @@ asyncio.run(main())
     assert r["api_key"] == "[redacted]"
     assert r["password"] == "[redacted]"
     assert r["path"] == "a.py"
+
+
+def test_evidence_missing_tenant_fails(db):
+    r = _worker(db, """
+async def main():
+    from governance.execution_operations import validate_operation_evidence
+    op = {"id": "op1", "owner_id": "u", "tenant_id": "t", "tool_name": "apply_patch",
+          "task_id": "task1", "correlation_id": "c1", "input_digest": "abc"}
+    evidence = {"operation_id": "op1", "body": {
+        "operation_id": "op1", "outcome": "succeeded", "tool": "apply_patch",
+        "owner_id": "u", "task_id": "task1", "correlation_id": "c1", "input_digest": "abc",
+        # tenant_id MISSING
+    }}
+    ok, reason = validate_operation_evidence(op, evidence)
+    print(json.dumps({"ok": ok, "reason": reason}))
+asyncio.run(main())
+""")
+    assert r["ok"] is False
+    assert "tenant" in r["reason"]
+
+def test_evidence_complete_passes(db):
+    r = _worker(db, """
+async def main():
+    from governance.execution_operations import validate_operation_evidence
+    op = {"id": "op1", "owner_id": "u", "tenant_id": "t", "tool_name": "apply_patch",
+          "task_id": "task1", "correlation_id": "c1", "input_digest": "abc"}
+    evidence = {"operation_id": "op1", "body": {
+        "operation_id": "op1", "outcome": "succeeded", "tool": "apply_patch",
+        "owner_id": "u", "tenant_id": "t", "task_id": "task1", "correlation_id": "c1",
+        "input_digest": "abc",
+    }}
+    ok, reason = validate_operation_evidence(op, evidence)
+    print(json.dumps({"ok": ok, "reason": reason}))
+asyncio.run(main())
+""")
+    assert r["ok"] is True

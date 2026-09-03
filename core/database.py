@@ -302,6 +302,21 @@ async def _migrate_missing_columns(conn):
         "evidence_records", "operation_id",
         "ALTER TABLE evidence_records ADD COLUMN operation_id VARCHAR",
     )
+    # Stage 3M.2 — unique idempotency index (use migrate conn; do not open nested begin)
+    try:
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_execution_operations_idempotency "
+            "ON execution_operations (owner_id, operation_type, idempotency_key, ifnull(tenant_id, '')) "
+            "WHERE idempotency_key IS NOT NULL"
+        ))
+    except Exception:
+        try:
+            await conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_execution_operations_idempotency "
+                "ON execution_operations (owner_id, operation_type, idempotency_key, tenant_id)"
+            ))
+        except Exception:
+            pass
 
     await _add_column_if_missing(
         "worker_trust_records", "competency",
