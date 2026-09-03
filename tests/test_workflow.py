@@ -176,3 +176,102 @@ class TestCreateWorkflow:
         assert wf.name == "Quick Workflow"
         assert len(wf.steps) == 1
         assert wf.workflow_id is not None
+
+import asyncio
+from brain.workflow_executor import run_from_snapshot, handle_workflow_job
+from brain.workflow_store import build_execution_snapshot
+
+
+def test_orchestrate_notify_chain():
+    snap = build_execution_snapshot(
+        workflow_id="wf-orch-1",
+        workflow_version=1,
+        owner_id="user-a",
+        tenant_id="t1",
+        name="NotifyChain",
+        definition={
+            "name": "NotifyChain",
+            "start_step": "s1",
+            "steps": [
+                {"id": "s1", "type": "notify", "name": "one", "next_step": "s2",
+                 "inputs": {"message": "hello"}},
+                {"id": "s2", "type": "notify", "name": "two",
+                 "inputs": {"message": "world"}},
+            ],
+        },
+        correlation_id="c1",
+    )
+    result = asyncio.run(run_from_snapshot(snap))
+    assert result.status == "succeeded"
+    assert len(result.steps) == 2
+    assert all(s.status == "succeeded" for s in result.steps)
+    assert result.workflow_version == 1
+
+
+def test_orchestrate_uses_snapshot_not_live_mutation():
+    snap = build_execution_snapshot(
+        workflow_id="wf-immut",
+        workflow_version=7,
+        owner_id="user-a",
+        tenant_id=None,
+        name="Immut",
+        definition={
+            "name": "Immut",
+            "start_step": "s1",
+            "steps": [
+                {"id": "s1", "type": "notify", "name": "v7-step",
+                 "inputs": {"message": "from-v7"}},
+            ],
+        },
+    )
+    result = asyncio.run(run_from_snapshot(snap))
+    assert result.workflow_version == 7
+    assert result.steps[0].message == "from-v7"
+
+
+def test_orchestrate_approval_fail_closed():
+    snap = build_execution_snapshot(
+        workflow_id="wf-appr",
+        workflow_version=1,
+        owner_id="user-a",
+        tenant_id=None,
+        name="Appr",
+        definition={
+            "name": "Appr",
+            "start_step": "a1",
+            "steps": [{"id": "a1", "type": "approval", "name": "need human"}],
+        },
+    )
+    result = asyncio.run(run_from_snapshot(snap))
+    assert result.status == "failed"
+    assert result.steps[0].status == "pending_approval"
+
+
+def test_orchestrate_corrupt_snapshot_fails():
+    result = asyncio.run(run_from_snapshot({"workflow_id": "x"}))
+    assert result.status == "failed"
+
+
+def test_handle_workflow_job_from_payload():
+    snap = build_execution_snapshot(
+        workflow_id="wf-job",
+        workflow_version=3,
+        owner_id="u",
+        tenant_id="t",
+        name="Job",
+        definition={
+            "name": "Job",
+            "start_step": "s1",
+            "steps": [{"id": "s1", "type": "notify", "name": "n"}],
+        },
+    )
+
+    class FakeJob:
+        id = "job-1"
+        workflow_id = "wf-job"
+        workflow_version = 3
+        payload = {"workflow_snapshot": snap}
+
+    out = asyncio.run(handle_workflow_job(FakeJob()))
+    assert out["status"] == "succeeded"
+    assert out["workflow_version"] == 3

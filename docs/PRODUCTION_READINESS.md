@@ -77,3 +77,19 @@ Canonical fields: `schema_version`, `workflow_id`, `workflow_version`, `owner_id
 - External side effects are **not** automatically reversible.
 - Workflow `schedule` metadata is **not** an active scheduler registration.
 - Compensation engines are not implemented.
+
+## Workflow step executor
+
+`brain/workflow_executor.py` runs jobs with `job_type=workflow` from the
+immutable `payload.workflow_snapshot` only.
+
+Supported step types:
+- `notify` — log/record, no external side effect
+- `wait` — bounded sleep (max 30s)
+- `condition` — safe expression over context
+- `capability` — UCIP + `require_authority`; sandbox only when code is supplied
+- `approval` — fail-closed (pending_approval ends run)
+- `parallel` — marker (children sequentialized)
+- `subflow` — not enabled (fails explicitly)
+
+Registered on `JobWorker` at app startup. Retries use the same snapshot.
