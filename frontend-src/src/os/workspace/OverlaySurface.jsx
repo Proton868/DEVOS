@@ -138,7 +138,7 @@ export default function OverlaySurface({ isMobile }) {
     memory: <MemoryViewer />,
     mcp: <MCPPanel onClose={() => setOverlay(null)} />,
     research: <ResearchPanel />,
-    settings: <SettingsModal />,
+    settings: <SettingsModal embedded onClose={() => setOverlay(null)} />,
     history: <ExecutionHistory />,
     system: <SystemStatus />,
     composer: <ComposerPanel />,

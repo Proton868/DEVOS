@@ -537,3 +537,110 @@
   border-color: var(--sp-border-bright) !important;
   color: var(--sp-text-0) !important;
 }
+
+
+/* ── Canvas title bar + CARAI brand (replaces n8n badge) ─── */
+.sp-canvas-titlebar {
+  position: absolute; top: 12px; left: 14px; right: 14px;
+  display: flex; align-items: center; justify-content: space-between;
+  pointer-events: none; z-index: 5;
+}
+.sp-canvas-title {
+  font-size: 12.5px; font-weight: 600; color: var(--sp-text-1);
+  letter-spacing: 0.02em;
+  background: rgba(10,10,18,0.55);
+  border: 1px solid var(--sp-border);
+  border-radius: 8px;
+  padding: 6px 12px;
+  backdrop-filter: blur(10px);
+}
+.sp-canvas-brand {
+  pointer-events: auto;
+  display: flex; align-items: center;
+  background: rgba(10,10,18,0.55);
+  border: 1px solid rgba(212,175,55,0.35);
+  border-radius: 10px;
+  padding: 4px 8px;
+  backdrop-filter: blur(10px);
+}
+.sp-carai-logo {
+  height: 28px; width: auto; display: block;
+  filter: drop-shadow(0 0 6px rgba(212,175,55,0.35));
+}
+
+/* ── Node state glow (functional, not decorative) ───────── */
+.sp-node.st-node-executing .sp-node-chip,
+.sp-node.st-node-running .sp-node-chip {
+  border-color: rgba(34,211,238,0.7);
+  box-shadow: 0 0 0 1px rgba(34,211,238,0.45), 0 0 28px rgba(34,211,238,0.35);
+  animation: sp-node-pulse 1.6s ease-in-out infinite;
+}
+.sp-node.st-node-thinking .sp-node-chip {
+  border-color: rgba(167,139,250,0.7);
+  box-shadow: 0 0 0 1px rgba(167,139,250,0.4), 0 0 24px rgba(167,139,250,0.3);
+  animation: sp-node-pulse 2s ease-in-out infinite;
+}
+.sp-node.st-node-success .sp-node-chip {
+  border-color: rgba(52,211,153,0.65);
+  box-shadow: 0 0 0 1px rgba(52,211,153,0.35), 0 0 20px rgba(52,211,153,0.25);
+}
+.sp-node.st-node-failed .sp-node-chip,
+.sp-node.st-node-error .sp-node-chip {
+  border-color: rgba(248,113,113,0.7);
+  box-shadow: 0 0 0 1px rgba(248,113,113,0.4), 0 0 22px rgba(248,113,113,0.28);
+}
+.sp-node.st-node-queued .sp-node-chip {
+  border-color: rgba(251,191,36,0.55);
+  box-shadow: 0 0 16px rgba(251,191,36,0.18);
+}
+@keyframes sp-node-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.18); }
+}
+
+/* ── Agency HUD tighter match ───────────────────────────── */
+.sp-agency {
+  background: rgba(12, 12, 22, 0.78);
+  border: 1px solid var(--sp-border);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+}
+.sp-agent-card {
+  min-width: 132px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--sp-border);
+  border-radius: 10px;
+  padding: 10px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, transform .15s;
+}
+.sp-agent-card:hover {
+  border-color: var(--sp-border-bright);
+  background: rgba(255,255,255,0.055);
+  transform: translateY(-1px);
+}
+.sp-agent-card.executing {
+  border-color: rgba(34,211,238,0.4);
+  box-shadow: 0 0 16px rgba(34,211,238,0.12);
+}
+.sp-agent-card.thinking {
+  border-color: rgba(167,139,250,0.4);
+  box-shadow: 0 0 16px rgba(167,139,250,0.12);
+}
+.sp-agent-card .ac-bar i.exec-anim {
+  animation: sp-bar-flow 1.4s linear infinite;
+  background: linear-gradient(90deg, transparent, var(--sp-accent), transparent);
+  background-size: 200% 100%;
+}
+@keyframes sp-bar-flow {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Settings embedded in overlay */
+.settings-modal.embedded {
+  background: transparent;
+  border: none;
+}
+.settings-modal.embedded .settings-layout {
+  height: calc(100% - 52px);
+}

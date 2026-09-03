@@ -105,7 +105,7 @@ export default function GhostTerminal() {
     }
   };
 
-  if (!terminal.open) return null;
+  if (!terminal.open && !terminal.pinned) return null;
 
   return (
     <div className={`sp-terminal ${tall ? "tall" : ""}`}>

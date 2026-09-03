@@ -228,6 +228,10 @@ export default function LoginScreen() {
             <span className="login-wordmark-name">DevOS</span>
             <span className="login-wordmark-version">v4</span>
           </div>
+          <div className="login-carai" style={{ marginTop: 10, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+            <img src="/carai-agency-logo.png" alt="CARAI Agency" style={{ height: 42, width: "auto", filter: "drop-shadow(0 0 8px rgba(212,175,55,0.35))" }} />
+            <span style={{ fontSize: 11, color: "rgba(212,175,55,0.75)", letterSpacing: "0.04em" }}>Where Caribbean spirit meets intelligent design.</span>
+          </div>
         </div>
 
         <p className="login-subtitle">

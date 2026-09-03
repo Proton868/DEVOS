@@ -334,16 +334,22 @@ const SelInput = ({ label, value, onChange, options }) => (
   </label>
 );
 
-export default function SettingsModal() {
+export default function SettingsModal({ embedded = false, onClose = null }) {
   const { settingsOpen, setSettingsOpen, providers, selectedProvider, selectedModel,
     setProvider, setModel, workspaceSettings, setWorkspaceSettings, theme, setTheme } = useStore();
   const [tab, setTab]   = useState("providers");
   const [local, setLocal] = useState(null);
   const [saved, setSaved] = useState(false);
   const [ucipStats, setUcipStats] = useState(null);
+  const active = embedded || settingsOpen;
+
+  const handleClose = () => {
+    if (onClose) onClose();
+    else setSettingsOpen(false);
+  };
 
   useEffect(() => {
-    if (settingsOpen) {
+    if (active) {
       if (!local) {
         api.getSettings().then(s => {
           // /api/settings returns {settings: {...}} via getSettings helper which unwraps
@@ -358,7 +364,7 @@ export default function SettingsModal() {
       }
       api.ucipHealth().then(setUcipStats).catch(() => {});
     }
-  }, [settingsOpen]);
+  }, [active]);
 
   const patch = (section, key, val) => setLocal(s => ({ ...s, [section]: { ...s[section], [key]: val } }));
 
@@ -377,18 +383,19 @@ export default function SettingsModal() {
     }
   };
 
-  if (!settingsOpen) return null;
+  if (!active) return null;
   const s = local || {};
 
   const TABS = ["account","providers","models","ai","appearance","workspace","editor","git","notifications","privacy","marketplace","ucip"];
 
-  return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setSettingsOpen(false); }}>
-      <div className="settings-modal wide">
+  const inner = (
+      <div className={embedded ? "settings-modal wide embedded" : "settings-modal wide"} style={embedded ? { maxWidth: "100%", height: "100%", borderRadius: 0, boxShadow: "none" } : undefined}>
+        {!embedded && (
         <div className="settings-header">
           <h2>⚙️ Settings</h2>
-          <button onClick={() => setSettingsOpen(false)}><X size={16} /></button>
+          <button onClick={handleClose}><X size={16} /></button>
         </div>
+        )}
         <div className="settings-layout">
           <div className="settings-nav">
             {TABS.map(t => (
@@ -590,11 +597,16 @@ export default function SettingsModal() {
         <div className="settings-footer">
           <span>{saved ? "✓ Saved to .carai/settings.json" : "Persisted to workspace"}</span>
           <div style={{display:"flex",gap:8}}>
-            <button className="btn-secondary" onClick={()=>setSettingsOpen(false)}>Cancel</button>
+            <button className="btn-secondary" onClick={handleClose}>Cancel</button>
             <button className="btn-primary" onClick={saveAll}><Save size={13}/> Save</button>
           </div>
         </div>
       </div>
+  );
+  if (embedded) return inner;
+  return (
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>
+      {inner}
     </div>
   );
 }

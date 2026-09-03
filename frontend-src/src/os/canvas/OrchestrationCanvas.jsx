@@ -228,7 +228,7 @@ export default function OrchestrationCanvas() {
       ];
     }
     return [
-      { label: "Edit Script (Cursor)", run: () => openEditor({ scriptId: sid }) },
+      { label: "Edit Script (DevOS IDE)", run: () => openEditor({ scriptId: sid }) },
       { label: "Check Logs (PyRunner)", run: () => openTerminal(`script-${sid}`) },
       { label: "Execute", run: () => runScript(sid) },
       { label: "Inspect Agent", run: () => openInspector(`script-${sid}`) },
@@ -299,7 +299,7 @@ export default function OrchestrationCanvas() {
           {nodes.map((n) => (
             <div
               key={n.id}
-              className={`sp-node ${selectedNode === n.id ? "selected" : ""}`}
+              className={`sp-node st-node-${(n.state || "IDLE").toLowerCase()} ${selectedNode === n.id ? "selected" : ""}`}
               style={{ left: n.x, top: n.y }}
               onClick={(e) => { e.stopPropagation(); selectNode(n.id); }}
               onDoubleClick={(e) => { e.stopPropagation(); openInspector(n.id); }}
@@ -346,6 +346,13 @@ export default function OrchestrationCanvas() {
           </button>
         </div>
       )}
+
+      <div className="sp-canvas-titlebar">
+        <span className="sp-canvas-title">Workflow Automation Canvas</span>
+        <span className="sp-canvas-brand">
+          <img src="/carai-agency-logo.png" alt="CARAI Agency" className="sp-carai-logo" />
+        </span>
+      </div>
 
       <div className="sp-canvas-hud">
         <button title="Zoom out" onClick={() => zoomBy(0.85)}><ZoomOut size={14} /></button>
