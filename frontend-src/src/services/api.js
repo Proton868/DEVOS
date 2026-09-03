@@ -774,7 +774,20 @@ export const api = {
    * Stream an agentic coding task. onEvent receives parsed SSE event objects.
    * Returns an abort function.
    */
+  acceptAgentChange: (changeId) =>
+    req(`/api/agent/changes/${encodeURIComponent(changeId)}/accept`, { method: "POST" }),
+  rejectAgentChange: (changeId) =>
+    req(`/api/agent/changes/${encodeURIComponent(changeId)}/reject`, { method: "POST" }),
+  revertAgentChange: (changeId) =>
+    req(`/api/agent/changes/${encodeURIComponent(changeId)}/revert`, { method: "POST" }),
+  acceptAllAgentChanges: (taskId) =>
+    req(`/api/agent/${encodeURIComponent(taskId)}/changes/accept-all`, { method: "POST" }),
+  rejectAllAgentChanges: (taskId) =>
+    req(`/api/agent/${encodeURIComponent(taskId)}/changes/reject-all`, { method: "POST" }),
+  listAgentChanges: (taskId) =>
+    req(`/api/agent/${encodeURIComponent(taskId)}/changes`),
   runAgent: ({ objective, projectId, mode, provider, model, context, onEvent, onError, onDone }) => {
+
     const ctrl = new AbortController();
     const token = getToken();
     (async () => {

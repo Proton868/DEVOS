@@ -240,3 +240,74 @@ async def patch_apply(req: PatchApplyReq, request: Request, db=Depends(get_db)):
         "deletions": sum(1 for d in diff if d["type"] == "del"),
         "diff": diff[:200],
     }
+
+
+class ChangeIdReq(BaseModel):
+    project_id: str = "default"
+
+
+@router.get("/{task_id}/changes")
+async def list_task_changes(task_id: str, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from brain.agent_changes import list_task_changes_detailed
+    from brain.agent_runtime import get_task
+    task = get_task(task_id)
+    if task and task.user_id != user.id:
+        raise HTTPException(404, "task not found")
+    return {"task_id": task_id, "changes": list_task_changes_detailed(task_id, user.id)}
+
+
+@router.post("/changes/{change_id}/accept")
+async def accept_one(change_id: str, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from brain.agent_changes import accept_change
+    return accept_change(change_id, user.id)
+
+
+@router.post("/changes/{change_id}/reject")
+async def reject_one(change_id: str, project_id: str = "default", request: Request = None, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from brain.agent_changes import reject_change, get_change
+    from execution.files import FileService
+    rec = get_change(change_id, user.id)
+    if not rec:
+        raise HTTPException(404, "change not found")
+    fs = FileService(user.id, rec.project_id or project_id)
+    return reject_change(change_id, user.id, fs)
+
+
+@router.post("/changes/{change_id}/revert")
+async def revert_one(change_id: str, project_id: str = "default", request: Request = None, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from brain.agent_changes import revert_change, get_change
+    from execution.files import FileService
+    rec = get_change(change_id, user.id)
+    if not rec:
+        raise HTTPException(404, "change not found")
+    fs = FileService(user.id, rec.project_id or project_id)
+    return revert_change(change_id, user.id, fs)
+
+
+@router.post("/{task_id}/changes/accept-all")
+async def accept_all_changes(task_id: str, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from brain.agent_changes import accept_all
+    return accept_all(task_id, user.id)
+
+
+@router.post("/{task_id}/changes/reject-all")
+async def reject_all_changes(task_id: str, project_id: str = "default", request: Request = None, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from brain.agent_changes import reject_all
+    from brain.agent_runtime import get_task
+    from execution.files import FileService
+    task = get_task(task_id)
+    pid = (task.project_id if task else None) or project_id
+    fs = FileService(user.id, pid)
+    return reject_all(task_id, user.id, fs)

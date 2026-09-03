@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, AsyncIterator, Callable, Optional
 
+from brain.agent_changes import record_change
 from brain.agent_tools import (
     AGENT_ACTION_TO_CAP,
     AGENT_TOOL_REGISTRY,
@@ -562,6 +563,7 @@ class AgentRuntime:
         self, task: AgentTask, tool: AgentTool, args: dict
     ) -> dict:
         name = tool.name
+        self._current_task = task
         try:
             if name == "list_files":
                 return await self._list_files(args)
@@ -589,6 +591,11 @@ class AgentRuntime:
                 return await self._diagnostics(name, args)
             if name in ("list_workflows", "inspect_workflow", "execute_workflow"):
                 return await self._workflows(name, args)
+            if name in (
+                "get_project_metadata", "get_test_files", "get_build_system",
+                "get_package_dependencies", "find_symbol",
+            ):
+                return await self._repo_intel(name, args)
             return {"ok": False, "error": f"handler not implemented: {name}"}
         except Exception as e:
             logger.exception("tool %s failed", name)
@@ -601,6 +608,30 @@ class AgentRuntime:
     def _git_svc(self):
         from execution.vcs import GitService
         return GitService(self.user_id, self.project_id)
+
+
+    def _safe_read(self, path: str) -> Optional[str]:
+        try:
+            return self._fs().read(path).get("content")
+        except Exception:
+            return None
+
+    def _note_change(self, task: AgentTask, path: str, kind: str, before, after, meta=None):
+        try:
+            rec = record_change(
+                task_id=task.id,
+                user_id=self.user_id,
+                project_id=self.project_id,
+                path=path,
+                change_kind=kind,
+                before_content=before,
+                after_content=after,
+                meta=meta or {},
+            )
+            return rec.id
+        except Exception:
+            logger.debug("change snapshot failed", exc_info=True)
+            return None
 
     async def _list_files(self, args: dict) -> dict:
         fs = self._fs()
@@ -698,27 +729,35 @@ class AgentRuntime:
         fs = self._fs()
         path = args["path"]
         content = args.get("content") or ""
+        before = self._safe_read(path)
         try:
             fs.create(path, is_dir=False)
         except FileExistsError:
             return {"ok": False, "error": "file already exists"}
         except Exception as e:
-            # touch may raise if exists
             if "exist" in str(e).lower():
                 return {"ok": False, "error": "file already exists"}
             raise
         if content:
             fs.write(path, content)
+        cid = None
+        # task passed via self._current_task if set
+        task = getattr(self, "_current_task", None)
+        if task:
+            cid = self._note_change(task, path, "created", before, content)
         return {
             "ok": True,
             "path": path,
+            "change_id": cid,
             "file_changed": {
                 "path": path,
                 "change": "created",
+                "change_id": cid,
                 "additions": content.count("\n") + (1 if content else 0),
                 "deletions": 0,
             },
         }
+
 
     async def _apply_patch(self, args: dict) -> dict:
         fs = self._fs()
@@ -749,20 +788,25 @@ class AgentRuntime:
         diff = make_line_diff(current, new_content)
         additions = sum(1 for d in diff if d["type"] == "add")
         deletions = sum(1 for d in diff if d["type"] == "del")
+        task = getattr(self, "_current_task", None)
+        cid = self._note_change(task, path, "patched", current, new_content) if task else None
         return {
             "ok": True,
             "path": path,
             "additions": additions,
             "deletions": deletions,
             "diff": diff[:200],
+            "change_id": cid,
             "file_changed": {
                 "path": path,
                 "change": "patched",
+                "change_id": cid,
                 "additions": additions,
                 "deletions": deletions,
                 "diff": diff[:100],
             },
         }
+
 
     async def _replace_text(self, args: dict) -> dict:
         fs = self._fs()
@@ -782,38 +826,59 @@ class AgentRuntime:
         diff = make_line_diff(current, updated)
         additions = sum(1 for d in diff if d["type"] == "add")
         deletions = sum(1 for d in diff if d["type"] == "del")
+        task = getattr(self, "_current_task", None)
+        cid = self._note_change(task, path, "replaced", current, updated) if task else None
         return {
             "ok": True,
             "path": path,
+            "change_id": cid,
             "file_changed": {
                 "path": path,
                 "change": "replaced",
+                "change_id": cid,
                 "additions": additions,
                 "deletions": deletions,
             },
         }
 
+
     async def _rename_file(self, args: dict) -> dict:
         fs = self._fs()
+        before = self._safe_read(args["path"])
         result = fs.rename(args["path"], args["new_path"])
+        task = getattr(self, "_current_task", None)
+        cid = None
+        if task:
+            cid = self._note_change(
+                task, args["new_path"], "renamed", before, before,
+                meta={"from": args["path"], "to": args["new_path"]},
+            )
         return {
             "ok": True,
             **result,
+            "change_id": cid,
             "file_changed": {
                 "path": args["new_path"],
                 "change": "renamed",
+                "change_id": cid,
                 "from": args["path"],
             },
         }
 
+
     async def _delete_file(self, args: dict) -> dict:
         fs = self._fs()
+        before = self._safe_read(args["path"])
         fs.delete(args["path"])
+        task = getattr(self, "_current_task", None)
+        cid = self._note_change(task, args["path"], "deleted", before, None) if task else None
         return {
             "ok": True,
             "path": args["path"],
-            "file_changed": {"path": args["path"], "change": "deleted"},
+            "change_id": cid,
+            "file_changed": {"path": args["path"], "change": "deleted", "change_id": cid},
         }
+
 
     async def _run_command(self, task: AgentTask, name: str, args: dict) -> dict:
         from execution.runner import run_command_in_project
@@ -970,6 +1035,148 @@ class AgentRuntime:
         except Exception as e:
             return {"ok": False, "error": str(e)}
         return {"ok": False, "error": "unavailable"}
+
+
+    async def _repo_intel(self, name: str, args: dict) -> dict:
+        fs = self._fs()
+        tree = fs.tree()
+        files = [i for i in tree if i.get("type") == "file"]
+
+        if name == "get_project_metadata":
+            langs = {}
+            configs = []
+            for f in files:
+                path = f["path"]
+                base = path.split("/")[-1].lower()
+                ext = base.rsplit(".", 1)[-1] if "." in base else ""
+                if ext:
+                    langs[ext] = langs.get(ext, 0) + 1
+                if base in (
+                    "package.json", "pyproject.toml", "requirements.txt", "setup.py",
+                    "cargo.toml", "go.mod", "makefile", "dockerfile", "pom.xml",
+                    "tsconfig.json", "vite.config.ts", "vite.config.js",
+                ):
+                    configs.append(path)
+            return {
+                "ok": True,
+                "file_count": len(files),
+                "languages": dict(sorted(langs.items(), key=lambda x: -x[1])[:20]),
+                "config_files": configs[:50],
+            }
+
+        if name == "get_test_files":
+            max_r = int(args.get("max_results") or 50)
+            tests = []
+            for f in files:
+                p = f["path"].lower()
+                base = p.split("/")[-1]
+                if (
+                    "/test" in p or p.startswith("test") or base.startswith("test_")
+                    or base.endswith("_test.py") or base.endswith(".test.js")
+                    or base.endswith(".test.ts") or base.endswith(".spec.js")
+                    or base.endswith(".spec.ts") or "/__tests__/" in p
+                ):
+                    tests.append(f["path"])
+            return {"ok": True, "tests": tests[:max_r], "count": len(tests)}
+
+        if name == "get_build_system":
+            cmds = {}
+            for candidate, keys in (
+                ("package.json", ("scripts",)),
+                ("pyproject.toml", ()),
+                ("Makefile", ()),
+                ("makefile", ()),
+            ):
+                match = next((f["path"] for f in files if f["path"].endswith(candidate) or f["path"] == candidate), None)
+                if not match:
+                    continue
+                try:
+                    content = fs.read(match).get("content") or ""
+                except Exception:
+                    continue
+                if candidate == "package.json":
+                    try:
+                        import json as _json
+                        data = _json.loads(content)
+                        scripts = data.get("scripts") or {}
+                        for k in ("test", "build", "lint", "typecheck", "format"):
+                            if k in scripts:
+                                cmds[k] = f"npm run {k}"
+                    except Exception:
+                        pass
+                elif candidate.startswith("Makefile") or candidate == "makefile":
+                    cmds.setdefault("build", "make")
+                    cmds.setdefault("test", "make test")
+                elif candidate == "pyproject.toml":
+                    cmds.setdefault("test", "python -m pytest -q")
+                    if "ruff" in content:
+                        cmds.setdefault("lint", "python -m ruff check .")
+            # requirements / pytest default
+            if any(f["path"].endswith("pytest.ini") or "/tests/" in f["path"] for f in files):
+                cmds.setdefault("test", "python -m pytest -q")
+            return {"ok": True, "commands": cmds}
+
+        if name == "get_package_dependencies":
+            max_e = int(args.get("max_entries") or 100)
+            deps = {}
+            for f in files:
+                base = f["path"].split("/")[-1]
+                if base == "package.json":
+                    try:
+                        import json as _json
+                        data = _json.loads(fs.read(f["path"]).get("content") or "{}")
+                        for section in ("dependencies", "devDependencies"):
+                            for k, v in (data.get(section) or {}).items():
+                                deps[k] = str(v)
+                    except Exception:
+                        pass
+                if base in ("requirements.txt", "requirements-lite.txt", "requirements-full.txt"):
+                    try:
+                        for line in (fs.read(f["path"]).get("content") or "").splitlines():
+                            line = line.strip()
+                            if line and not line.startswith("#"):
+                                deps[line.split("==")[0].split(">=")[0].strip()] = line
+                    except Exception:
+                        pass
+            items = list(deps.items())[:max_e]
+            return {"ok": True, "dependencies": dict(items), "count": len(deps)}
+
+        if name == "find_symbol":
+            symbol = (args.get("symbol") or "").strip()
+            if not symbol:
+                return {"ok": False, "error": "symbol required"}
+            max_r = int(args.get("max_results") or 20)
+            patterns = [
+                f"def {symbol}",
+                f"class {symbol}",
+                f"function {symbol}",
+                f"const {symbol}",
+                f"let {symbol}",
+                f"var {symbol}",
+                f"fn {symbol}",
+                f"func {symbol}",
+                symbol,
+            ]
+            hits = []
+            for f in files:
+                if f.get("is_binary"):
+                    continue
+                try:
+                    content = fs.read(f["path"]).get("content") or ""
+                except Exception:
+                    continue
+                for i, line in enumerate(content.splitlines(), 1):
+                    for pat in patterns[:-1]:
+                        if pat in line:
+                            hits.append({"path": f["path"], "line": i, "text": line.strip()[:200]})
+                            break
+                    if len(hits) >= max_r:
+                        break
+                if len(hits) >= max_r:
+                    break
+            return {"ok": True, "symbol": symbol, "hits": hits}
+
+        return {"ok": False, "error": f"unknown repo intel tool {name}"}
 
     async def _record_evidence(
         self, task: AgentTask, tool: AgentTool, args: dict, result: dict

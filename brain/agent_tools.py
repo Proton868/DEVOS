@@ -50,11 +50,15 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "git_status", "git_diff", "git_log", "git_show", "git_branch",
         "get_job", "get_job_logs", "get_evidence",
         "list_workflows", "inspect_workflow",
+        "get_project_metadata", "get_test_files", "get_build_system",
+        "get_package_dependencies", "find_symbol",
     },
     AgentMode.EDIT: {
         "list_files", "read_file", "search_files", "get_file_metadata",
         "create_file", "apply_patch", "replace_text", "rename_file", "delete_file",
         "git_status", "git_diff", "git_log", "git_show", "git_branch",
+        "get_project_metadata", "get_test_files", "get_build_system",
+        "get_package_dependencies", "find_symbol",
     },
     AgentMode.AGENT: {
         "list_files", "read_file", "search_files", "get_file_metadata",
@@ -64,11 +68,15 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "git_add", "git_commit",
         "get_job", "get_job_logs", "get_evidence",
         "list_workflows", "inspect_workflow", "execute_workflow",
+        "get_project_metadata", "get_test_files", "get_build_system",
+        "get_package_dependencies", "find_symbol",
     },
     AgentMode.REVIEW: {
         "list_files", "read_file", "search_files", "get_file_metadata",
         "git_status", "git_diff", "git_log", "git_show", "git_branch",
         "get_evidence",
+        "get_project_metadata", "get_test_files", "get_build_system",
+        "get_package_dependencies", "find_symbol",
     },
 }
 
@@ -511,6 +519,64 @@ register_agent_tool(AgentTool(
     side_effect=SideEffect.NONE,
     risk=ToolRisk.LOW,
     timeout_s=10,
+))
+
+
+register_agent_tool(AgentTool(
+    name="get_project_metadata",
+    description="Summarize project root: detected languages, config files, approximate size.",
+    input_schema=_s({}),
+    capability="ucip:filesystem.read",
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.LOW,
+    timeout_s=15,
+))
+
+register_agent_tool(AgentTool(
+    name="get_test_files",
+    description="List likely test files in the project (heuristic by path/name).",
+    input_schema=_s({
+        "max_results": {"type": "integer"},
+    }),
+    capability="ucip:filesystem.read",
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.LOW,
+    timeout_s=20,
+))
+
+register_agent_tool(AgentTool(
+    name="get_build_system",
+    description="Detect build/test commands from package.json, pyproject, Makefile, etc.",
+    input_schema=_s({}),
+    capability="ucip:filesystem.read",
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.LOW,
+    timeout_s=15,
+))
+
+register_agent_tool(AgentTool(
+    name="get_package_dependencies",
+    description="Read dependency declarations from package.json / requirements / pyproject.",
+    input_schema=_s({
+        "max_entries": {"type": "integer"},
+    }),
+    capability="ucip:filesystem.read",
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.LOW,
+    timeout_s=15,
+))
+
+register_agent_tool(AgentTool(
+    name="find_symbol",
+    description="Heuristic search for a symbol name (function/class/def) across the project.",
+    input_schema=_s({
+        "symbol": {"type": "string", "maxLength": 256},
+        "max_results": {"type": "integer"},
+    }, required=["symbol"]),
+    capability="ucip:filesystem.read",
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.LOW,
+    timeout_s=30,
 ))
 
 register_agent_tool(AgentTool(

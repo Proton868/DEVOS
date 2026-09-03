@@ -227,18 +227,54 @@ export default function CodingAgentPanel() {
 
       {filesChanged.length > 0 && (
         <div className="px-3 py-2 border-t text-xs" style={{ borderColor: "var(--border)", background: "var(--bg-2)" }}>
-          <div className="text-slate-400 mb-1 flex items-center gap-1">
-            <GitBranch size={11} /> Files changed
+          <div className="text-slate-400 mb-1 flex items-center gap-1 justify-between">
+            <span className="flex items-center gap-1"><GitBranch size={11} /> Agent changes</span>
+            {taskId && (
+              <span className="flex gap-1">
+                <button
+                  className="px-1.5 py-0.5 rounded text-[10px]"
+                  style={{ background: "var(--bg-3)" }}
+                  onClick={() => api.acceptAllAgentChanges?.(taskId).then(() => setStatus("All changes accepted")).catch((e) => setStatus(e.message))}
+                >Accept all</button>
+                <button
+                  className="px-1.5 py-0.5 rounded text-[10px]"
+                  style={{ background: "#7f1d1d", color: "#fff" }}
+                  onClick={() => api.rejectAllAgentChanges?.(taskId).then(() => {
+                    setFilesChanged([]);
+                    setStatus("All changes rejected");
+                    api.getTree?.().then((r) => { const tree = r?.files || r?.tree || r; if (tree) setFileTree(tree); });
+                  }).catch((e) => setStatus(e.message))}
+                >Reject all</button>
+              </span>
+            )}
           </div>
           {filesChanged.map((f) => (
-            <div key={f.path} className="flex items-center gap-2 text-slate-200">
+            <div key={f.path + (f.change_id || "")} className="flex items-center gap-2 text-slate-200 py-0.5">
               <FileCode size={11} />
-              <span className="truncate">{f.path}</span>
+              <span className="truncate flex-1">{f.path}</span>
               <span className="text-slate-500">
                 {f.change}
                 {f.additions != null ? ` +${f.additions}` : ""}
                 {f.deletions != null ? ` -${f.deletions}` : ""}
               </span>
+              {f.change_id && (
+                <span className="flex gap-1">
+                  <button
+                    className="text-[10px] px-1 rounded"
+                    style={{ background: "var(--bg-3)" }}
+                    onClick={() => api.acceptAgentChange?.(f.change_id).then(() => setStatus(`Accepted ${f.path}`)).catch((e) => setStatus(e.message))}
+                  >Accept</button>
+                  <button
+                    className="text-[10px] px-1 rounded"
+                    style={{ background: "#7f1d1d", color: "#fff" }}
+                    onClick={() => api.rejectAgentChange?.(f.change_id).then(() => {
+                      setFilesChanged((prev) => prev.filter((x) => x.change_id !== f.change_id));
+                      setStatus(`Rejected ${f.path}`);
+                      api.getTree?.().then((r) => { const tree = r?.files || r?.tree || r; if (tree) setFileTree(tree); });
+                    }).catch((e) => setStatus(e.message))}
+                  >Reject</button>
+                </span>
+              )}
             </div>
           ))}
         </div>
