@@ -86,3 +86,22 @@ UNKNOWN → investigation/reconciliation only (never automatic retry).
 Direct AgentRuntime consequential tools reserve an `ExecutionOperation` **before** the side effect. Evidence binds `operation_id`. HAI checkpoints may record `last_operation_id`.
 
 Stale ExecutionJob leases consult the bound operation: UNKNOWN/succeeded do not requeue for replay.
+
+
+## Stage 3M.1 — Authoritative operation state machine
+
+Strict transitions only (atomic conditional UPDATE):
+
+- RESERVED → RUNNING | CANCELLED
+- RUNNING → SUCCEEDED | FAILED | UNKNOWN | CANCELLED
+- Terminal states immutable under normal execution
+
+Identity binding: expected task/tenant/owner/correlation must match **exactly**; NULL is not a wildcard.
+
+Evidence binding: deterministic lookup via `EvidenceRecord.operation_id` plus full field validation before RUNNING→SUCCEEDED.
+
+Idempotency: same owner + operation_type + idempotency_key returns existing operation id.
+
+`mark_running` failure in AgentRuntime **blocks** the side effect.
+
+`operation_id` ≠ `idempotency_key` ≠ `attempt`.

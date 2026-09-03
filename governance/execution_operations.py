@@ -1,9 +1,16 @@
 """
-Durable consequential operation ledger (Stage 3M).
+Authoritative consequential operation ledger (Stage 3M / 3M.1).
 
-RESERVED → RUNNING → SUCCEEDED | FAILED | UNKNOWN | CANCELLED
+State machine (only these transitions allowed):
+  RESERVED → RUNNING | CANCELLED
+  RUNNING  → SUCCEEDED | FAILED | UNKNOWN | CANCELLED
+Terminal states are immutable under normal execution.
 
-UNKNOWN means completion cannot be proven. UNKNOWN is never automatically retried.
+operation_id  = one consequential execution identity
+idempotency_key = semantic dedup key (tenant+owner+type+key)
+attempt       = attempt counter on that operation
+
+UNKNOWN → investigate only; execute=false; retry=false
 """
 from __future__ import annotations
 
@@ -25,6 +32,12 @@ OP_CANCELLED = "cancelled"
 
 TERMINAL = frozenset({OP_SUCCEEDED, OP_FAILED, OP_UNKNOWN, OP_CANCELLED})
 
+# from_status -> allowed next
+ALLOWED = {
+    OP_RESERVED: frozenset({OP_RUNNING, OP_CANCELLED}),
+    OP_RUNNING: frozenset({OP_SUCCEEDED, OP_FAILED, OP_UNKNOWN, OP_CANCELLED}),
+}
+
 
 def _now():
     return datetime.now(timezone.utc)
@@ -36,6 +49,65 @@ def digest_payload(obj: Any) -> str:
     except Exception:
         raw = str(obj)[:8000]
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def is_consequential_side_effect(side_effect: str) -> bool:
+    se = (side_effect or "").lower()
+    return se in ("local", "external", "unknown", "network", "mutative")
+
+
+async def transition_operation(operation_id: str, new_status: str, **fields) -> bool:
+    """Atomic conditional transition. Returns True only if row was updated."""
+    if new_status not in (
+        OP_RESERVED, OP_RUNNING, OP_SUCCEEDED, OP_FAILED, OP_UNKNOWN, OP_CANCELLED
+    ):
+        return False
+    try:
+        from sqlalchemy import text
+        from core.database import AsyncSessionLocal
+
+        # Build allowed-from set
+        allowed_from = [src for src, dests in ALLOWED.items() if new_status in dests]
+        if not allowed_from:
+            return False
+
+        sets = ["status = :new_status"]
+        params = {"op_id": operation_id, "new_status": new_status}
+        if "error" in fields and fields["error"] is not None:
+            sets.append("error = :error")
+            params["error"] = str(fields["error"])[:2000]
+        if "evidence_id" in fields and fields["evidence_id"] is not None:
+            sets.append("evidence_id = :evidence_id")
+            params["evidence_id"] = fields["evidence_id"]
+        if "result_digest" in fields and fields["result_digest"] is not None:
+            sets.append("result_digest = :result_digest")
+            params["result_digest"] = fields["result_digest"]
+        if new_status == OP_RUNNING:
+            sets.append("started_at = :ts")
+            params["ts"] = _now()
+        if new_status in TERMINAL:
+            sets.append("completed_at = :ts")
+            params["ts"] = _now()
+
+        placeholders = ", ".join(f":f{i}" for i in range(len(allowed_from)))
+        for i, s in enumerate(allowed_from):
+            params[f"f{i}"] = s
+
+        sql = text(
+            f"""
+            UPDATE execution_operations
+            SET {", ".join(sets)}
+            WHERE id = :op_id
+              AND status IN ({placeholders})
+            """
+        )
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(sql, params)
+            await db.commit()
+            return int(getattr(result, "rowcount", 0) or 0) == 1
+    except Exception:
+        logger.exception("transition_operation failed")
+        return False
 
 
 async def reserve_operation(
@@ -54,13 +126,38 @@ async def reserve_operation(
     target_digest: Optional[str] = None,
     args: Optional[dict] = None,
 ) -> Optional[str]:
-    """Create durable RESERVED operation. Returns operation_id or None on failure."""
+    """
+    Create RESERVED operation, or return existing id for same idempotency key.
+    Never stores raw secrets from args — digests only.
+    """
     try:
         from core.database import AsyncSessionLocal, ExecutionOperation
-        op_id = str(uuid.uuid4())
-        if args is not None and not input_digest:
-            input_digest = digest_payload(args)
+        from sqlalchemy import select
+
+        # Scrub args for digest only
+        safe_args = None
+        if args is not None:
+            safe_args = _scrub_args(args)
+            if not input_digest:
+                input_digest = digest_payload(safe_args)
+
         async with AsyncSessionLocal() as db:
+            if idempotency_key:
+                q = await db.execute(
+                    select(ExecutionOperation).where(
+                        ExecutionOperation.owner_id == owner_id,
+                        ExecutionOperation.idempotency_key == idempotency_key,
+                        ExecutionOperation.operation_type == operation_type,
+                    )
+                )
+                existing = q.scalars().first()
+                if existing:
+                    # Same tenant if both set
+                    if tenant_id and existing.tenant_id and existing.tenant_id != tenant_id:
+                        return None
+                    return existing.id
+
+            op_id = str(uuid.uuid4())
             row = ExecutionOperation(
                 id=op_id,
                 tenant_id=tenant_id,
@@ -87,20 +184,24 @@ async def reserve_operation(
         return None
 
 
+def _scrub_args(args: dict) -> dict:
+    out = {}
+    banned = ("password", "token", "secret", "api_key", "authorization", "cookie", "credential", "bearer")
+    for k, v in (args or {}).items():
+        lk = str(k).lower()
+        if any(b in lk for b in banned):
+            out[k] = "[redacted]"
+        elif isinstance(v, dict):
+            out[k] = _scrub_args(v)
+        elif isinstance(v, str) and len(v) > 500:
+            out[k] = v[:500]
+        else:
+            out[k] = v
+    return out
+
+
 async def mark_running(operation_id: str) -> bool:
-    try:
-        from core.database import AsyncSessionLocal, ExecutionOperation
-        async with AsyncSessionLocal() as db:
-            row = await db.get(ExecutionOperation, operation_id)
-            if row is None or row.status not in (OP_RESERVED, OP_RUNNING):
-                return False
-            row.status = OP_RUNNING
-            row.started_at = _now()
-            await db.commit()
-            return True
-    except Exception:
-        logger.exception("mark_running failed")
-        return False
+    return await transition_operation(operation_id, OP_RUNNING)
 
 
 async def complete_operation(
@@ -111,44 +212,21 @@ async def complete_operation(
     result_digest: Optional[str] = None,
     error: Optional[str] = None,
 ) -> bool:
-    try:
-        from core.database import AsyncSessionLocal, ExecutionOperation
-        async with AsyncSessionLocal() as db:
-            row = await db.get(ExecutionOperation, operation_id)
-            if row is None:
-                return False
-            if row.status in (OP_UNKNOWN, OP_SUCCEEDED) and not success:
-                # Do not downgrade UNKNOWN/SUCCEEDED to failed blindly
-                return False
-            row.status = OP_SUCCEEDED if success else OP_FAILED
-            row.evidence_id = evidence_id or row.evidence_id
-            row.result_digest = result_digest
-            row.error = (error or "")[:2000] if error else None
-            row.completed_at = _now()
-            await db.commit()
-            return True
-    except Exception:
-        logger.exception("complete_operation failed")
-        return False
+    return await transition_operation(
+        operation_id,
+        OP_SUCCEEDED if success else OP_FAILED,
+        evidence_id=evidence_id,
+        result_digest=result_digest,
+        error=error,
+    )
 
 
 async def mark_unknown(operation_id: str, reason: str = "ambiguous_outcome") -> bool:
-    try:
-        from core.database import AsyncSessionLocal, ExecutionOperation
-        async with AsyncSessionLocal() as db:
-            row = await db.get(ExecutionOperation, operation_id)
-            if row is None:
-                return False
-            if row.status == OP_SUCCEEDED:
-                return False  # never downgrade success
-            row.status = OP_UNKNOWN
-            row.error = reason[:2000]
-            row.completed_at = _now()
-            await db.commit()
-            return True
-    except Exception:
-        logger.exception("mark_unknown failed")
-        return False
+    return await transition_operation(operation_id, OP_UNKNOWN, error=reason)
+
+
+async def cancel_operation(operation_id: str, reason: str = "cancelled") -> bool:
+    return await transition_operation(operation_id, OP_CANCELLED, error=reason)
 
 
 async def load_operation(operation_id: str) -> Optional[dict]:
@@ -182,26 +260,95 @@ async def load_operation(operation_id: str) -> Optional[dict]:
         return None
 
 
+def validate_operation_identity(
+    op: dict,
+    *,
+    expected_task_id: Optional[str] = None,
+    expected_owner_id: Optional[str] = None,
+    expected_tenant_id: Optional[str] = None,
+    expected_correlation_id: Optional[str] = None,
+) -> tuple[bool, str]:
+    """Strict identity: missing field when expected is provided = fail."""
+    if expected_owner_id is not None:
+        if op.get("owner_id") is None or str(op["owner_id"]) != str(expected_owner_id):
+            return False, "owner_mismatch"
+    if expected_tenant_id is not None:
+        if op.get("tenant_id") is None or str(op["tenant_id"]) != str(expected_tenant_id):
+            return False, "tenant_mismatch"
+    if expected_task_id is not None:
+        if op.get("task_id") is None or str(op["task_id"]) != str(expected_task_id):
+            return False, "task_mismatch"
+    if expected_correlation_id is not None:
+        if op.get("correlation_id") is None or str(op["correlation_id"]) != str(expected_correlation_id):
+            return False, "correlation_mismatch"
+    return True, "ok"
+
+
+def validate_operation_evidence(op: dict, evidence: dict) -> tuple[bool, str]:
+    """Strict evidence binding for RUNNING → SUCCEEDED."""
+    body = evidence.get("body") if isinstance(evidence.get("body"), dict) else evidence
+    if not body:
+        return False, "empty_evidence"
+    if body.get("operation_id") != op.get("id") and evidence.get("operation_id") != op.get("id"):
+        return False, "operation_id_mismatch"
+    if body.get("outcome") != "succeeded":
+        return False, "outcome_not_succeeded"
+    if op.get("tool_name") and body.get("tool") and body.get("tool") != op.get("tool_name"):
+        return False, "tool_mismatch"
+    if op.get("tenant_id") is not None:
+        et = body.get("tenant_id") if body.get("tenant_id") is not None else evidence.get("tenant_id")
+        if et is None or str(et) != str(op["tenant_id"]):
+            return False, "tenant_mismatch"
+    if op.get("owner_id") is not None:
+        eo = body.get("owner_id") if body.get("owner_id") is not None else evidence.get("owner_id")
+        # owner may be actor_id in evidence path
+        if eo is not None and str(eo) != str(op["owner_id"]):
+            # allow match against actor in body
+            if str(body.get("actor_id") or "") != str(op["owner_id"]):
+                return False, "owner_mismatch"
+    if op.get("task_id") and body.get("task_id") and str(body["task_id"]) != str(op["task_id"]):
+        return False, "task_mismatch"
+    if op.get("correlation_id") and body.get("correlation_id") and str(body["correlation_id"]) != str(op["correlation_id"]):
+        return False, "correlation_mismatch"
+    if op.get("input_digest") and body.get("input_digest") and body["input_digest"] != op["input_digest"]:
+        return False, "input_digest_mismatch"
+    if op.get("target_digest") and body.get("target_digest") and body["target_digest"] != op["target_digest"]:
+        return False, "target_digest_mismatch"
+    return True, "ok"
+
+
 async def find_matching_evidence(operation_id: str) -> Optional[dict]:
-    """Find EvidenceRecord body referencing this operation_id."""
+    """Deterministic lookup by EvidenceRecord.operation_id column, then body."""
     try:
         from core.database import AsyncSessionLocal, EvidenceRecord
         from sqlalchemy import select
         async with AsyncSessionLocal() as db:
-            # Prefer scanning recent evidence; body JSON may contain operation_id
-            q = await db.execute(select(EvidenceRecord).order_by(EvidenceRecord.created_at.desc()).limit(200))
-            for row in q.scalars().all():
-                body = row.body if isinstance(row.body, dict) else {}
-                if body.get("operation_id") == operation_id:
-                    return {
-                        "id": row.id,
-                        "body": body,
-                        "owner_id": getattr(row, "owner_id", None),
-                        "tenant_id": getattr(row, "tenant_id", None),
-                    }
+            q = await db.execute(
+                select(EvidenceRecord).where(EvidenceRecord.operation_id == operation_id).limit(5)
+            )
+            rows = list(q.scalars().all())
+            if not rows:
+                # Fallback: body.operation_id for pre-migration rows
+                q2 = await db.execute(select(EvidenceRecord).order_by(EvidenceRecord.created_at.desc()).limit(100))
+                for row in q2.scalars().all():
+                    body = row.body if isinstance(row.body, dict) else {}
+                    if body.get("operation_id") == operation_id:
+                        rows = [row]
+                        break
+            if not rows:
+                return None
+            row = rows[0]
+            body = row.body if isinstance(row.body, dict) else {}
+            return {
+                "id": row.id,
+                "body": body,
+                "owner_id": row.owner_id,
+                "tenant_id": row.tenant_id,
+                "operation_id": getattr(row, "operation_id", None) or body.get("operation_id"),
+            }
     except Exception:
         logger.debug("find_matching_evidence failed", exc_info=True)
-    return None
+        return None
 
 
 async def reconcile_operation(
@@ -212,29 +359,20 @@ async def reconcile_operation(
     expected_tenant_id: Optional[str] = None,
     expected_correlation_id: Optional[str] = None,
 ) -> dict:
-    """
-    Deterministic operation reconciliation. Never executes tools.
-    Returns structured result with execute=False always.
-    """
+    """Reconcile without executing. Fail closed on identity/evidence mismatch."""
     op = await load_operation(operation_id)
     if op is None:
-        return {
-            "ok": False,
-            "reason_code": "operation_missing",
-            "execute": False,
-            "retry": False,
-            "status": None,
-        }
+        return {"ok": False, "reason_code": "operation_missing", "execute": False, "retry": False, "status": None}
 
-    # Identity binding
-    if expected_task_id and op.get("task_id") and str(op["task_id"]) != str(expected_task_id):
-        return {"ok": False, "reason_code": "task_mismatch", "execute": False, "retry": False, "status": op["status"]}
-    if expected_owner_id and str(op.get("owner_id")) != str(expected_owner_id):
-        return {"ok": False, "reason_code": "owner_mismatch", "execute": False, "retry": False, "status": op["status"]}
-    if expected_tenant_id and op.get("tenant_id") and str(op["tenant_id"]) != str(expected_tenant_id):
-        return {"ok": False, "reason_code": "tenant_mismatch", "execute": False, "retry": False, "status": op["status"]}
-    if expected_correlation_id and op.get("correlation_id") and str(op["correlation_id"]) != str(expected_correlation_id):
-        return {"ok": False, "reason_code": "correlation_mismatch", "execute": False, "retry": False, "status": op["status"]}
+    ok_id, reason = validate_operation_identity(
+        op,
+        expected_task_id=expected_task_id,
+        expected_owner_id=expected_owner_id,
+        expected_tenant_id=expected_tenant_id,
+        expected_correlation_id=expected_correlation_id,
+    )
+    if not ok_id:
+        return {"ok": False, "reason_code": reason, "execute": False, "retry": False, "status": op["status"], "operation": op}
 
     status = op["status"]
     if status == OP_SUCCEEDED:
@@ -247,35 +385,24 @@ async def reconcile_operation(
         return {"ok": True, "reason_code": "failed", "execute": False, "retry": False, "status": OP_FAILED, "operation": op}
 
     if status == OP_RESERVED:
-        # Never started side effect — cancel, do not auto-execute
-        try:
-            from core.database import AsyncSessionLocal, ExecutionOperation
-            async with AsyncSessionLocal() as db:
-                row = await db.get(ExecutionOperation, operation_id)
-                if row and row.status == OP_RESERVED:
-                    row.status = OP_CANCELLED
-                    row.error = "reserved_never_started"
-                    row.completed_at = _now()
-                    await db.commit()
-        except Exception:
-            pass
+        await cancel_operation(operation_id, "reserved_never_started")
+        op = await load_operation(operation_id)
         return {"ok": True, "reason_code": "reserved_cancelled", "execute": False, "retry": False, "status": OP_CANCELLED, "operation": op}
 
     if status == OP_RUNNING:
         evidence = await find_matching_evidence(operation_id)
-        if evidence and evidence.get("body", {}).get("outcome") == "succeeded":
-            await complete_operation(operation_id, success=True, evidence_id=evidence.get("id"))
+        if evidence:
+            valid, vreason = validate_operation_evidence(op, evidence)
+            if valid:
+                await complete_operation(operation_id, success=True, evidence_id=evidence.get("id"))
+                op = await load_operation(operation_id)
+                return {"ok": True, "reason_code": "reconciled_succeeded", "execute": False, "retry": False, "status": OP_SUCCEEDED, "operation": op}
+            # Mismatched evidence → UNKNOWN (do not trust)
+            await mark_unknown(operation_id, f"evidence_invalid:{vreason}")
             op = await load_operation(operation_id)
-            return {"ok": True, "reason_code": "reconciled_succeeded", "execute": False, "retry": False, "status": OP_SUCCEEDED, "operation": op}
-        # Ambiguous — UNKNOWN
+            return {"ok": True, "reason_code": "evidence_invalid", "execute": False, "retry": False, "status": OP_UNKNOWN, "operation": op}
         await mark_unknown(operation_id, "running_no_matching_evidence")
         op = await load_operation(operation_id)
         return {"ok": True, "reason_code": "marked_unknown", "execute": False, "retry": False, "status": OP_UNKNOWN, "operation": op}
 
     return {"ok": False, "reason_code": "unhandled_status", "execute": False, "retry": False, "status": status, "operation": op}
-
-
-def is_consequential_side_effect(side_effect: str) -> bool:
-    """True for tools that mutate state and must not be blindly replayed."""
-    se = (side_effect or "").lower()
-    return se in ("local", "external", "unknown", "network", "mutative")

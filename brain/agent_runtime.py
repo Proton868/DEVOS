@@ -700,7 +700,7 @@ class AgentRuntime:
                         args=action_input if isinstance(action_input, dict) else {},
                     )
                     if not op_id:
-                        result = {"ok": False, "error": "operation_reservation_failed"}
+                        result = {"ok": False, "error": "operation_reservation_failed", "execute": False, "retry": False}
                         task.tools_used.append(action)
                         yield _emit(task, "agent.tool_result", {
                             "tool": action, "ok": False, "error": "operation_reservation_failed",
@@ -711,7 +711,25 @@ class AgentRuntime:
                             "content": "OPERATION RESERVE FAILED. Do not assume the side effect ran.",
                         })
                         continue
-                    await mark_running(op_id)
+                    if not await mark_running(op_id):
+                        result = {
+                            "ok": False,
+                            "error": "operation_start_failed",
+                            "operation_id": op_id,
+                            "execute": False,
+                            "retry": False,
+                        }
+                        task.tools_used.append(action)
+                        yield _emit(task, "agent.tool_result", {
+                            "tool": action, "ok": False, "error": "operation_start_failed",
+                            "operation_id": op_id,
+                        })
+                        messages.append({"role": "assistant", "content": text})
+                        messages.append({
+                            "role": "user",
+                            "content": "OPERATION START FAILED. Do not assume the side effect ran.",
+                        })
+                        continue
                     # expose to HAI checkpoint binding
                     if hasattr(task, "last_operation_id"):
                         task.last_operation_id = op_id

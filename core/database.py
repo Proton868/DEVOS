@@ -298,6 +298,10 @@ async def _migrate_missing_columns(conn):
         "agent_tasks", "recovery_lease_expires_at",
         "ALTER TABLE agent_tasks ADD COLUMN recovery_lease_expires_at DATETIME",
     )
+    await _add_column_if_missing(
+        "evidence_records", "operation_id",
+        "ALTER TABLE evidence_records ADD COLUMN operation_id VARCHAR",
+    )
 
     await _add_column_if_missing(
         "worker_trust_records", "competency",
@@ -368,6 +372,7 @@ class EvidenceRecord(Base):
     tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
     goal: Mapped[str] = mapped_column(Text, default="")
     body: Mapped[dict] = mapped_column(JSON, default=dict)
+    operation_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 

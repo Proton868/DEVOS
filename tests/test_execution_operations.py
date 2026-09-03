@@ -204,3 +204,55 @@ def test_is_consequential_classification():
     assert is_consequential_side_effect("local") is True
     assert is_consequential_side_effect("none") is False
     assert is_consequential_side_effect("unknown") is True
+
+
+
+def test_reserved_cannot_jump_to_succeeded(db):
+    r = _worker(db, """
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from governance.execution_operations import reserve_operation, transition_operation, load_operation, OP_SUCCEEDED
+    op = await reserve_operation(owner_id="u", tenant_id="t", tool_name="x")
+    ok = await transition_operation(op, OP_SUCCEEDED)
+    row = await load_operation(op)
+    print(json.dumps({"ok": ok, "status": row["status"]}))
+asyncio.run(main())
+""")
+    assert r["ok"] is False
+    assert r["status"] == "reserved"
+
+
+def test_mismatched_evidence_yields_unknown(db):
+    r = _worker(db, """
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from core.database import EvidenceRecord
+    from governance.execution_operations import (
+        reserve_operation, mark_running, reconcile_operation,
+    )
+    from datetime import datetime, timezone
+    op = await reserve_operation(owner_id="u", tenant_id="tenant-a", task_id="task-1",
+                                 tool_name="apply_patch", correlation_id="c1")
+    await mark_running(op)
+    async with dbmod.AsyncSessionLocal() as session:
+        session.add(EvidenceRecord(
+            owner_id="attacker", tenant_id="evil", goal="x",
+            operation_id=op,
+            body={"operation_id": op, "outcome": "succeeded", "tool": "apply_patch",
+                  "tenant_id": "evil", "task_id": "task-1"},
+        ))
+        await session.commit()
+    rec = await reconcile_operation(op, expected_owner_id="u", expected_tenant_id="tenant-a",
+                                    expected_task_id="task-1", expected_correlation_id="c1")
+    print(json.dumps(rec, default=str))
+asyncio.run(main())
+""")
+    assert r["status"] == "unknown"
+    assert r["execute"] is False
+    assert r["retry"] is False
