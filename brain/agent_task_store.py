@@ -207,34 +207,50 @@ async def load_hai_checkpoint(task_id: str):
 
 
 async def claim_task_recovery(task_id: str, owner_id: str, lease_seconds: int = 60) -> bool:
-    """Claim exclusive recovery ownership. Returns True if this owner holds the lease."""
+    """Atomically claim exclusive recovery ownership.
+
+    Same owner renews the lease. A different owner is denied while the lease
+    is unexpired. Guarantee survives separate OS processes via conditional UPDATE.
+    """
     try:
         from datetime import timedelta
-        from core.database import AsyncSessionLocal, AgentTaskRecord
+        from sqlalchemy import text
+        from core.database import AsyncSessionLocal, engine
+
         now = _now()
+        expiry = now + timedelta(seconds=int(lease_seconds))
+        # Conditional UPDATE — ownership decided by rowcount
+        sql = text(
+            """
+            UPDATE agent_tasks
+            SET recovery_owner = :owner,
+                recovery_lease_expires_at = :expiry,
+                updated_at = :now
+            WHERE id = :task_id
+              AND (
+                   recovery_owner IS NULL
+                   OR recovery_owner = :owner
+                   OR recovery_lease_expires_at IS NULL
+                   OR recovery_lease_expires_at <= :now
+              )
+            """
+        )
         async with AsyncSessionLocal() as db:
-            row = await db.get(AgentTaskRecord, task_id)
-            if row is None:
-                return False
-            exp = getattr(row, "recovery_lease_expires_at", None)
-            current = getattr(row, "recovery_owner", None)
-            expired = True
-            if exp is not None:
-                try:
-                    # normalize naive/aware
-                    if getattr(exp, "tzinfo", None) is None:
-                        from datetime import timezone as _tz
-                        exp = exp.replace(tzinfo=_tz.utc)
-                    expired = exp <= now
-                except Exception:
-                    expired = True
-            if current and current != owner_id and not expired:
-                return False
-            row.recovery_owner = owner_id
-            row.recovery_lease_expires_at = now + timedelta(seconds=int(lease_seconds))
-            row.updated_at = now
+            result = await db.execute(
+                sql,
+                {
+                    "owner": owner_id,
+                    "expiry": expiry,
+                    "now": now,
+                    "task_id": task_id,
+                },
+            )
             await db.commit()
-            return True
+            # SQLAlchemy 2: rowcount on CursorResult
+            rc = getattr(result, "rowcount", None)
+            if rc is None:
+                return False
+            return int(rc) == 1
     except Exception:
         logger.debug("claim_task_recovery failed", exc_info=True)
         return False

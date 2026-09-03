@@ -59,3 +59,13 @@ Recovery lease: only one worker may own recovery of a task at a time (`claim_tas
 Security: checkpoint is cognitive state, not authority. Identity comes from AgentTaskRecord columns only.
 
 Entrypoint: `brain/hai_recovery.recover_hai_task` — restores and reconciles; does not execute tools.
+
+## Stage 3L.1 — Atomic lease + authoritative job truth
+
+**Atomic recovery ownership:** `claim_task_recovery` uses a single conditional `UPDATE` so at most one process holds an unexpired lease. Same owner renews; different owner is denied while valid.
+
+**Authoritative execution truth:** `recover_hai_task` loads `ExecutionJob` by the checkpoint's `last_job_id` from durable storage. Caller `job_status` / `job_id` arguments are ignored for truth. Missing referenced job → fail closed (`job_missing`).
+
+**Identity binding:** `checkpoint.task_id` must equal `AgentTaskRecord.id`. When both correlation IDs are present, they must match. Identity always comes from the task row, never the checkpoint.
+
+**Recovery remains non-executing:** restore + validate + reconcile only; `execute=false` always.

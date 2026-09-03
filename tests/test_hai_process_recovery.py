@@ -181,6 +181,11 @@ async def main():
             objective="x", mode="agent", status="running", correlation_id="c1", events=[],
             started_at=datetime.now(timezone.utc),
         ))
+        from core.database import ExecutionJob
+        session.add(ExecutionJob(
+            id={job_id!r}, owner_id="u", tenant_id="t", status="running",
+            job_type="agent", payload={{}},
+        ))
         await session.commit()
     ctrl = StrategicController(); ctrl.start("x")
     ctrl.control.last_job_id = {job_id!r}
@@ -233,6 +238,11 @@ async def main():
             objective="x", mode="agent", status="running", correlation_id="c", events=[],
             started_at=datetime.now(timezone.utc),
         ))
+        from core.database import ExecutionJob
+        session.add(ExecutionJob(
+            id="job-unk", owner_id="u", tenant_id="t", status="unknown",
+            job_type="agent", payload={{}},
+        ))
         await session.commit()
     ctrl = StrategicController(); ctrl.start("x")
     ctrl.control.last_job_id = "job-unk"
@@ -283,6 +293,11 @@ async def main():
             id={task_id!r}, user_id="u", tenant_id="t", project_id="p", session_id="s",
             objective="x", mode="agent", status="running", correlation_id="c", events=[],
             started_at=datetime.now(timezone.utc),
+        ))
+        from core.database import ExecutionJob
+        session.add(ExecutionJob(
+            id="job-ok", owner_id="u", tenant_id="t", status="succeeded",
+            job_type="agent", payload={{}},
         ))
         await session.commit()
     ctrl = StrategicController(); ctrl.start("x")
@@ -335,8 +350,14 @@ async def main():
             objective="x", mode="agent", status="running", correlation_id="c", events=[],
             started_at=datetime.now(timezone.utc),
         ))
+        from core.database import ExecutionJob
+        session.add(ExecutionJob(
+            id="job-fail-e", owner_id="u", tenant_id="t", status="failed",
+            job_type="agent", payload={{}},
+        ))
         await session.commit()
     ctrl = StrategicController(); ctrl.start("x")
+    ctrl.control.last_job_id = "job-fail-e"
     ctrl.control.last_job_status = "failed"
     cp = ctrl.control.checkpoint({task_id!r}, state_version=1)
     await persist_hai_checkpoint({task_id!r}, cp.to_dict())
@@ -563,3 +584,292 @@ asyncio.run(main())
     else:
         assert b.get("reason_code") in ("checkpoint_invalid", "checkpoint_missing")
         assert b.get("execute") is False
+
+
+
+def _bootstrap_engine_body():
+    return """
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+"""
+
+
+def test_concurrent_lease_race(shared_db):
+    """Two independent processes race; exactly one wins."""
+    task_id = str(uuid.uuid4())
+    # Seed task
+    _run_worker(
+        shared_db,
+        f"""
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from core.database import AgentTaskRecord
+    from datetime import datetime, timezone
+    async with dbmod.AsyncSessionLocal() as session:
+        session.add(AgentTaskRecord(
+            id={task_id!r}, user_id="u", tenant_id="t", project_id="p", session_id="s",
+            objective="x", mode="agent", status="running", correlation_id="c", events=[],
+            started_at=datetime.now(timezone.utc),
+        ))
+        await session.commit()
+    print(json.dumps({{"ok": True}}))
+asyncio.run(main())
+""",
+    )
+    # Launch two contenders nearly simultaneously
+    import threading
+    results = {}
+
+    def claim(owner):
+        results[owner] = _run_worker(
+            shared_db,
+            f"""
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from brain.agent_task_store import claim_task_recovery
+    ok = await claim_task_recovery({task_id!r}, {owner!r}, lease_seconds=120)
+    print(json.dumps({{"owner": {owner!r}, "claimed": ok}}))
+asyncio.run(main())
+""",
+        )
+
+    t1 = threading.Thread(target=claim, args=("owner-A",))
+    t2 = threading.Thread(target=claim, args=("owner-B",))
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+    a = results["owner-A"].get("claimed")
+    b = results["owner-B"].get("claimed")
+    assert a is True or b is True
+    assert not (a is True and b is True), "both owners claimed — lease not exclusive"
+    # Inspect durable row
+    row = _run_worker(
+        shared_db,
+        f"""
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from core.database import AgentTaskRecord
+    async with dbmod.AsyncSessionLocal() as session:
+        r = await session.get(AgentTaskRecord, {task_id!r})
+        print(json.dumps({{"owner": r.recovery_owner}}))
+asyncio.run(main())
+""",
+    )
+    winner = "owner-A" if a else "owner-B"
+    assert row.get("owner") == winner
+
+
+def test_same_owner_renews_lease(shared_db):
+    task_id = str(uuid.uuid4())
+    _run_worker(
+        shared_db,
+        f"""
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from core.database import AgentTaskRecord
+    from brain.agent_task_store import claim_task_recovery
+    from datetime import datetime, timezone
+    async with dbmod.AsyncSessionLocal() as session:
+        session.add(AgentTaskRecord(
+            id={task_id!r}, user_id="u", tenant_id="t", project_id="p", session_id="s",
+            objective="x", mode="agent", status="running", correlation_id="c", events=[],
+            started_at=datetime.now(timezone.utc),
+        ))
+        await session.commit()
+    ok1 = await claim_task_recovery({task_id!r}, "same", lease_seconds=120)
+    ok2 = await claim_task_recovery({task_id!r}, "same", lease_seconds=120)
+    print(json.dumps({{"ok1": ok1, "ok2": ok2}}))
+asyncio.run(main())
+""",
+    )
+    # both true — renewal
+    # result from last print
+    # re-fetch by running again is hard; check from worker output
+    # Worker returns last JSON
+    r = _run_worker(
+        shared_db,
+        f"""
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from brain.agent_task_store import claim_task_recovery
+    ok = await claim_task_recovery({task_id!r}, "same", lease_seconds=120)
+    print(json.dumps({{"renewed": ok}}))
+asyncio.run(main())
+""",
+    )
+    assert r.get("renewed") is True
+
+
+def test_caller_cannot_spoof_job_status_success(shared_db):
+    """Durable job is failed; caller job_status=succeeded must not win."""
+    task_id = str(uuid.uuid4())
+    job_id = "job-fail-1"
+    _run_worker(
+        shared_db,
+        f"""
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from core.database import AgentTaskRecord, ExecutionJob
+    from brain.agent_task_store import persist_hai_checkpoint
+    from cognitive.hai_control import StrategicController
+    from datetime import datetime, timezone
+    async with dbmod.AsyncSessionLocal() as session:
+        session.add(AgentTaskRecord(
+            id={task_id!r}, user_id="u", tenant_id="t", project_id="p", session_id="s",
+            objective="x", mode="agent", status="running", correlation_id="c", events=[],
+            started_at=datetime.now(timezone.utc),
+        ))
+        session.add(ExecutionJob(
+            id={job_id!r}, owner_id="u", tenant_id="t", status="failed",
+            job_type="agent", payload={{}},
+        ))
+        await session.commit()
+    ctrl = StrategicController(); ctrl.start("x")
+    ctrl.control.last_job_id = {job_id!r}
+    ctrl.control.last_job_status = "failed"
+    await persist_hai_checkpoint({task_id!r}, ctrl.control.checkpoint({task_id!r}, correlation_id="c").to_dict())
+    print(json.dumps({{"ok": True}}))
+asyncio.run(main())
+""",
+    )
+    b = _run_worker(
+        shared_db,
+        f"""
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from brain.hai_recovery import recover_hai_task, finish_recovery
+    res = await recover_hai_task(
+        {task_id!r}, owner_id="worker-b",
+        job_status="succeeded", job_id="attacker-job",
+    )
+    await finish_recovery({task_id!r}, "worker-b")
+    print(json.dumps(res, default=str))
+asyncio.run(main())
+""",
+    )
+    assert b.get("ok") is True
+    assert b.get("retry") is False
+    assert b.get("outcome") == "replan"
+    assert b.get("execute") is False
+
+
+def test_checkpoint_task_id_mismatch_fail_closed(shared_db):
+    task_a = str(uuid.uuid4())
+    task_b = str(uuid.uuid4())
+    _run_worker(
+        shared_db,
+        f"""
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from core.database import AgentTaskRecord
+    from brain.agent_task_store import persist_hai_checkpoint
+    from cognitive.hai_control import StrategicController
+    from datetime import datetime, timezone
+    async with dbmod.AsyncSessionLocal() as session:
+        session.add(AgentTaskRecord(
+            id={task_a!r}, user_id="u", tenant_id="t", project_id="p", session_id="s",
+            objective="A", mode="agent", status="running", correlation_id="corr-a", events=[],
+            started_at=datetime.now(timezone.utc),
+        ))
+        await session.commit()
+    ctrl = StrategicController(); ctrl.start("B objective")
+    # Valid checksum for task B stored under task A row
+    cp = ctrl.control.checkpoint({task_b!r}, correlation_id="corr-b").to_dict()
+    await persist_hai_checkpoint({task_a!r}, cp)
+    print(json.dumps({{"ok": True}}))
+asyncio.run(main())
+""",
+    )
+    b = _run_worker(
+        shared_db,
+        f"""
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from brain.hai_recovery import recover_hai_task, finish_recovery
+    res = await recover_hai_task({task_a!r}, owner_id="worker-b")
+    await finish_recovery({task_a!r}, "worker-b")
+    print(json.dumps(res, default=str))
+asyncio.run(main())
+""",
+    )
+    assert b.get("ok") is False
+    assert b.get("reason_code") == "checkpoint_invalid"
+    assert b.get("execute") is False
+    assert b.get("retry") is False
+
+
+def test_missing_referenced_job_fail_closed(shared_db):
+    task_id = str(uuid.uuid4())
+    _run_worker(
+        shared_db,
+        f"""
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from core.database import AgentTaskRecord
+    from brain.agent_task_store import persist_hai_checkpoint
+    from cognitive.hai_control import StrategicController
+    from datetime import datetime, timezone
+    async with dbmod.AsyncSessionLocal() as session:
+        session.add(AgentTaskRecord(
+            id={task_id!r}, user_id="u", tenant_id="t", project_id="p", session_id="s",
+            objective="x", mode="agent", status="running", correlation_id="c", events=[],
+            started_at=datetime.now(timezone.utc),
+        ))
+        await session.commit()
+    ctrl = StrategicController(); ctrl.start("x")
+    ctrl.control.last_job_id = "missing-job-xyz"
+    await persist_hai_checkpoint({task_id!r}, ctrl.control.checkpoint({task_id!r}, correlation_id="c").to_dict())
+    print(json.dumps({{"ok": True}}))
+asyncio.run(main())
+""",
+    )
+    b = _run_worker(
+        shared_db,
+        f"""
+async def main():
+    from core import database as dbmod
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    dbmod.engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    from brain.hai_recovery import recover_hai_task, finish_recovery
+    res = await recover_hai_task({task_id!r}, owner_id="worker-b")
+    await finish_recovery({task_id!r}, "worker-b")
+    print(json.dumps(res, default=str))
+asyncio.run(main())
+""",
+    )
+    assert b.get("ok") is False
+    assert b.get("reason_code") == "job_missing"
+    assert b.get("execute") is False
+
