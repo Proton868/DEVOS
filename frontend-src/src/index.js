@@ -7,7 +7,7 @@ import "./devos.css";
 import "./devos-extra.css";
 import "./devos-premium.css";
 import "./devos-light.css";
-import "./components/panels/registerPanels";
+import "./os/spatial.css";
 import App from "./App";
 
 const root = ReactDOM.createRoot(document.getElementById("root"));

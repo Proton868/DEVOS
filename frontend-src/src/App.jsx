@@ -4,13 +4,10 @@ import { api, verifySession, subscribeToEvents } from "./services/api";
 import { ThemeProvider } from "./theme/ThemeContext";
 import LoginScreen from "./components/auth/LoginScreen";
 import ErrorBoundary from "./components/ErrorBoundary";
-import DockableLayout from "./components/layout/DockableLayout";
+import DevOSWorkspace from "./os/workspace/DevOSWorkspace";
 import { registerCoreCommands } from "./commands/registerCoreCommands";
 
 // Lazy load modals
-const SettingsModal = lazy(() => import("./components/settings/SettingsModal"));
-const CmdKModal = lazy(() => import("./components/editor/CmdKModal"));
-const CommandPalette = lazy(() => import("./components/editor/CommandPalette"));
 const DiffViewer = lazy(() => import("./components/editor/DiffViewer"));
 
 const Spin = () => (
@@ -229,12 +226,9 @@ export default function App() {
           <LoginScreen />
         ) : (
           <>
-            <DockableLayout />
+            <DevOSWorkspace />
             <HitlApprovalToasts />
             <Suspense fallback={null}>
-              <SettingsModal />
-              <CmdKModal />
-              <CommandPalette />
               <DiffViewer />
             </Suspense>
           </>
