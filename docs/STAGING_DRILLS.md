@@ -138,6 +138,52 @@ Do not only test clean kills. Prefer:
 
 **FAIL → STOP.** No silent override in a developer shell for production promote.
 
+
+## Live P0 — worker kill after claim (executable)
+
+**Status:** harness implemented; PASS only when run against live PostgreSQL.
+
+Prerequisites:
+- PostgreSQL reachable via `DATABASE_URL=postgresql+asyncpg://...`
+- Optional Redis via `REDIS_URL` / `DEVOS_REDIS_URL` (required if configured)
+- Python deps including `asyncpg`, SQLAlchemy
+
+Start infrastructure (Docker available):
+
+```bash
+docker compose -f docker-compose.staging.yml up -d postgres redis
+export DATABASE_URL=postgresql+asyncpg://devos:devos_password@localhost:5432/devos
+export REDIS_URL=redis://localhost:6379
+export DEVOS_JOB_LEASE_S=5
+```
+
+Run the drill (spawns two host workers, SIGKILLs the claimer, verifies lease recovery):
+
+```bash
+python scripts/staging_p0_worker_kill.py
+```
+
+Workers may also run in compose:
+
+```bash
+docker compose -f docker-compose.staging.yml --profile workers up -d worker-a worker-b
+```
+
+Expected result:
+- Exit 0 and JSON `"status": "PASS"` under `data/staging-results/p0-worker-kill-*.json`
+- `attempts >= 2`, single job row for idempotency key, no duplicate operations/evidence
+- Exit 2 = infrastructure BLOCKED; exit 1 = assertion FAIL
+
+Failure conditions:
+- SQLite URL, Postgres down, workers exit early, claim never observed, lease never recovered,
+  duplicate logical success, UNKNOWN blind retry
+
+Cleanup:
+- Stop workers/containers; optional `docker compose -f docker-compose.staging.yml down -v`
+
+Standalone worker entrypoint: `scripts/run_job_worker.py` (does not load `app.py`).
+
+
 ## Automated pure-logic profile
 
 ```bash

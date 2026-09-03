@@ -1,0 +1,86 @@
+# Staging profile for live reliability drills (P0 worker kill, etc.)
+# Usage:
+#   docker compose -f docker-compose.staging.yml up -d postgres redis
+#   export DATABASE_URL=postgresql+asyncpg://devos:devos_password@localhost:5432/devos
+#   export REDIS_URL=redis://localhost:6379
+#   export DEVOS_JOB_LEASE_S=5
+#   python scripts/staging_p0_worker_kill.py
+#
+# Optional: run workers in compose instead of host processes:
+#   docker compose -f docker-compose.staging.yml up -d worker-a worker-b
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: devos-staging-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: devos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devos_password}
+      POSTGRES_DB: devos
+    volumes:
+      - staging_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devos -d devos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: devos-staging-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  worker-a:
+    profiles: ["workers"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: devos-staging-worker-a
+    environment:
+      DATABASE_URL: postgresql+asyncpg://devos:${POSTGRES_PASSWORD:-devos_password}@postgres:5432/devos
+      REDIS_URL: redis://redis:6379
+      DEVOS_REDIS_URL: redis://redis:6379
+      DEVOS_WORKER_ID: worker-a
+      DEVOS_JOB_LEASE_S: ${DEVOS_JOB_LEASE_S:-5}
+      DEVOS_STAGING_HOLD_S: ${DEVOS_STAGING_HOLD_S:-60}
+      DEVOS_JOB_POLL_S: "0.25"
+      JWT_SECRET: ${JWT_SECRET:-staging-drill-jwt-secret-32chars!!}
+    command: ["python", "scripts/run_job_worker.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-b:
+    profiles: ["workers"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: devos-staging-worker-b
+    environment:
+      DATABASE_URL: postgresql+asyncpg://devos:${POSTGRES_PASSWORD:-devos_password}@postgres:5432/devos
+      REDIS_URL: redis://redis:6379
+      DEVOS_REDIS_URL: redis://redis:6379
+      DEVOS_WORKER_ID: worker-b
+      DEVOS_JOB_LEASE_S: ${DEVOS_JOB_LEASE_S:-5}
+      DEVOS_STAGING_HOLD_S: ${DEVOS_STAGING_HOLD_S:-60}
+      DEVOS_JOB_POLL_S: "0.25"
+      JWT_SECRET: ${JWT_SECRET:-staging-drill-jwt-secret-32chars!!}
+    command: ["python", "scripts/run_job_worker.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  staging_pg:

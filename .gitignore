@@ -52,3 +52,6 @@ data/research/
 data/autoresearch/
 workspace/*
 !workspace/.gitkeep
+
+# Live staging drill artifacts
+data/staging-results/
