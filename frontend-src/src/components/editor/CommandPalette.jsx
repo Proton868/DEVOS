@@ -3,6 +3,7 @@ import { Search, File, Zap, GitBranch, Bot, Terminal, Settings,
          MessageSquare, RefreshCw, Split } from "lucide-react";
 import useStore from "../../store/useStore";
 import { api, getLanguageFromPath } from "../../services/api";
+import { listCommands, executeCommand } from "../../commands/registry";
 
 // Fuzzy match: returns score 0-1, highlights array
 function fuzzyMatch(str, query) {
@@ -31,17 +32,21 @@ function HighlightedText({ text, highlights }) {
   return <span>{chars}</span>;
 }
 
-const BUILTIN_COMMANDS = [
-  { id: "toggle-terminal", label: "Toggle Terminal", icon: <Terminal size={13} />, shortcut: "Ctrl+`" },
-  { id: "toggle-chat",     label: "Toggle Chat",     icon: <MessageSquare size={13} />, shortcut: "Ctrl+Shift+L" },
-  { id: "toggle-git",      label: "Open Git Panel",  icon: <GitBranch size={13} /> },
-  { id: "toggle-agent",    label: "Open Agent Mode", icon: <Bot size={13} /> },
-  { id: "toggle-search",   label: "Search in Files", icon: <Search size={13} />, shortcut: "Ctrl+Shift+F" },
-  { id: "toggle-problems", label: "Problems Panel",  icon: <Zap size={13} /> },
-  { id: "split-editor",    label: "Split Editor",    icon: <Split size={13} /> },
-  { id: "reindex",         label: "Re-index Workspace", icon: <RefreshCw size={13} /> },
-  { id: "open-settings",   label: "Workspace Settings", icon: <Settings size={13} />, shortcut: "Ctrl+," },
-];
+// Fallback icons for registry commands (registry itself is icon-agnostic)
+const CATEGORY_ICON = {
+  File: <File size={13} />,
+  Edit: <Search size={13} />,
+  Search: <Search size={13} />,
+  Navigation: <Zap size={13} />,
+  View: <Split size={13} />,
+  Terminal: <Terminal size={13} />,
+  Test: <Zap size={13} />,
+  Build: <RefreshCw size={13} />,
+  Git: <GitBranch size={13} />,
+  Agent: <Bot size={13} />,
+  Diff: <Split size={13} />,
+  General: <Settings size={13} />,
+};
 
 export default function CommandPalette() {
   const {
@@ -80,21 +85,31 @@ export default function CommandPalette() {
 
   const items = useMemo(() => {
     if (isCommand) {
-      if (!searchQuery) return BUILTIN_COMMANDS.map(c => ({ ...c, type: "command" }));
-      return BUILTIN_COMMANDS
-        .map(c => { const m = fuzzyMatch(c.label, searchQuery); return m ? { ...c, type: "command", ...m } : null; })
-        .filter(Boolean)
-        .sort((a, b) => b.score - a.score);
+      // Prefer canonical registry (Requirement 20)
+      const registered = listCommands({ query: searchQuery, includeDisabled: false });
+      return registered.map((c) => {
+        const m = searchQuery ? fuzzyMatch(c.label, searchQuery) : { score: 1, highlights: [] };
+        return {
+          ...c,
+          type: "command",
+          icon: CATEGORY_ICON[c.category] || CATEGORY_ICON.General,
+          score: m?.score ?? 1,
+          highlights: m?.highlights || [],
+        };
+      }).sort((a, b) => (b.score || 0) - (a.score || 0));
     }
     if (!searchQuery) {
       // Show recently opened first
-      const recentPaths = new Set(openTabs.map(t => t.path));
-      const recent = allFiles.filter(f => recentPaths.has(f.path));
-      const rest = allFiles.filter(f => !recentPaths.has(f.path)).slice(0, 20);
-      return [...recent, ...rest].slice(0, 30).map(f => ({ ...f, type: "file", score: 1, highlights: [] }));
+      const recentPaths = new Set((openTabs || []).map((t) => (typeof t === "string" ? t : t.path)));
+      const recent = allFiles.filter((f) => recentPaths.has(f.path));
+      const rest = allFiles.filter((f) => !recentPaths.has(f.path)).slice(0, 20);
+      return [...recent, ...rest].slice(0, 30).map((f) => ({ ...f, type: "file", score: 1, highlights: [] }));
     }
     return allFiles
-      .map(f => { const m = fuzzyMatch(f.path, searchQuery); return m ? { ...f, type: "file", ...m } : null; })
+      .map((f) => {
+        const m = fuzzyMatch(f.path, searchQuery);
+        return m ? { ...f, type: "file", ...m } : null;
+      })
       .filter(Boolean)
       .sort((a, b) => b.score - a.score)
       .slice(0, 30);
@@ -118,24 +133,21 @@ export default function CommandPalette() {
       return;
     }
 
-    // Commands
-    switch (item.id) {
-      case "toggle-terminal": setTerminalOpen(!terminalOpen); break;
-      case "toggle-chat":     setChatOpen(!chatOpen); break;
-      case "toggle-git":      setGitOpen(!gitOpen); break;
-      case "toggle-agent":    setAgentOpen(!agentOpen); break;
-      case "toggle-search":   setSearchOpen(true); break;
-      case "toggle-problems": setProblemsOpen(true); break;
-      case "open-settings":   setSettingsOpen(true); break;
-      case "split-editor":
-        if (activeTab) {
-          const tab = useStore.getState().openTabs.find(t => t.path === activeTab);
-          if (tab) useStore.getState().openFileSplit(tab);
+    // Canonical registry execution (Requirement 20)
+    if (item.type === "command" && item.id) {
+      try {
+        await executeCommand(item.id);
+      } catch (e) {
+        // Fallback for any remaining legacy ids
+        if (item.id === "toggle-chat") setChatOpen(!chatOpen);
+        else if (item.id === "reindex") api.reindex?.().then((r) => useStore.getState().setIndexStats?.(r));
+        else if (item.id === "split-editor" && activeTab) {
+          const tab = (useStore.getState().openTabs || []).find((t) => t.path === activeTab || t === activeTab);
+          if (tab) useStore.getState().openFileSplit?.(tab);
+        } else {
+          useStore.getState().setStatus?.("Command failed: " + (e?.message || e));
         }
-        break;
-      case "reindex":
-        api.reindex().then(r => useStore.getState().setIndexStats(r));
-        break;
+      }
     }
   };
 

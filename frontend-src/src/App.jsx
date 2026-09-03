@@ -5,6 +5,7 @@ import { ThemeProvider } from "./theme/ThemeContext";
 import LoginScreen from "./components/auth/LoginScreen";
 import ErrorBoundary from "./components/ErrorBoundary";
 import DockableLayout from "./components/layout/DockableLayout";
+import { registerCoreCommands } from "./commands/registerCoreCommands";
 
 // Lazy load modals
 const SettingsModal = lazy(() => import("./components/settings/SettingsModal"));
@@ -100,6 +101,11 @@ export default function App() {
   } = useStore();
 
   const { addPendingHitlRequest, removePendingHitlRequest } = useStore();
+
+  // Canonical command registry (Requirement 20) — once per session
+  useEffect(() => {
+    registerCoreCommands();
+  }, []);
 
   // Auth check
   useEffect(() => {
