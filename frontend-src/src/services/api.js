@@ -685,7 +685,22 @@ const providerConfigApi = {
 // despite the real implementations existing in the file.
 export const api = {
   health: () => req("/api/health"),
-  getSettings: () => req("/api/models/settings"),
+  // System/workspace meta (providers list, memory backend, etc.)
+  getWorkspaceMeta: () => req("/api/models/settings"),
+  // Back-compat alias used by App bootstrap
+  getSettings: () => req("/api/settings").then((r) => r.settings || r),
+  // Persist user preference bag (UserSettings.settings_json merge)
+  saveSettings: (settings) =>
+    req("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ settings: settings || {} }),
+    }),
+  getModelPrefs: () => req("/api/settings/models"),
+  saveModelPrefs: (settings) =>
+    req("/api/settings/models", {
+      method: "PUT",
+      body: JSON.stringify({ settings: settings || {} }),
+    }),
   putProviderCredential: (providerId, apiKey) =>
     req(`/api/models/providers/${encodeURIComponent(providerId)}/credential`, {
       method: "PUT",

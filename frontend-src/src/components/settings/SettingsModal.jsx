@@ -344,7 +344,18 @@ export default function SettingsModal() {
 
   useEffect(() => {
     if (settingsOpen) {
-      if (!local) api.getSettings().then(s => { setLocal(s); setWorkspaceSettings(s); }).catch(() => {});
+      if (!local) {
+        api.getSettings().then(s => {
+          // /api/settings returns {settings: {...}} via getSettings helper which unwraps
+          setLocal(s && typeof s === "object" ? s : {});
+          setWorkspaceSettings(s || {});
+        }).catch(() => setLocal({}));
+        // Also load model prefs into local.models if category endpoint available
+        api.getModelPrefs?.().then((r) => {
+          const models = r?.models || {};
+          setLocal((prev) => ({ ...(prev || {}), models: { ...(prev?.models || {}), ...models } }));
+        }).catch(() => {});
+      }
       api.ucipHealth().then(setUcipStats).catch(() => {});
     }
   }, [settingsOpen]);
@@ -353,9 +364,17 @@ export default function SettingsModal() {
 
   const saveAll = async () => {
     if (!local) return;
-    await api.saveSettings(local);
-    setWorkspaceSettings(local);
-    setSaved(true); setTimeout(() => setSaved(false), 1500);
+    try {
+      // Persist entire preference bag; backend merges and strips authority fields
+      await api.saveSettings(local);
+      if (local.models) {
+        await api.saveModelPrefs?.(local.models);
+      }
+      setWorkspaceSettings(local);
+      setSaved(true); setTimeout(() => setSaved(false), 1500);
+    } catch (e) {
+      alert(e.message || "Failed to save settings");
+    }
   };
 
   if (!settingsOpen) return null;

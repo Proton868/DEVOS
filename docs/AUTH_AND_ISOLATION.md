@@ -85,3 +85,18 @@ tenant default layer exists.
 
 `resolve_user_model()` implements the user preference step; callers that
 pass an explicit model skip user prefs.
+
+## Resource scope classification
+
+| Resource | Scope | Notes |
+|----------|--------|------|
+| Chats, messages | USER | `ChatSession.user_id` |
+| Scripts, runs | USER | `Script.owner_id` |
+| Secrets, provider credentials | USER | `Secret.owner_id` |
+| UserSettings, layouts | USER | `user_id` |
+| Files / VCS | USER project root | `data/projects/{user_id}/{project_id}/` |
+| Workflows (in-memory) | USER | `owner_id`; not durable |
+| Execution jobs / evidence | USER/TENANT when set | `owner_id` / `tenant_id` |
+| Capability registry, stacks | SYSTEM | Global catalog |
+| Workers catalog | SYSTEM | Definitions global; runs may be job-scoped |
+| Memory graph | USER-associated where stored with user context | Backend enforces auth on routes |
