@@ -141,47 +141,78 @@ Do not only test clean kills. Prefer:
 
 ## Live P0 — worker kill after claim (executable)
 
-**Status:** harness implemented; PASS only when run against live PostgreSQL.
+**Status:** harness + production recovery proven (3/3 PASS on PostgreSQL + Redis + 2 workers + SIGKILL).
 
-Prerequisites:
-- PostgreSQL reachable via `DATABASE_URL=postgresql+asyncpg://...`
-- Optional Redis via `REDIS_URL` / `DEVOS_REDIS_URL` (required if configured)
-- Python deps including `asyncpg`, SQLAlchemy
+### Expected recovery
 
-Start infrastructure (Docker available):
-
-```bash
-docker compose -f docker-compose.staging.yml up -d postgres redis
-export DATABASE_URL=postgresql+asyncpg://devos:devos_password@localhost:5432/devos
-export REDIS_URL=redis://localhost:6379
-export DEVOS_JOB_LEASE_S=5
+```
+attempt 1 → claim → SIGKILL → lease expiry
+  → surviving worker claim/recovery (production claim_next)
+  → attempt 2 → operation succeeds → job succeeds
 ```
 
-Run the drill (spawns two host workers, SIGKILLs the claimer, verifies lease recovery):
+### Valid recovery proof (authoritative durable state)
+
+| Field | Required |
+|-------|----------|
+| `initial_attempt` | `1` |
+| `recovery_attempt` | `2` |
+| `recovery_worker` | ≠ `killed_worker` |
+| `final_job.status` | `succeeded` |
+| `operation.status` | `succeeded` |
+| `job_rows_for_idempotency_key` | `1` |
+| `duplicate_operations` | `0` |
+| `duplicate_evidence` | `0` |
+| `blind_unknown_retry` | `false` |
+
+`recover_stale_leases_count` is **diagnostic only**. It MUST NOT be the sole recovery assertion. Recovery often occurs inside the survivor's `claim_next` path (count may be `null` / unused by the harness).
+
+### Stop conditions
+
+**BLOCKED (exit 2)** — infrastructure:
+
+- `DATABASE_URL` is not PostgreSQL
+- PostgreSQL unreachable / schema init failure
+- Redis configured but unreachable
+- Worker A or B failed to start
+
+**FAIL (exit 1)** — drill:
+
+- job never claimed / wrong claimer
+- SIGKILL failed
+- lease recovery not observed (`attempts` never reaches 2 under survivor)
+- final status not `succeeded`
+- idempotency or duplicate operation/evidence violated
+- blind UNKNOWN retry
+
+**PASS (exit 0)** — all durable assertions above hold.
+
+Timeouts never become PASS. Every wait has a deadline and phase-tagged failure.
+
+### Diagnosis vs action
+
+| Role | Allowed |
+|------|---------|
+| **Diagnosis** | Observe PG job/operation state, workers, Redis; never force recovery |
+| **Action** | Start workers, create one test job, SIGKILL claimer |
+
+The harness does **not** call `recover_stale_leases` to force a pass.
+
+### Prerequisites & run
 
 ```bash
-python scripts/staging_p0_worker_kill.py
+# infra: docker compose -f docker-compose.staging.yml up -d postgres redis
+# or host PostgreSQL + Redis
+export DATABASE_URL=postgresql+asyncpg://devos:devos_password@127.0.0.1:5432/devos
+export REDIS_URL=redis://127.0.0.1:6379
+export DEVOS_JOB_LEASE_S=3
+export DEVOS_STAGING_HOLD_S=5
+python scripts/staging_p0_worker_kill.py --lease-s 3
 ```
 
-Workers may also run in compose:
+Evidence: `data/staging-results/p0-worker-kill-*.json` (not committed).
 
-```bash
-docker compose -f docker-compose.staging.yml --profile workers up -d worker-a worker-b
-```
-
-Expected result:
-- Exit 0 and JSON `"status": "PASS"` under `data/staging-results/p0-worker-kill-*.json`
-- `attempts >= 2`, single job row for idempotency key, no duplicate operations/evidence
-- Exit 2 = infrastructure BLOCKED; exit 1 = assertion FAIL
-
-Failure conditions:
-- SQLite URL, Postgres down, workers exit early, claim never observed, lease never recovered,
-  duplicate logical success, UNKNOWN blind retry
-
-Cleanup:
-- Stop workers/containers; optional `docker compose -f docker-compose.staging.yml down -v`
-
-Standalone worker entrypoint: `scripts/run_job_worker.py` (does not load `app.py`).
+Standalone worker: `scripts/run_job_worker.py` (does not load `app.py`).
 
 
 ## Automated pure-logic profile
