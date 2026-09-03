@@ -19,6 +19,10 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+
+def _utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 from typing import Any, Optional
 
 logger = logging.getLogger("devos.execution_operations")
@@ -40,7 +44,7 @@ ALLOWED = {
 
 
 def _now():
-    return datetime.now(timezone.utc)
+    return _utcnow()
 
 
 def digest_payload(obj: Any) -> str:

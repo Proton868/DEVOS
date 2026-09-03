@@ -1,6 +1,11 @@
 """DevOS Database Models"""
 import uuid
 from datetime import datetime, timezone
+
+def utcnow_naive() -> datetime:
+    """UTC now as naive datetime for TIMESTAMP WITHOUT TIME ZONE columns (SQLite + Postgres)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -33,7 +38,7 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     default_tenant_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     sessions: Mapped[list["ChatSession"]] = relationship(back_populates="user")
     scripts: Mapped[list["Script"]] = relationship(back_populates="owner")
     secrets: Mapped[list["Secret"]] = relationship(back_populates="owner")
@@ -52,8 +57,8 @@ class ChatSession(Base):
     # of other nodes. NULL means a general-purpose chat session.
     node_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     workflow_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     user: Mapped["User"] = relationship(back_populates="sessions")
     messages: Mapped[list["Message"]] = relationship(back_populates="session", cascade="all, delete-orphan")
 
@@ -64,7 +69,7 @@ class Message(Base):
     role: Mapped[str] = mapped_column(String(16))
     content: Mapped[str] = mapped_column(Text)
     metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     session: Mapped["ChatSession"] = relationship(back_populates="messages")
 
 class Script(Base):
@@ -86,8 +91,8 @@ class Script(Base):
     webhook_token: Mapped[str] = mapped_column(String, default=gen_id)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     tags: Mapped[list] = mapped_column(JSON, default=list)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     owner: Mapped["User"] = relationship(back_populates="scripts")
     runs: Mapped[list["ScriptRun"]] = relationship(back_populates="script", cascade="all, delete-orphan")
 
@@ -102,7 +107,7 @@ class ScriptChain(Base):
     child_script_id: Mapped[str] = mapped_column(ForeignKey("scripts.id"))
     condition: Mapped[str] = mapped_column(String(16), default="on_success")  # on_success | on_failure
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 class ScriptRun(Base):
     __tablename__ = "script_runs"
@@ -115,7 +120,7 @@ class ScriptRun(Base):
     exit_code: Mapped[Optional[int]] = mapped_column(Integer)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer)
     loop_id: Mapped[Optional[str]] = mapped_column(String)  # Links run back to Brain loop
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     script: Mapped["Script"] = relationship(back_populates="runs")
 
@@ -125,7 +130,7 @@ class Note(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     content: Mapped[str] = mapped_column(Text)
     tags: Mapped[list] = mapped_column(JSON, default=list)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 class Document(Base):
     __tablename__ = "documents"
@@ -134,8 +139,8 @@ class Document(Base):
     title: Mapped[str] = mapped_column(String(256), default="Untitled")
     content: Mapped[str] = mapped_column(Text, default="")
     doc_type: Mapped[str] = mapped_column(String(32), default="markdown")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 class Secret(Base):
     """Encrypted credential storage for Flow scripts — the real gap found
@@ -150,8 +155,8 @@ class Secret(Base):
     name: Mapped[str] = mapped_column(String(128))          # e.g. "STRIPE_API_KEY" -- referenced by scripts as SECRET_<name>
     description: Mapped[Optional[str]] = mapped_column(Text)
     encrypted_value: Mapped[str] = mapped_column(Text)        # Fernet ciphertext, never plaintext
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     owner: Mapped["User"] = relationship(back_populates="secrets")
 
 class UserSettings(Base):
@@ -161,8 +166,8 @@ class UserSettings(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True)
     settings_json: Mapped[dict] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 class WorkspaceLayout(Base):
     """Named workspace layout snapshots — window/panel positions the user can
@@ -173,8 +178,8 @@ class WorkspaceLayout(Base):
     name: Mapped[str] = mapped_column(String(128))
     layout_json: Mapped[dict] = mapped_column(JSON)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
 async def init_db():
@@ -203,15 +208,27 @@ async def _migrate_missing_columns(conn):
     from sqlalchemy import text
     from sqlalchemy.exc import OperationalError
 
+    # Dialect-aware column probe: PRAGMA is SQLite-only; Postgres uses information_schema.
+    dialect = getattr(getattr(conn, "dialect", None), "name", None) or engine.dialect.name
+
     async def _add_column_if_missing(table: str, column: str, ddl: str):
-        result = await conn.execute(text(f"PRAGMA table_info({table})"))
-        cols = {row[1] for row in result.fetchall()}
-        if column in cols:
-            return
+        if dialect == "postgresql":
+            result = await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = :t AND column_name = :c"
+            ), {"t": table, "c": column})
+            if result.fetchone():
+                return
+        else:
+            result = await conn.execute(text(f"PRAGMA table_info({table})"))
+            cols = {row[1] for row in result.fetchall()}
+            if column in cols:
+                return
         try:
             await conn.execute(text(ddl))
         except OperationalError as e:
-            if "duplicate column name" not in str(e).lower():
+            msg = str(e).lower()
+            if "duplicate column" not in msg and "already exists" not in msg:
                 raise
 
     await _add_column_if_missing(
@@ -363,7 +380,7 @@ class Tenant(Base):
     slug: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     tier: Mapped[str] = mapped_column(String(32), default="tenant_user")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     meta: Mapped[Optional[dict]] = mapped_column("metadata", JSON, default=dict)
 
 class Membership(Base):
@@ -372,7 +389,7 @@ class Membership(Base):
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     role: Mapped[str] = mapped_column(String(32), default="member")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 class WorkflowRecord(Base):
     """Durable workflow definition. Database is the source of truth;
@@ -389,8 +406,8 @@ class WorkflowRecord(Base):
     # Distinct from any free-form version string stored inside definition JSON.
     version: Mapped[int] = mapped_column(Integer, default=1)
     definition: Mapped[dict] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 class EvidenceRecord(Base):
     __tablename__ = "evidence_records"
@@ -400,7 +417,7 @@ class EvidenceRecord(Base):
     goal: Mapped[str] = mapped_column(Text, default="")
     body: Mapped[dict] = mapped_column(JSON, default=dict)
     operation_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
 class DurableCapability(Base):
@@ -418,8 +435,8 @@ class DurableCapability(Base):
     signature: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     approval_state: Mapped[str] = mapped_column(String(32), default="approved")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 class ExecutionJob(Base):
     """Durable work unit. Status lifecycle:
@@ -456,7 +473,7 @@ class ExecutionJob(Base):
     scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
 class ExecutionOperation(Base):
@@ -487,7 +504,7 @@ class ExecutionOperation(Base):
     meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
 class WorkerTrustRecord(Base):
@@ -513,8 +530,8 @@ class WorkerTrustRecord(Base):
     # None = permanent until human demotes; set = temporary autonomy window
     approved_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
 class AgentTaskRecord(Base):
@@ -548,5 +565,5 @@ class AgentTaskRecord(Base):
     recovery_lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)

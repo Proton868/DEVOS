@@ -15,6 +15,10 @@ import os
 import socket
 import uuid
 from datetime import datetime, timezone, timedelta
+
+def _utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 from typing import Optional, Callable, Awaitable
 
 from sqlalchemy import select, or_, update, and_
@@ -186,7 +190,7 @@ async def enqueue(
 
 async def recover_stale_leases(db=None) -> int:
     """Re-queue jobs whose worker lease expired (worker crash / reboot)."""
-    now = datetime.now(timezone.utc)
+    now = _utcnow()
     stale = now - timedelta(seconds=LOCK_STALE_S)
 
     async def _do(session):
@@ -219,9 +223,20 @@ async def recover_stale_leases(db=None) -> int:
                 op_id = job.correlation.get("operation_id")
             if op_id:
                 try:
-                    from governance.execution_operations import load_operation, reconcile_operation, OP_UNKNOWN, OP_SUCCEEDED, OP_RUNNING
+                    from governance.execution_operations import (
+                        load_operation, reconcile_operation,
+                        OP_UNKNOWN, OP_SUCCEEDED, OP_RUNNING, OP_RESERVED,
+                    )
                     op = await load_operation(op_id)
-                    if op and op.get("status") in (OP_RUNNING, "reserved"):
+                    # RESERVED = side effect never started; safe to requeue for another worker
+                    if op and op.get("status") == OP_RESERVED:
+                        job.status = "queued"
+                        job.worker_id = None
+                        job.locked_at = None
+                        job.lease_expires_at = None
+                        recovered += 1
+                        continue
+                    if op and op.get("status") in (OP_RUNNING,):
                         rec = await reconcile_operation(op_id)
                         # After reconcile, do not requeue UNKNOWN/succeeded
                         st = (rec.get("status") or "").lower()
@@ -281,7 +296,7 @@ async def recover_stale_leases(db=None) -> int:
 
 async def _claim_sql(db, worker):
     await recover_stale_leases(db)
-    now = datetime.now(timezone.utc)
+    now = _utcnow()
     lease_until = now + timedelta(seconds=LEASE_S)
     dialect = db.bind.dialect.name if db.bind is not None else "sqlite"
     try:
@@ -336,7 +351,7 @@ async def claim_next(worker=None):
                 )
                 job = r.scalar_one_or_none()
                 if job:
-                    now = datetime.now(timezone.utc)
+                    now = _utcnow()
                     # Optimistic single-owner claim
                     result = await db.execute(
                         update(ExecutionJob).where(
@@ -363,7 +378,7 @@ async def claim_next(worker=None):
 
 async def heartbeat(job_id: str, worker: Optional[str] = None) -> bool:
     """Extend lease while work is in progress."""
-    now = datetime.now(timezone.utc)
+    now = _utcnow()
     async with AsyncSessionLocal() as db:
         q = update(ExecutionJob).where(
             ExecutionJob.id == job_id,
@@ -424,7 +439,7 @@ async def complete(job_id, *, status, result=None, error=None, isolation=None):
         job.result = scrub_secrets(result) if result is not None else job.result
         job.error = (error or "")[:4000] if error else job.error
         job.isolation = isolation if isolation is not None else job.isolation
-        job.finished_at = datetime.now(timezone.utc)
+        job.finished_at = _utcnow()
         job.worker_id = None
         job.locked_at = None
         job.lease_expires_at = None
