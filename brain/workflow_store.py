@@ -180,7 +180,10 @@ async def snapshot_workflow_for_execution(
 ) -> Optional[dict]:
     """Return an immutable snapshot {definition, version, workflow_id, owner_id}
     for execution/evidence. Running jobs must use this snapshot, not a live reload.
+    Secrets are scrubbed via governance.reliability.scrub_secrets.
     """
+    from governance.reliability import scrub_secrets
+
     r = await db.execute(
         select(WorkflowRecord).where(
             WorkflowRecord.id == workflow_id,
@@ -190,7 +193,7 @@ async def snapshot_workflow_for_execution(
     row = r.scalar_one_or_none()
     if not row:
         return None
-    return {
+    return scrub_secrets({
         "workflow_id": row.id,
         "owner_id": row.owner_id,
         "tenant_id": row.tenant_id,
@@ -199,4 +202,17 @@ async def snapshot_workflow_for_execution(
         "definition": copy.deepcopy(row.definition or {}),
         "status": row.status,
         "enabled": bool(row.enabled) if row.enabled is not None else True,
-    }
+    })
+
+
+def snapshot_from_job_payload(payload: Optional[dict]) -> Optional[dict]:
+    """Extract the immutable workflow snapshot embedded in an ExecutionJob payload.
+    Retries/recovery MUST use this, never a live WorkflowRecord reload.
+    """
+    if not payload:
+        return None
+    snap = payload.get("workflow_snapshot")
+    if not isinstance(snap, dict):
+        return None
+    return snap
+

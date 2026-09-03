@@ -342,10 +342,58 @@ class TestWorkflowPersistence:
 
         # Bob cannot execute
         assert b.post(f"/api/workflows/{wid}/execute").status_code in (404, 403)
-        # Alice can snapshot execute
-        ex = a.post(f"/api/workflows/{wid}/execute")
+        # Alice can snapshot execute → durable job
+        ex = a.post(f"/api/workflows/{wid}/execute", json={})
         assert ex.status_code == 200
         body = ex.json()
         assert body["workflow_id"] == wid
         assert "workflow_version" in body
-        assert "snapshot" in body
+        assert body.get("job_id")
+
+
+class TestWorkflowExecutionSnapshots:
+    def test_snapshot_survives_definition_update_and_delete(self, two_clients):
+        a, b = two_clients["alice_c"], two_clients["bob_c"]
+        r = a.post("/api/workflows", json={
+            "name": "SnapFlow",
+            "steps": [{"id": "s1", "type": "notify", "name": "n"}],
+            "start_step": "s1",
+        })
+        assert r.status_code in (200, 201), r.text
+        wid = r.json()["workflow"]["workflow_id"]
+        v1 = r.json()["workflow"].get("revision", 1)
+
+        ex = a.post(f"/api/workflows/{wid}/execute", json={})
+        assert ex.status_code == 200, ex.text
+        body = ex.json()
+        assert body["workflow_id"] == wid
+        assert int(body["workflow_version"]) == int(v1)
+        job_id = body["job_id"]
+        assert job_id
+
+        # Edit → new version
+        a.patch(f"/api/workflows/{wid}", json={"description": "v2"})
+        # Job still reports original version
+        j = a.get(f"/api/workflows/jobs/{job_id}")
+        assert j.status_code == 200, j.text
+        assert int(j.json()["workflow_version"]) == int(v1)
+        assert j.json().get("has_snapshot") is True
+        assert int(j.json().get("snapshot_version") or 0) == int(v1)
+
+        # Bob cannot see job or execute
+        assert b.get(f"/api/workflows/jobs/{job_id}").status_code in (404, 403)
+        assert b.post(f"/api/workflows/{wid}/execute").status_code in (404, 403)
+
+        # Idempotency
+        key = "idem-snap-1"
+        e1 = a.post(f"/api/workflows/{wid}/execute", json={"idempotency_key": key})
+        e2 = a.post(f"/api/workflows/{wid}/execute", json={"idempotency_key": key})
+        assert e1.status_code == 200 and e2.status_code == 200
+        assert e1.json()["job_id"] == e2.json()["job_id"]
+
+        # Delete workflow — job remains
+        assert a.delete(f"/api/workflows/{wid}").status_code == 200
+        j2 = a.get(f"/api/workflows/jobs/{job_id}")
+        assert j2.status_code == 200
+        assert j2.json()["workflow_id"] == wid
+        assert int(j2.json()["workflow_version"]) == int(v1)

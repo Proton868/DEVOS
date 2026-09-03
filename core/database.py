@@ -255,6 +255,14 @@ async def _migrate_missing_columns(conn):
         "ALTER TABLE evidence_records ADD COLUMN tenant_id VARCHAR",
     )
     await _add_column_if_missing(
+        "execution_jobs", "workflow_id",
+        "ALTER TABLE execution_jobs ADD COLUMN workflow_id VARCHAR",
+    )
+    await _add_column_if_missing(
+        "execution_jobs", "workflow_version",
+        "ALTER TABLE execution_jobs ADD COLUMN workflow_version INTEGER",
+    )
+    await _add_column_if_missing(
         "execution_jobs", "worker_id",
         "ALTER TABLE execution_jobs ADD COLUMN worker_id VARCHAR",
     )
@@ -373,6 +381,10 @@ class ExecutionJob(Base):
     """Durable work unit. Status lifecycle:
     queued → running → succeeded|failed
     running + lease expired → queued (recoverable retry)
+
+    For job_type=workflow, workflow_id/workflow_version identify the definition
+    that was snapshotted into payload at enqueue time. Deleting the WorkflowRecord
+    must not cascade-delete jobs — these columns are historical references only.
     """
     __tablename__ = "execution_jobs"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
@@ -380,6 +392,8 @@ class ExecutionJob(Base):
     owner_id: Mapped[str] = mapped_column(String, index=True)
     actor_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     job_type: Mapped[str] = mapped_column(String(64), default="script")
+    workflow_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    workflow_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     priority: Mapped[int] = mapped_column(Integer, default=100)

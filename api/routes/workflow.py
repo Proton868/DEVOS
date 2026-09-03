@@ -171,6 +171,38 @@ async def list_workflows(
     }
 
 
+@router.get("/jobs/{job_id}")
+async def get_workflow_job(job_id: str, request: Request, db=Depends(get_db)):
+    """Owner-scoped job inspection. Returns identity + version, not secrets."""
+    from core.database import ExecutionJob
+    from sqlalchemy import select
+
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    r = await db.execute(
+        select(ExecutionJob).where(
+            ExecutionJob.id == job_id,
+            ExecutionJob.owner_id == user.id,
+        )
+    )
+    job = r.scalar_one_or_none()
+    if not job:
+        raise HTTPException(404, "Job not found")
+    snap = (job.payload or {}).get("workflow_snapshot") if isinstance(job.payload, dict) else None
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "job_type": job.job_type,
+        "workflow_id": job.workflow_id,
+        "workflow_version": job.workflow_version,
+        "has_snapshot": bool(snap),
+        "snapshot_version": (snap or {}).get("version") if isinstance(snap, dict) else None,
+        "correlation": job.correlation,
+        "attempts": job.attempts,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+    }
+
+
 @router.post("")
 async def create_workflow_route(req: WorkflowCreate, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
@@ -333,25 +365,109 @@ async def import_workflow(req: WorkflowImport, request: Request, db=Depends(get_
     return {"workflow": _api_dict(saved)}
 
 
-@router.post("/{workflow_id}/execute")
-async def execute_workflow(workflow_id: str, request: Request, db=Depends(get_db)):
-    """Snapshot definition+version then return execution context.
+class WorkflowExecuteReq(BaseModel):
+    idempotency_key: Optional[str] = None
+    request_id: Optional[str] = None
 
-    Actual step execution remains governed by UCIP/capabilities — this endpoint
-    does not grant authority. Jobs should use the returned snapshot, not a live
-    reload of a mutated definition.
+
+@router.post("/{workflow_id}/execute")
+async def execute_workflow(
+    workflow_id: str,
+    request: Request,
+    db=Depends(get_db),
+    body: Optional[WorkflowExecuteReq] = None,
+):
+    """Create a durable ExecutionJob bound to an immutable workflow snapshot.
+
+    Flow:
+      1. Owner-scoped load + snapshot of WorkflowRecord (DB source of truth)
+      2. Scrub secrets from snapshot
+      3. Enqueue ExecutionJob with workflow_id/version + payload.workflow_snapshot
+      4. Record lightweight EvidenceRecord for audit identity
+
+    Governance remains authoritative at step execution time — enabling a
+    workflow is not an authority grant. Retries must use payload.workflow_snapshot
+    and must NOT reload the current WorkflowRecord definition.
     """
+    from workers.job_queue import enqueue
+    from governance.reliability import new_request_id, scrub_secrets
+    from core.database import EvidenceRecord, gen_id as _gen_id
+    from datetime import datetime, timezone
+
     user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
+    tenant = await ensure_personal_tenant(db, user)
     snap = await workflow_store.snapshot_workflow_for_execution(db, workflow_id, user.id)
     if not snap:
         raise HTTPException(404, f"Workflow not found: {workflow_id}")
     if not snap.get("enabled", True):
         raise HTTPException(400, "Workflow is disabled")
-    return {
-        "status": "accepted",
+
+    body = body or WorkflowExecuteReq()
+    correlation_id = body.request_id or new_request_id()
+    version = int(snap.get("version") or 1)
+
+    correlation = scrub_secrets({
+        "correlation_id": correlation_id,
         "workflow_id": snap["workflow_id"],
-        "workflow_version": snap["version"],
-        "snapshot": snap,
-        "note": "Execution remains subject to governance/capability checks.",
+        "workflow_version": version,
+        "owner_id": user.id,
+        "tenant_id": tenant.id,
+    })
+    payload = scrub_secrets({
+        "workflow_snapshot": snap,
+        "workflow_id": snap["workflow_id"],
+        "workflow_version": version,
+    })
+
+    job = await enqueue(
+        owner_id=user.id,
+        tenant_id=tenant.id,
+        job_type="workflow",
+        payload=payload,
+        actor_id=user.id,
+        idempotency_key=body.idempotency_key,
+        request_id=correlation_id,
+        correlation=correlation,
+        workflow_id=snap["workflow_id"],
+        workflow_version=version,
+    )
+
+    # Durable evidence identity (does not cascade on workflow delete)
+    try:
+        ev = EvidenceRecord(
+            id=_gen_id(),
+            owner_id=user.id,
+            tenant_id=tenant.id,
+            goal=f"workflow:{snap['workflow_id']}:v{version}",
+            body=scrub_secrets({
+                "kind": "workflow_execution",
+                "workflow_id": snap["workflow_id"],
+                "workflow_version": version,
+                "job_id": job.id,
+                "correlation_id": correlation_id,
+                "owner_id": user.id,
+                "tenant_id": tenant.id,
+            }),
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(ev)
+        await db.commit()
+        evidence_id = ev.id
+    except Exception:
+        evidence_id = None
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+
+    return {
+        "status": "queued" if job.status == "queued" else job.status,
+        "workflow_id": snap["workflow_id"],
+        "workflow_version": version,
+        "job_id": job.id,
+        "correlation_id": correlation_id,
+        "evidence_id": evidence_id,
+        "note": "Job payload holds immutable workflow_snapshot; governance applies at step execution.",
     }
+
+

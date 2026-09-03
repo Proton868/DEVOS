@@ -82,12 +82,17 @@ async def enqueue(
     idempotency_key: Optional[str] = None,
     request_id: Optional[str] = None,
     correlation: Optional[dict] = None,
+    workflow_id: Optional[str] = None,
+    workflow_version: Optional[int] = None,
 ):
     """Enqueue work. Idempotent when idempotency_key is set for the tenant."""
     from governance.reliability import scrub_secrets
+    # Resolve session factory at call time so tests/app can rebind the engine.
+    from core import database as _dbmod
+    Session = _dbmod.AsyncSessionLocal
 
     safe_payload = scrub_secrets(payload or {})
-    async with AsyncSessionLocal() as db:
+    async with Session() as db:
         if idempotency_key and tenant_id:
             r = await db.execute(
                 select(ExecutionJob).where(
@@ -110,6 +115,8 @@ async def enqueue(
             owner_id=owner_id,
             actor_id=actor_id,
             job_type=job_type,
+            workflow_id=workflow_id,
+            workflow_version=workflow_version,
             payload=safe_payload,
             status="queued",
             priority=priority,

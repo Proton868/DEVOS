@@ -34,3 +34,13 @@ pip install -r requirements.txt -r requirements-dev.txt
 pytest tests/ -q
 cd frontend-src && npm ci && npm run build
 ```
+
+## Workflow execution snapshots
+
+- Definitions live in `workflow_records` (DB authoritative).
+- `POST /api/workflows/{id}/execute` creates an `ExecutionJob` with
+  `workflow_id`, `workflow_version`, and an immutable `payload.workflow_snapshot`.
+- Retries/recovery MUST use the job snapshot — never reload the live definition.
+- Deleting a workflow removes the definition only; jobs and evidence retain historical IDs/versions.
+- Workflow `schedule`/`cron` fields are stored but **not** auto-scheduled (script scheduler only).
+- Governance/capability checks remain authoritative at step execution time.
