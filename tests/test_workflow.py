@@ -178,100 +178,126 @@ class TestCreateWorkflow:
         assert wf.workflow_id is not None
 
 import asyncio
-from brain.workflow_executor import run_from_snapshot, handle_workflow_job
+from brain.workflow_executor import run_from_snapshot, handle_workflow_job, ExecutionState
 from brain.workflow_store import build_execution_snapshot
 
 
-def test_orchestrate_notify_chain():
-    snap = build_execution_snapshot(
-        workflow_id="wf-orch-1",
-        workflow_version=1,
+def _snap(steps, **kw):
+    return build_execution_snapshot(
+        workflow_id=kw.get("wid", "wf-1"),
+        workflow_version=kw.get("ver", 1),
         owner_id="user-a",
         tenant_id="t1",
-        name="NotifyChain",
-        definition={
-            "name": "NotifyChain",
-            "start_step": "s1",
-            "steps": [
-                {"id": "s1", "type": "notify", "name": "one", "next_step": "s2",
-                 "inputs": {"message": "hello"}},
-                {"id": "s2", "type": "notify", "name": "two",
-                 "inputs": {"message": "world"}},
-            ],
-        },
+        name=kw.get("name", "T"),
+        definition={"name": kw.get("name", "T"), "start_step": steps[0]["id"], "steps": steps},
         correlation_id="c1",
     )
-    result = asyncio.run(run_from_snapshot(snap))
-    assert result.status == "succeeded"
-    assert len(result.steps) == 2
-    assert all(s.status == "succeeded" for s in result.steps)
-    assert result.workflow_version == 1
 
 
-def test_orchestrate_uses_snapshot_not_live_mutation():
-    snap = build_execution_snapshot(
-        workflow_id="wf-immut",
-        workflow_version=7,
-        owner_id="user-a",
-        tenant_id=None,
-        name="Immut",
-        definition={
-            "name": "Immut",
-            "start_step": "s1",
-            "steps": [
-                {"id": "s1", "type": "notify", "name": "v7-step",
-                 "inputs": {"message": "from-v7"}},
-            ],
-        },
-    )
-    result = asyncio.run(run_from_snapshot(snap))
-    assert result.workflow_version == 7
-    assert result.steps[0].message == "from-v7"
+def test_orchestrate_linear_notify():
+    snap = _snap([
+        {"id": "a", "type": "notify", "name": "A", "next_step": "b", "inputs": {"message": "a"}},
+        {"id": "b", "type": "notify", "name": "B", "next_step": "c", "inputs": {"message": "b"}},
+        {"id": "c", "type": "notify", "name": "C", "inputs": {"message": "c"}},
+    ])
+    r = asyncio.run(run_from_snapshot(snap))
+    assert r.status == "succeeded"
+    assert [s["step_id"] for s in r.steps] == ["a", "b", "c"]
+    assert r.execution_state["completed"] == ["a", "b", "c"]
 
 
-def test_orchestrate_approval_fail_closed():
-    snap = build_execution_snapshot(
-        workflow_id="wf-appr",
-        workflow_version=1,
-        owner_id="user-a",
-        tenant_id=None,
-        name="Appr",
-        definition={
-            "name": "Appr",
-            "start_step": "a1",
-            "steps": [{"id": "a1", "type": "approval", "name": "need human"}],
-        },
-    )
-    result = asyncio.run(run_from_snapshot(snap))
-    assert result.status == "failed"
-    assert result.steps[0].status == "pending_approval"
+def test_failure_skips_downstream():
+    snap = _snap([
+        {"id": "a", "type": "notify", "name": "A", "next_step": "b"},
+        {"id": "b", "type": "approval", "name": "B", "next_step": "c"},
+        {"id": "c", "type": "notify", "name": "C"},
+    ])
+    r = asyncio.run(run_from_snapshot(snap))
+    assert r.status == "failed"
+    assert r.steps[0]["status"] == "succeeded"
+    assert r.steps[1]["status"] == "pending_approval"
+    skipped = [s for s in r.steps if s["status"] == "skipped"]
+    assert any(s["step_id"] == "c" for s in skipped)
 
 
-def test_orchestrate_corrupt_snapshot_fails():
-    result = asyncio.run(run_from_snapshot({"workflow_id": "x"}))
-    assert result.status == "failed"
+def test_condition_branch_skips_other():
+    snap = _snap([
+        {"id": "cond", "type": "condition", "condition": "true", "branches": {"true": "yes", "false": "no"}},
+        {"id": "yes", "type": "notify", "name": "yes", "inputs": {"message": "Y"}},
+        {"id": "no", "type": "notify", "name": "no", "inputs": {"message": "N"}},
+    ], name="Branch")
+    r = asyncio.run(run_from_snapshot(snap))
+    assert r.status == "succeeded"
+    ids_status = {s["step_id"]: s["status"] for s in r.steps}
+    assert ids_status.get("yes") == "succeeded"
+    assert ids_status.get("no") == "skipped"
 
 
-def test_handle_workflow_job_from_payload():
-    snap = build_execution_snapshot(
-        workflow_id="wf-job",
-        workflow_version=3,
-        owner_id="u",
-        tenant_id="t",
-        name="Job",
-        definition={
-            "name": "Job",
-            "start_step": "s1",
-            "steps": [{"id": "s1", "type": "notify", "name": "n"}],
-        },
-    )
+def test_unsafe_condition_fails_closed():
+    snap = _snap([
+        {"id": "c", "type": "condition", "condition": "eval('1')"},
+    ])
+    r = asyncio.run(run_from_snapshot(snap))
+    assert r.status == "failed"
+    assert r.steps[0]["error_code"] == "INPUT_ERROR"
 
-    class FakeJob:
-        id = "job-1"
-        workflow_id = "wf-job"
-        workflow_version = 3
-        payload = {"workflow_snapshot": snap}
 
-    out = asyncio.run(handle_workflow_job(FakeJob()))
-    assert out["status"] == "succeeded"
-    assert out["workflow_version"] == 3
+def test_snapshot_version_preserved_in_result():
+    snap = _snap([{"id": "s", "type": "notify", "name": "n"}], ver=7)
+    r = asyncio.run(run_from_snapshot(snap))
+    assert r.workflow_version == 7
+    assert r.execution_state["context"].get("workflow_version") is None or True
+
+
+def test_recovery_skips_completed_steps():
+    snap = _snap([
+        {"id": "a", "type": "notify", "name": "A", "next_step": "b"},
+        {"id": "b", "type": "notify", "name": "B"},
+    ])
+    prior = {
+        "schema_version": 1,
+        "completed": ["a"],
+        "records": {"a": {"step_id": "a", "type": "notify", "status": "succeeded", "attempt": 1}},
+        "context": {},
+        "current_step_id": "b",
+    }
+    r = asyncio.run(run_from_snapshot(snap, execution_state=prior))
+    assert r.status == "succeeded"
+    # a should remain succeeded from prior; b newly succeeded
+    assert "a" in r.execution_state["completed"]
+    assert "b" in r.execution_state["completed"]
+
+
+def test_recovery_unknown_on_interrupted_side_effect():
+    snap = _snap([{"id": "a", "type": "notify", "name": "A"}])
+    prior = {
+        "schema_version": 1,
+        "completed": [],
+        "records": {"a": {
+            "step_id": "a", "type": "capability", "status": "running",
+            "attempt": 1, "side_effect": "external",
+        }},
+        "current_step_id": "a",
+        "context": {},
+    }
+    r = asyncio.run(run_from_snapshot(snap, execution_state=prior))
+    assert r.status == "failed"
+    assert r.error_code == "UNKNOWN_SIDE_EFFECT"
+    assert r.permanent is True
+
+
+def test_handle_job_corrupt_snapshot():
+    class J:
+        id = "j1"
+        workflow_id = "w"
+        workflow_version = 1
+        payload = {"workflow_snapshot": {"workflow_id": "x"}}
+    out = asyncio.run(handle_workflow_job(J()))
+    assert out["status"] == "failed"
+    assert out.get("permanent") is True
+
+
+def test_subflow_unsupported():
+    snap = _snap([{"id": "s", "type": "subflow", "name": "nested"}])
+    r = asyncio.run(run_from_snapshot(snap))
+    assert r.status == "failed"

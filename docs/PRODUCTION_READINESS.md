@@ -93,3 +93,42 @@ Supported step types:
 - `subflow` — not enabled (fails explicitly)
 
 Registered on `JobWorker` at app startup. Retries use the same snapshot.
+
+## Workflow orchestration (hardened)
+
+### Separation of concerns
+
+| Artifact | Mutability | Role |
+|----------|------------|------|
+| `workflow_snapshot` | Immutable | Authorized definition for this job |
+| `execution_state` | Mutable | Step progress, outputs, current step |
+
+### Step states
+
+`pending` · `running` · `succeeded` · `failed` · `skipped` · `blocked` · `waiting` · `denied` · `pending_approval` · `unknown`
+
+### Supported step types
+
+| Type | Behavior |
+|------|----------|
+| notify | Record only |
+| wait | Bounded delay ≤ 30s (not a durable timer) |
+| condition | Safe expressions only (`true`/`false`, `key == value`); no eval |
+| capability | UCIP + require_authority; sandbox code only with isolation |
+| approval | Fail-closed pending (not resumable yet) |
+| parallel | **Sequentialized** group marker — not concurrent |
+| subflow | **Unsupported** (explicit failure) |
+
+### Recovery
+
+- Completed steps are not re-run.
+- Interrupted step with non-`none` side_effect → `UNKNOWN` (not auto-retried as success).
+- Never reloads live `WorkflowRecord`.
+
+### Explicit non-features
+
+- No workflow cron scheduler
+- No durable long waits
+- No recursive subflows
+- No automatic external rollback
+- No concurrent parallel worker fan-out

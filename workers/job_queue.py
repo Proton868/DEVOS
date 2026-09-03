@@ -329,9 +329,19 @@ class JobWorker:
             return True
         try:
             result = await handler(job)
+            status = result.get("status", "succeeded")
+            # Permanent failures (governance deny, validation, UNKNOWN after interrupt)
+            # must not bounce through the transient retry queue.
+            if result.get("permanent") and status == "failed":
+                async with AsyncSessionLocal() as db:
+                    r = await db.execute(select(ExecutionJob).where(ExecutionJob.id == job.id))
+                    j = r.scalar_one_or_none()
+                    if j:
+                        j.max_attempts = j.attempts or 1
+                        await db.commit()
             await complete(
                 job.id,
-                status=result.get("status", "succeeded"),
+                status=status,
                 result=result,
                 error=result.get("error"),
                 isolation=result.get("isolation"),
