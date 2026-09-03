@@ -111,13 +111,14 @@ async def enqueue(
                 return existing
 
         # Stage 3M.2 — bind consequential jobs to ExecutionOperation
-        NON_CONSEQUENTIAL = frozenset({
+        # Unknown/new job types default to CONSEQUENTIAL (fail-closed)
+        SAFE_NON_CONSEQUENTIAL = frozenset({
             "read", "inspect", "list", "status", "health", "ping",
         })
         op_id = None
         job_id = gen_id()
         jt = (job_type or "").lower()
-        is_consequential = jt not in NON_CONSEQUENTIAL and not jt.startswith("read_")
+        is_consequential = jt not in SAFE_NON_CONSEQUENTIAL and not jt.startswith("read_")
         if is_consequential:
             from governance.execution_operations import reserve_operation
             corr = None
@@ -154,6 +155,7 @@ async def enqueue(
             idempotency_key=idempotency_key,
             request_id=request_id,
             correlation=scrub_secrets(correlation or {}),
+            operation_id=op_id,
         )
         db.add(job)
         await db.commit()
@@ -197,7 +199,9 @@ async def recover_stale_leases(db=None) -> int:
             # Stage 3M: operation-aware stale lease handling
             op_id = None
             payload = job.payload if isinstance(job.payload, dict) else {}
-            op_id = payload.get("operation_id") or (job.correlation or {}).get("operation_id") if isinstance(job.correlation, dict) else payload.get("operation_id")
+            op_id = getattr(job, "operation_id", None) or payload.get("operation_id")
+            if not op_id and isinstance(job.correlation, dict):
+                op_id = job.correlation.get("operation_id")
             if op_id:
                 try:
                     from governance.execution_operations import load_operation, reconcile_operation, OP_UNKNOWN, OP_SUCCEEDED, OP_RUNNING
@@ -375,6 +379,33 @@ async def complete(job_id, *, status, result=None, error=None, isolation=None):
         if job.status == "succeeded":
             logger.info("complete ignored for already-succeeded job %s", job_id)
             return
+        # Stage 3M.3 — consequential success requires operation truth
+        payload = job.payload if isinstance(job.payload, dict) else {}
+        op_id = getattr(job, "operation_id", None) or payload.get("operation_id")
+        jt = (job.job_type or "").lower()
+        SAFE = frozenset({"read", "inspect", "list", "status", "health", "ping"})
+        is_consequential = jt not in SAFE and not jt.startswith("read_")
+        if is_consequential and status == "succeeded":
+            if not op_id:
+                status = "failed"
+                error = (error or "") + " | missing_operation"
+            else:
+                try:
+                    from governance.execution_operations import load_operation, OP_SUCCEEDED, OP_UNKNOWN
+                    op = await load_operation(op_id)
+                    if not op:
+                        status = "failed"
+                        error = (error or "") + " | operation_missing"
+                    elif op.get("status") == OP_UNKNOWN:
+                        status = "failed"
+                        error = (error or "") + " | operation_unknown"
+                    elif op.get("status") != OP_SUCCEEDED:
+                        # Do not promote job to succeeded while operation not terminal success
+                        status = "failed"
+                        error = (error or "") + f" | operation_state_{op.get('status')}"
+                except Exception as e:
+                    status = "failed"
+                    error = (error or "") + f" | operation_check_failed:{e}"
         job.result = scrub_secrets(result) if result is not None else job.result
         job.error = (error or "")[:4000] if error else job.error
         job.isolation = isolation if isolation is not None else job.isolation
@@ -383,10 +414,17 @@ async def complete(job_id, *, status, result=None, error=None, isolation=None):
         job.locked_at = None
         job.lease_expires_at = None
         if status == "failed" and (job.attempts or 0) < (job.max_attempts or 3):
-            job.status = "queued"
-            job.finished_at = None
-            if _redis:
-                await _redis.push(job.id, job.priority or 100)
+            # Consequential UNKNOWN/missing_operation must not requeue
+            permanent = False
+            if error and any(x in str(error) for x in ("operation_unknown", "missing_operation", "operation_missing")):
+                permanent = True
+            if permanent:
+                job.status = "failed"
+            else:
+                job.status = "queued"
+                job.finished_at = None
+                if _redis:
+                    await _redis.push(job.id, job.priority or 100)
         else:
             job.status = status
         await db.commit()

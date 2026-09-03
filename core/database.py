@@ -302,21 +302,33 @@ async def _migrate_missing_columns(conn):
         "evidence_records", "operation_id",
         "ALTER TABLE evidence_records ADD COLUMN operation_id VARCHAR",
     )
-    # Stage 3M.2 — unique idempotency index (use migrate conn; do not open nested begin)
+    # Stage 3M.3 — portable unique idempotency (SQLite vs PostgreSQL)
+    await _add_column_if_missing(
+        "execution_jobs", "operation_id",
+        "ALTER TABLE execution_jobs ADD COLUMN operation_id VARCHAR",
+    )
     try:
-        await conn.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ux_execution_operations_idempotency "
-            "ON execution_operations (owner_id, operation_type, idempotency_key, ifnull(tenant_id, '')) "
-            "WHERE idempotency_key IS NOT NULL"
-        ))
+        dialect = getattr(getattr(conn, "dialect", None), "name", None) or str(conn.engine.dialect.name)
     except Exception:
-        try:
+        dialect = "sqlite"
+    try:
+        if dialect == "postgresql":
             await conn.execute(text(
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_execution_operations_idempotency "
-                "ON execution_operations (owner_id, operation_type, idempotency_key, tenant_id)"
+                "ON execution_operations (owner_id, operation_type, idempotency_key, COALESCE(tenant_id, '')) "
+                "WHERE idempotency_key IS NOT NULL"
             ))
-        except Exception:
-            pass
+        else:
+            await conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_execution_operations_idempotency "
+                "ON execution_operations (owner_id, operation_type, idempotency_key, ifnull(tenant_id, '')) "
+                "WHERE idempotency_key IS NOT NULL"
+            ))
+    except Exception as e:
+        # Index may already exist with alternate definition; only ignore duplicate-index errors
+        msg = str(e).lower()
+        if "already exists" not in msg and "duplicate" not in msg:
+            raise
 
     await _add_column_if_missing(
         "worker_trust_records", "competency",
@@ -440,6 +452,7 @@ class ExecutionJob(Base):
     idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     request_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
     correlation: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    operation_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
     scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

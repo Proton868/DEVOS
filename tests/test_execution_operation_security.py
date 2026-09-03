@@ -169,3 +169,19 @@ async def main():
 asyncio.run(main())
 """)
     assert r["ok"] is True
+
+
+def test_unknown_job_type_is_consequential():
+    from governance.execution_operations import is_consequential_job_type
+    assert is_consequential_job_type("brand_new_mutator") is True
+    assert is_consequential_job_type("read") is False
+    assert is_consequential_job_type("read_file") is False
+
+
+def test_validate_operation_job_binding_mismatch():
+    from governance.execution_operations import validate_operation_job_binding
+    op = {"id": "op1", "execution_job_id": "job1", "tenant_id": "t", "owner_id": "u"}
+    job = {"id": "job2", "payload": {"operation_id": "op1"}, "tenant_id": "t", "owner_id": "u"}
+    ok, reason = validate_operation_job_binding(op, job)
+    assert ok is False
+    assert "job" in reason

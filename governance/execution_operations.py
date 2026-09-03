@@ -461,3 +461,10 @@ async def reconcile_operation(
         return {"ok": True, "reason_code": "marked_unknown", "execute": False, "retry": False, "status": OP_UNKNOWN, "operation": op}
 
     return {"ok": False, "reason_code": "unhandled_status", "execute": False, "retry": False, "status": status, "operation": op}
+
+
+def is_consequential_job_type(job_type: str) -> bool:
+    """Unknown/new job types default to consequential."""
+    SAFE = frozenset({"read", "inspect", "list", "status", "health", "ping"})
+    jt = (job_type or "").lower()
+    return jt not in SAFE and not jt.startswith("read_")

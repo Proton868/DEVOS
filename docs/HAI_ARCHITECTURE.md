@@ -114,3 +114,12 @@ Idempotency: same owner + operation_type + idempotency_key returns existing oper
 - Consequential `enqueue()` reserves an operation and sets `payload.operation_id`.
 - Stale lease: consequential job without operation → failed/non-retryable (not requeued).
 - Identities: `operation_id` ≠ `idempotency_key` ≠ `attempt`.
+
+
+## Stage 3M.3 — Final queue/operation transaction hardening
+
+- `ExecutionJob.operation_id` first-class column (plus payload mirror).
+- Portable unique index: SQLite `ifnull` / PostgreSQL `COALESCE` dialect detection.
+- Unknown job types default to **consequential**.
+- `complete(job, succeeded)` refuses success while operation is not SUCCEEDED (UNKNOWN/missing → permanent failed, no requeue).
+- Idempotency identity: `(tenant_id, owner_id, operation_type, idempotency_key)` with NULL tenant non-wildcard.
