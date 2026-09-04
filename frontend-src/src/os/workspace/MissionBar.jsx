@@ -78,6 +78,31 @@ export default function MissionBar() {
 
   const notifCount = (pendingHitlRequests || []).length;
 
+  const cancelMission = async () => {
+    if (!activePlanId) return;
+    try {
+      await api.cancelOrchestration(activePlanId);
+      const plan = await api.getOrchestration(activePlanId);
+      if (plan) applyOrchestrationPlan(plan);
+      setStatus?.("Mission cancel requested");
+    } catch (e) {
+      setStatus?.(e?.message || "Cancel failed");
+    }
+  };
+
+  const resumeMission = async () => {
+    if (!activePlanId) return;
+    try {
+      await api.resumeOrchestration(activePlanId);
+      const plan = await api.getOrchestration(activePlanId);
+      if (plan) applyOrchestrationPlan(plan);
+      setStatus?.("Mission resume requested");
+    } catch (e) {
+      setStatus?.(e?.message || "Resume failed");
+    }
+  };
+
+
   return (
     <div className="sp-missionbar" ref={barRef}>
       <div className="sp-brand">
@@ -196,7 +221,13 @@ export default function MissionBar() {
             title="Notifications"
             onClick={() => setOpenPop(openPop === "notif" ? null : "notif")}
           >
-            <Bell size={13} />
+            {activePlanId ? (
+            <div className="sp-mission-controls" data-testid="mission-controls">
+              <button type="button" className="sp-btn ghost" onClick={cancelMission} title="Cancel mission">Cancel</button>
+              <button type="button" className="sp-btn ghost" onClick={resumeMission} title="Resume mission">Resume</button>
+            </div>
+          ) : null}
+              <Bell size={13} />
             {notifCount > 0 && <span className="notif-dot">{notifCount}</span>}
           </button>
           {openPop === "notif" && (

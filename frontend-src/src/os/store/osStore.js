@@ -114,6 +114,11 @@ const useOsStore = create((set, get) => ({
         edges: plan.edges || [],
         personas: plan.personas || [],
         risk_level: plan.risk_level,
+        requires_hitl: plan.requires_hitl,
+        pivot_reached: plan.pivot_reached || plan.saga?.pivot_reached,
+        pivot_action: plan.pivot_action || plan.saga?.pivot_action,
+        pivot_step_id: plan.pivot_step_id || plan.saga?.pivot_step_id,
+        saga: plan.saga || null,
         updatedAt: Date.now(),
       },
     });

@@ -2024,3 +2024,25 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
   font-size: 11px;
   color: var(--sp-text-2, #9aa3b5);
 }
+
+/* Mission glow status chips — extend existing language, no redesign */
+.sp-mission-glow { padding: 8px 10px; max-width: 420px; }
+.sp-mission-glow-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.sp-mission-goal { font-size: 12px; opacity: 0.9; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-mission-status { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+.sp-mission-nodes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.sp-mission-node-btn { width: 100%; display: grid; grid-template-columns: 72px 1fr auto; gap: 6px; align-items: center; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 4px 6px; color: inherit; cursor: pointer; }
+.sp-mission-node-btn:hover, .sp-mission-node-btn:focus-visible { border-color: var(--sp-border, rgba(255,255,255,0.12)); outline: none; }
+.sp-mission-node-persona { font-size: 10px; opacity: 0.7; }
+.sp-mission-node-desc { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-mission-node-state { font-size: 10px; opacity: 0.85; }
+.sp-mission-node.glow-EXECUTING .sp-mission-node-state { color: var(--sp-accent, #6cf); }
+.sp-mission-node.glow-WAITING .sp-mission-node-state { color: var(--sp-warn, #fc6); }
+.sp-mission-node.glow-VERIFYING .sp-mission-node-state { color: var(--sp-accent, #6cf); }
+.sp-mission-node.glow-SUCCESS .sp-mission-node-state { color: var(--sp-ok, #6c6); }
+.sp-mission-node.glow-FAILED .sp-mission-node-state { color: var(--sp-danger, #f66); }
+.sp-mission-node.glow-CANCELLED .sp-mission-node-state { opacity: 0.5; }
+.sp-mission-hitl, .sp-mission-pivot { font-size: 11px; padding: 6px 8px; margin: 4px 0; border-radius: 8px; background: rgba(255,200,80,0.08); border: 1px solid rgba(255,200,80,0.2); }
+.sp-mission-pivot { background: rgba(255,120,80,0.08); border-color: rgba(255,120,80,0.25); }
+.sp-mission-controls { display: flex; gap: 4px; align-items: center; }
+.sp-mission-empty { font-size: 11px; opacity: 0.6; letter-spacing: 0.06em; }

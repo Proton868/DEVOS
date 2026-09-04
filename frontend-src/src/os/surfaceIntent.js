@@ -3,7 +3,7 @@
  * Presentation only — never authorizes execution / UCIP.
  */
 
-export const SURFACE_TYPES = new Set(["chat", "ide", "flow", "research", "canvas", "preview", "none"]);
+export const SURFACE_TYPES = new Set(["chat", "ide", "flow", "research", "canvas", "preview", "artifact", "deployment", "logs", "none"]);
 export const SURFACE_ACTIONS = new Set(["open", "focus", "reveal", "close", "none"]);
 
 /**
@@ -104,6 +104,21 @@ export function applySurfaceIntent(intent, store) {
         return { ok: false, status: "surface_unavailable", surface: "preview", intent: n };
       }
       return { ok: true, status: "optional_unavailable", surface: "preview", intent: n };
+    }
+    if (n.surface === "artifact") {
+      if (typeof store.openOverlay === "function") store.openOverlay("artifacts");
+      else if (typeof store.setOverlay === "function") store.setOverlay("artifacts");
+      return { ok: true, status: "opened", surface: "artifact", intent: n };
+    }
+    if (n.surface === "deployment") {
+      if (typeof store.openOverlay === "function") store.openOverlay("deployment");
+      else if (typeof store.setOverlay === "function") store.setOverlay("deployment");
+      return { ok: true, status: "opened", surface: "deployment", intent: n };
+    }
+    if (n.surface === "logs") {
+      if (typeof store.openOverlay === "function") store.openOverlay("logs");
+      else if (typeof store.setOverlay === "function") store.setOverlay("logs");
+      return { ok: true, status: "opened", surface: "logs", intent: n };
     }
     return { ok: true, status: "noop", intent: n };
   } catch (e) {

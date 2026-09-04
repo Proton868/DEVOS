@@ -752,6 +752,8 @@ export const api = {
   getOrchestration: (id) => req(`/api/orchestration/${encodeURIComponent(id)}`),
   cancelOrchestration: (id) =>
     req(`/api/orchestration/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" }),
+  resumeOrchestration: (id) =>
+    req(`/api/orchestration/${encodeURIComponent(id)}/resume`, { method: "POST", body: "{}" }),
   detectNuhaMode: (goal) =>
     req("/api/orchestration/detect-mode", { method: "POST", body: JSON.stringify({ goal }) }),
   // Persist user preference bag (UserSettings.settings_json merge)
