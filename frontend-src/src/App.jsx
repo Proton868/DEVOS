@@ -4,6 +4,9 @@ import useOsStore from "./os/store/osStore";
 import { api, verifySession, subscribeToEvents } from "./services/api";
 import { ThemeProvider } from "./theme/ThemeContext";
 import LoginScreen from "./components/auth/LoginScreen";
+import SectPlanSurface from "./components/auth/SectPlanSurface";
+import ProfileSetupSurface from "./components/auth/ProfileSetupSurface";
+import SpatialTour from "./components/auth/SpatialTour";
 import ErrorBoundary from "./components/ErrorBoundary";
 import DevOSWorkspace from "./os/workspace/DevOSWorkspace";
 import { registerCoreCommands } from "./commands/registerCoreCommands";
@@ -88,6 +91,58 @@ async function handleSupabaseRedirect(setUser, setStatus) {
     setStatus("OAuth sign-in failed: " + e.message);
     return false;
   }
+}
+
+
+function onboardingPhase(user) {
+  if (!user) return "login";
+  const role = (user.role || "").toLowerCase();
+  const plan = (user.plan || "").toLowerCase();
+  if (role === "hegemon" || plan === "hegemon" || user.is_admin) return "workspace";
+  const st = (user.onboarding_status || "NOT_STARTED").toUpperCase();
+  if (st === "COMPLETED" || st === "SKIPPED") return "workspace";
+  if (st === "NOT_STARTED" || st === "PLAN_SELECTED") return "plan";
+  if (st === "PROFILE_PENDING") return "profile";
+  if (st === "TOUR_PENDING") return "tour";
+  return "workspace";
+}
+
+function AuthenticatedShell() {
+  const user = useStore((s) => s.user);
+  const setUser = useStore((s) => s.setUser);
+  const phase = onboardingPhase(user);
+
+  // Ensure owner bootstrap once
+  React.useEffect(() => {
+    if (!user) return;
+    if (user.is_admin || (user.role || "").toLowerCase() === "hegemon") {
+      fetch("/api/account/bootstrap-owner", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${localStorage.getItem("devos_token") || ""}` },
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((u) => { if (u) setUser(u); })
+        .catch(() => {});
+    }
+  }, [user?.id, user?.is_admin, setUser]);
+
+  if (phase === "plan") return <SectPlanSurface />;
+  if (phase === "profile") return <ProfileSetupSurface />;
+  if (phase === "tour") return (
+    <>
+      <DevOSWorkspace />
+      <SpatialTour />
+    </>
+  );
+  return (
+    <>
+      <DevOSWorkspace />
+      <HitlApprovalToasts />
+      <Suspense fallback={null}>
+        <DiffViewer />
+      </Suspense>
+    </>
+  );
 }
 
 export default function App() {
@@ -222,13 +277,7 @@ export default function App() {
         {!isAuthenticated ? (
           <LoginScreen />
         ) : (
-          <>
-            <DevOSWorkspace />
-            <HitlApprovalToasts />
-            <Suspense fallback={null}>
-              <DiffViewer />
-            </Suspense>
-          </>
+          <AuthenticatedShell />
         )}
       </ThemeProvider>
     </ErrorBoundary>

@@ -147,6 +147,12 @@ async def lifespan(app: FastAPI):
         from governance.durable_capabilities import load_tenant_capabilities
         async with AsyncSessionLocal() as _db:
             await load_tenant_capabilities(_db)
+    try:
+        from core.account_schema import ensure_account_columns
+        from core.database import engine
+        await ensure_account_columns(engine)
+    except Exception as _ae:
+        import logging; logging.getLogger('devos').warning('account schema: %s', _ae)
     except Exception as _e:
         import logging; logging.getLogger("devos").warning("durable caps: %s", _e)
     try:
@@ -518,6 +524,8 @@ app.include_router(carai_routes.router)
 app.include_router(web_intel_routes.router)
 from api.routes import web_crawls as web_crawls_routes
 app.include_router(web_crawls_routes.router)
+from api.routes import account as account_routes
+app.include_router(account_routes.router)
 app.include_router(lsp_routes.router,   prefix="/api/lsp",         tags=["lsp"])
 app.include_router(user_settings.router)
 app.include_router(nodes.router)

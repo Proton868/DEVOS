@@ -3,6 +3,7 @@ import { X, CheckCircle, AlertCircle, ExternalLink, Save, Loader, Search, Downlo
 import useStore from "../../store/useStore";
 import { api } from "../../services/api";
 import UserProviderCredentials from "./UserProviderCredentials";
+import "../auth/AuthSurfaces.css";
 
 // Lazy load ThemeCustomizer to avoid heavy initial bundle
 const ThemeCustomizer = lazy(() => import("../settings/ThemeCustomizer"));
@@ -566,7 +567,7 @@ function withDefaults(s) {
 
 export default function SettingsModal({ embedded = false, onClose = null }) {
   const { settingsOpen, setSettingsOpen, providers, selectedProvider, selectedModel,
-    setProvider, setModel, workspaceSettings, setWorkspaceSettings, theme, setTheme } = useStore();
+    setProvider, setModel, workspaceSettings, setWorkspaceSettings, theme, setTheme, user } = useStore();
   const [tab, setTab]   = useState("providers");
   const [local, setLocal] = useState(null);
   const [saved, setSaved] = useState(false);
@@ -623,6 +624,15 @@ export default function SettingsModal({ embedded = false, onClose = null }) {
         {!embedded && (
         <div className="settings-header">
           <h2>⚙️ Settings</h2>
+          {user && (
+            <div className="sp-settings-profile" title="Your DevOS identity">
+              <div className="sp-settings-avatar" aria-hidden>{(user.display_name || user.username || "?").slice(0,1).toUpperCase()}</div>
+              <div className="sp-settings-id">
+                <div className="sp-settings-name">{user.display_name || user.username}</div>
+                <div className="sp-settings-meta">{(user.role === "hegemon" || user.plan === "hegemon") ? "Hegemon" : (user.plan || "recruit").replace("_", " ")}</div>
+              </div>
+            </div>
+          )}
           <button onClick={handleClose}><X size={16} /></button>
         </div>
         )}

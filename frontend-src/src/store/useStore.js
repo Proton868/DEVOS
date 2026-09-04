@@ -11,7 +11,7 @@ const useStore = create((set, get) => ({
   // then authChecked stays false so the login screen doesn't flash.
   user: null,
   authChecked: false,   // true once we've resolved whether the stored token is real
-  isAuthenticated: !!getToken(),
+  isAuthenticated: false, // resolved only after verifySession / login (no workspace flash)
   setUser: (user) => set({ user, isAuthenticated: !!user, authChecked: true }),
   logoutUser: async () => {
     try {

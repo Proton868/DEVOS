@@ -37,6 +37,19 @@ class User(Base):
     supabase_id: Mapped[Optional[str]] = mapped_column(String, unique=True, index=True, nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Account identity (auth ≠ authorization). plan/role are entitlements + labels.
+    # Hegemon is durable role for configured owner — UCIP still authoritative for execution.
+    role: Mapped[str] = mapped_column(String(32), default="member")  # member|elder|hegemon
+    plan: Mapped[str] = mapped_column(String(32), default="recruit")  # recruit|outer_sect|inner_sect|conclave|hegemon
+    onboarding_status: Mapped[str] = mapped_column(String(32), default="NOT_STARTED")
+    # NOT_STARTED|PLAN_SELECTED|PROFILE_PENDING|TOUR_PENDING|COMPLETED|SKIPPED
+    display_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    preferred_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    avatar_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    job_title: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    organization: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    timezone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     default_tenant_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     sessions: Mapped[list["ChatSession"]] = relationship(back_populates="user")
