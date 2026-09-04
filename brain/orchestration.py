@@ -33,6 +33,10 @@ from brain.orchestration_dag import (
 from brain.specialty_policy import evaluate_node_request, get_specialty_policy
 from brain.orchestration_store import persist_plan, load_plan as load_plan_row
 from brain.orchestration_verify import verify_workspace_artifacts
+from brain.orchestration_runtime import (
+    NodeExecutionRequest, run_node_on_agent_runtime, inspect_task,
+)
+from brain.capability_canon import canonicalize_set
 
 
 # ─── Modes ───────────────────────────────────────────────────────────────────
@@ -653,6 +657,10 @@ async def authorize_plan_execution(plan: OrchestrationPlan) -> tuple[bool, str]:
 
 async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
     """Action mode: validate DAG → specialty policy → UCIP path → AgentRuntime."""
+    if OrchStatus(plan.status) in (OrchStatus.COMPLETED, OrchStatus.CANCELLED, OrchStatus.BLOCKED):
+        plan.emit("run.idempotent_skip", {"status": plan.status})
+        await persist_plan(plan)
+        return plan
     if OrchStatus(plan.status) == OrchStatus.PLAN_READY:
         plan.set_status(OrchStatus.ACTION_REQUESTED)
     elif OrchStatus(plan.status) not in (
@@ -679,9 +687,6 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
 
     plan.set_status(OrchStatus.DELEGATING)
     plan.emit("delegation.created", {"steps": [s.id for s in plan.steps]})
-
-    from brain.agent_runtime import AgentRuntime, AgentContext
-    from brain.agent_tools import AgentMode
 
     # Sequential dependency-aware execution
     done: set[str] = set()
@@ -746,6 +751,9 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
                 node.blocking_reason = "HITL required"
                 return plan
             node.authorization_decision = "allow"
+            # Persist effective caps + fingerprint against auth drift
+            eff = list(canonicalize_set(decision.effective_caps))
+            node.capabilities = eff or list(node.capabilities or [])
             try:
                 node.set_status(NodeStatus.AUTHORIZED)
                 node.set_status(NodeStatus.QUEUED)
@@ -758,40 +766,45 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
         plan.emit("job.started", {"step_id": step.id, "persona_id": step.persona_id})
 
         objective = (
-            f"[Nuha orchestration step {step.id} | persona={step.persona_id}]\n"
             f"Goal: {plan.goal}\n"
             f"Step: {step.description}\n"
             f"Expected: {step.expected_output}\n"
             f"Verify: {', '.join(step.verification_criteria)}"
         )
-        runtime = AgentRuntime(
+        # Submit to existing Agent Runtime via thin adapter (not a second executor)
+        exec_req = NodeExecutionRequest(
+            plan_id=plan.id,
+            node_id=step.id,
             user_id=plan.user_id,
-            project_id=plan.workspace_id or "default",
-            tenant_id=None,
-            mode=AgentMode.AGENT,
+            workspace_id=plan.workspace_id or "default",
+            persona_id=step.persona_id,
+            objective=objective,
+            effective_caps=list(
+                getattr(node, "capabilities", None)
+                or step.required_capabilities
+                or []
+            ),
+            authorization_decision=(node.authorization_decision if node else "allow") or "allow",
         )
-        context = AgentContext(
-            project_id=plan.workspace_id or "default",
-            user_request=objective,
-        )
-        success = False
-        files_changed: list = []
-        try:
-            async for event in runtime.run(objective, context):
-                et = (event or {}).get("type")
-                data = (event or {}).get("data") or {}
-                tid = (event or {}).get("task_id")
-                if tid and tid not in plan.agent_task_ids:
-                    plan.agent_task_ids.append(tid)
-                    step.job_or_task_id = tid
-                if et == "agent.completed":
-                    success = data.get("success") is not False
-                    files_changed = data.get("files_changed") or []
-                if et in ("agent.cancelled",):
-                    plan.set_status(OrchStatus.CANCELLATION_REQUESTED)
-        except Exception as e:
-            plan.emit("job.failed", {"step_id": step.id, "error": str(e)[:300]})
-            success = False
+        plan.emit("node.queued", {"node_id": step.id, "workspace_id": exec_req.workspace_id})
+        await persist_plan(plan)
+        result = await run_node_on_agent_runtime(exec_req)
+        success = bool(result.success)
+        files_changed = list(result.files_changed or [])
+        if result.task_id:
+            step.job_or_task_id = result.task_id
+            if result.task_id not in plan.agent_task_ids:
+                plan.agent_task_ids.append(result.task_id)
+            if node:
+                node.job_or_task_id = result.task_id
+        plan.emit("node.execution_result", {
+            "node_id": step.id,
+            "result": result.to_dict(),
+        })
+        if result.status == "cancelled":
+            plan.set_status(OrchStatus.CANCELLATION_REQUESTED)
+        if not success and result.error:
+            plan.emit("job.failed", {"step_id": step.id, "error": (result.error or "")[:300]})
 
         if OrchStatus(plan.status) == OrchStatus.CANCELLATION_REQUESTED:
             plan.set_status(OrchStatus.CANCELLING)
@@ -827,17 +840,22 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
             plan.set_status(OrchStatus.RUNNING)
             step.status = "running"
             try:
-                runtime2 = AgentRuntime(
+                result2 = await run_node_on_agent_runtime(NodeExecutionRequest(
+                    plan_id=plan.id,
+                    node_id=step.id,
                     user_id=plan.user_id,
-                    project_id=plan.workspace_id or "default",
-                    mode=AgentMode.AGENT,
-                )
-                async for event in runtime2.run(objective + "\n(Retry after failure)", context):
-                    et = (event or {}).get("type")
-                    data = (event or {}).get("data") or {}
-                    if et == "agent.completed":
-                        success = data.get("success") is not False
-                        files_changed = data.get("files_changed") or []
+                    workspace_id=plan.workspace_id or "default",
+                    persona_id=step.persona_id,
+                    objective=objective + "\n(Retry after failure)",
+                    effective_caps=list(step.required_capabilities or []),
+                    authorization_decision="allow",
+                ))
+                success = bool(result2.success)
+                files_changed = list(result2.files_changed or [])
+                if result2.task_id:
+                    step.job_or_task_id = result2.task_id
+                    if node:
+                        node.job_or_task_id = result2.task_id
             except Exception as e2:
                 plan.emit("job.failed", {"step_id": step.id, "error": str(e2)[:300], "retry": True})
                 success = False
@@ -852,6 +870,7 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
             node.job_or_task_id = step.job_or_task_id
             node.verification_evidence = {
                 "success": True,
+                "files_changed": list(files_changed or []),
                 "files_changed_count": len(files_changed or []),
                 "criteria": list(step.verification_criteria or []),
             }
@@ -883,12 +902,16 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
     plan.set_status(OrchStatus.VERIFYING)
     plan.emit("verification.started", {"criteria": plan.verification_plan})
     await persist_plan(plan)
+    all_changed = []
+    for n in plan.nodes:
+        if n.verification_evidence and isinstance(n.verification_evidence, dict):
+            all_changed.extend(n.verification_evidence.get("files_changed") or [])
     evidence = await verify_workspace_artifacts(
         user_id=plan.user_id,
         workspace_id=plan.workspace_id or "default",
         goal=plan.goal,
         expected_outputs=plan.expected_artifacts,
-        files_changed=None,
+        files_changed=all_changed or None,
     )
     plan.emit("verification.checked", evidence)
     verified = bool(evidence.get("passed"))
