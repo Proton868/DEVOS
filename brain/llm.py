@@ -53,6 +53,105 @@ def system_provider_key(provider: str) -> str:
     return (getattr(settings, attr, None) or "").strip()
 
 
+# Structured provider health statuses for diagnostics (not a new provider layer).
+PROVIDER_STATUS = (
+    "NOT_CONFIGURED",
+    "UNREACHABLE",
+    "AUTH_FAILED",
+    "MODEL_UNAVAILABLE",
+    "USABLE",
+)
+
+
+async def probe_provider(
+    provider: str,
+    *,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    timeout: float = 15.0,
+) -> dict:
+    """
+    Probe one provider and classify connectivity.
+
+    Returns:
+      {
+        "provider": str,
+        "status": NOT_CONFIGURED | UNREACHABLE | AUTH_FAILED | MODEL_UNAVAILABLE | USABLE,
+        "ok": bool,
+        "detail": str,
+        "sample": optional short completion when USABLE,
+      }
+    Does not cascade to other providers. Does not log secrets.
+    """
+    provider = (provider or "").strip().lower()
+    result = {
+        "provider": provider,
+        "status": "NOT_CONFIGURED",
+        "ok": False,
+        "detail": "",
+        "sample": None,
+    }
+    if not provider:
+        result["detail"] = "provider is required"
+        return result
+
+    keys: dict = {}
+    if api_key:
+        keys[provider] = api_key
+    brain = BrainLLM(provider=provider, model=model, api_keys=keys or None)
+
+    # Pre-check configuration before network I/O
+    if provider == "ollama":
+        host = (settings.OLLAMA_HOST or "").strip()
+        if not host:
+            result["status"] = "NOT_CONFIGURED"
+            result["detail"] = "OLLAMA_HOST is empty"
+            return result
+    elif provider in _PROVIDER_KEY_ATTR:
+        key = brain._key_for(provider)
+        if not key:
+            result["status"] = "NOT_CONFIGURED"
+            result["detail"] = "No API key configured for this provider"
+            return result
+    elif provider.startswith("custom:"):
+        pass  # endpoint registry validates on call
+    else:
+        result["status"] = "NOT_CONFIGURED"
+        result["detail"] = f"Unknown provider: {provider}"
+        return result
+
+    try:
+        reply = await brain._call(
+            provider,
+            [{"role": "user", "content": "Reply with exactly: OK"}],
+        )
+        sample = (reply or "").strip()[:120]
+        result["status"] = "USABLE"
+        result["ok"] = True
+        result["detail"] = "completion succeeded"
+        result["sample"] = sample
+        return result
+    except Exception as e:
+        msg = str(e)
+        low = msg.lower()
+        # Classify without leaking secrets
+        if any(x in low for x in ("api key", "no api key", "not configured", "empty", "credential")):
+            result["status"] = "NOT_CONFIGURED"
+        elif any(x in low for x in ("401", "403", "unauthorized", "forbidden", "invalid api", "authentication")):
+            result["status"] = "AUTH_FAILED"
+        elif any(x in low for x in ("connect", "unreachable", "name or service", "timed out", "timeout", "530", "502", "503", "connection refused", "cannot reach")):
+            result["status"] = "UNREACHABLE"
+        elif any(x in low for x in ("model", "404", "not found", "does not exist")):
+            result["status"] = "MODEL_UNAVAILABLE"
+        else:
+            # Prefer UNREACHABLE for transport-ish, else MODEL_UNAVAILABLE as safe default for failed completion
+            result["status"] = "MODEL_UNAVAILABLE"
+        result["detail"] = msg[:300]
+        result["ok"] = False
+        return result
+
+
+
 
 
 class BrainLLM:

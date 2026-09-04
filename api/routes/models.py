@@ -113,40 +113,40 @@ class TestConnectionReq(BaseModel):
 async def test_provider_connection(req: TestConnectionReq, request: Request, db=Depends(get_db)):
     """Send a trivial completion to verify a provider's credentials and
     connectivity. Uses the caller's saved user credential when present,
-    otherwise the system .env key / OLLAMA_HOST."""
+    otherwise the system .env key / OLLAMA_HOST.
+
+    Status is one of:
+      NOT_CONFIGURED | UNREACHABLE | AUTH_FAILED | MODEL_UNAVAILABLE | USABLE
+    """
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    from brain.llm import BrainLLM, load_user_provider_key
+    from brain.llm import probe_provider, load_user_provider_key
     provider = (req.provider or "").strip().lower()
     if not provider:
-        return {"ok": False, "provider": req.provider, "error": "provider is required"}
-    api_keys = {}
-    user_key = await load_user_provider_key(db, user.id, provider)
-    if user_key:
-        api_keys[provider] = user_key
-    try:
-        brain = BrainLLM(provider=provider, user_id=user.id, api_keys=api_keys)
-        # Call the single provider only — do not cascade to fallbacks during a test
-        reply = await brain._call(provider, [{"role": "user", "content": "Reply with exactly: OK"}])
-        return {
-            "ok": True,
-            "provider": provider,
-            "sample": (reply or "")[:120],
-            "used_user_credential": bool(user_key),
-        }
-    except Exception as e:
         return {
             "ok": False,
-            "provider": provider,
-            "error": str(e),
-            "used_user_credential": bool(user_key),
-            "hint": (
-                "Saved user key was used." if user_key else
-                "No user credential found — using system .env key / OLLAMA_HOST. "
-                "Save a key under Settings → Providers → My provider credentials, "
-                "or set the system key in Settings → Providers (admin)."
-            ),
+            "provider": req.provider,
+            "status": "NOT_CONFIGURED",
+            "error": "provider is required",
         }
+    user_key = await load_user_provider_key(db, user.id, provider)
+    probe = await probe_provider(provider, api_key=user_key or None)
+    out = {
+        "ok": probe["ok"],
+        "provider": provider,
+        "status": probe["status"],
+        "sample": probe.get("sample"),
+        "error": None if probe["ok"] else probe.get("detail"),
+        "used_user_credential": bool(user_key),
+    }
+    if not probe["ok"]:
+        out["hint"] = (
+            "Saved user key was used." if user_key else
+            "No user credential found — using system .env key / OLLAMA_HOST. "
+            "Save a key under Settings → Providers → My provider credentials, "
+            "or set the system key in Settings → Providers (admin)."
+        )
+    return out
 
 
 # ── AI inline code completion (Cursor-style ghost text) ─────────────────
