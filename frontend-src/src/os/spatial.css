@@ -1931,3 +1931,90 @@ html[data-sp-glow="off"] .sp-mission-node { box-shadow: none !important; }
 html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
   box-shadow: 0 0 22px rgba(34,211,238,0.55);
 }
+
+/* ── Workspace Preview surface ─────────────────────────────── */
+.sp-preview-window {
+  position: absolute;
+  right: 24px;
+  top: 72px;
+  width: min(520px, calc(100% - 48px));
+  height: min(420px, calc(100% - 120px));
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid var(--sp-border, rgba(255,255,255,0.12));
+  background: var(--sp-surface, #0f1218);
+  box-shadow: 0 18px 48px rgba(0,0,0,0.45);
+  z-index: 40;
+  overflow: hidden;
+}
+.sp-preview-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--sp-border, rgba(255,255,255,0.08));
+  background: rgba(255,255,255,0.03);
+}
+.sp-preview-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--sp-text-1, #e8ecf4);
+  min-width: 0;
+}
+.sp-preview-path {
+  color: var(--sp-text-2, #9aa3b5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-preview-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3ddc97;
+  box-shadow: 0 0 8px #3ddc97;
+  flex-shrink: 0;
+}
+.sp-preview-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.sp-preview-actions .sp-btn {
+  font-size: 11px;
+  padding: 4px 8px;
+}
+.sp-preview-frame-wrap {
+  flex: 1;
+  min-height: 0;
+  background: #fff;
+}
+.sp-preview-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+.sp-preview-error {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #ffb4b4;
+  background: rgba(180, 40, 40, 0.2);
+}
+.sp-preview-chip {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  z-index: 40;
+  border: 1px solid var(--sp-border, rgba(255,255,255,0.12));
+  background: var(--sp-surface, #0f1218);
+  color: var(--sp-text-1, #e8ecf4);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}

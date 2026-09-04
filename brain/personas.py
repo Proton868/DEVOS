@@ -303,6 +303,7 @@ INTENT_CLASSES = (
     "AUTOMATION",
     "CODE",
     "RESEARCH",
+    "PREVIEW",
     "MULTI-DOMAIN",
 )
 
@@ -318,8 +319,14 @@ def classify_intent_heuristic(text: str) -> list[str]:
         classes.append("AUTOMATION")
     if any(k in t for k in ("research", "look up", "find sources", "summarize the web")):
         classes.append("RESEARCH")
-    if any(k in t for k in ("only code", "snippet", "show me the html", "paste code")):
+    if any(k in t for k in ("only code", "snippet", "paste code")):
         classes.append("CODE")
+    if any(k in t for k in (
+        "preview", "show me the result", "show me what it looks like",
+        "open the preview", "open the site", "view the page", "show the website",
+        "show me the page", "open current project preview",
+    )):
+        classes.append("PREVIEW")
     if any(k in t for k in ("should i", "advise", "recommend", "what do you think")):
         classes.append("ADVICE")
     if not classes:
@@ -359,7 +366,16 @@ def surface_intent_for_message(text: str) -> dict:
         "confidence": 0.55,
         "context": {},
     }
-    if classes & {"AUTOMATION"}:
+    if classes & {"PREVIEW"} and not (classes & {"CREATION", "EXECUTION", "AUTOMATION"}):
+        intent = {
+            "surface": "preview",
+            "action": "open",
+            "required": True,
+            "reason": "User requested workspace artifact preview",
+            "confidence": 0.88,
+            "context": {"filePath": "index.html"},
+        }
+    elif classes & {"AUTOMATION"}:
         intent = {
             "surface": "flow",
             "action": "open",

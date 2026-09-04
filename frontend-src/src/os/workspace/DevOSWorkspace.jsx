@@ -12,6 +12,7 @@ import MissionBar from "./MissionBar";
 import CosmicSidebar from "./CosmicSidebar";
 import SpatialWorkspace from "./SpatialWorkspace";
 import OverlaySurface from "./OverlaySurface";
+import PreviewSurface from "./PreviewSurface";
 import CommandBar from "../command/CommandBar";
 
 function useIsMobile() {
@@ -98,7 +99,8 @@ export default function DevOSWorkspace() {
         <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", minWidth: 0 }}>
           <div style={{ flex: 1, position: "relative", display: "flex", minHeight: 0 }}>
             <SpatialWorkspace key={graphKey} isMobile={isMobile} />
-            <OverlaySurface isMobile={isMobile} />
+            <PreviewSurface />
+      <OverlaySurface isMobile={isMobile} />
           </div>
           <CommandBar reloadGraph={() => setGraphKey((k) => k + 1)} />
         </div>

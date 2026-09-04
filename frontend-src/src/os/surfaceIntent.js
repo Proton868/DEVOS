@@ -3,7 +3,7 @@
  * Presentation only — never authorizes execution / UCIP.
  */
 
-export const SURFACE_TYPES = new Set(["chat", "ide", "flow", "research", "canvas", "none"]);
+export const SURFACE_TYPES = new Set(["chat", "ide", "flow", "research", "canvas", "preview", "none"]);
 export const SURFACE_ACTIONS = new Set(["open", "focus", "reveal", "close", "none"]);
 
 /**
@@ -86,6 +86,24 @@ export function applySurfaceIntent(intent, store) {
         // leave chat; research overlay not assumed
       }
       return { ok: true, status: "remain_chat", intent: n };
+    }
+    if (n.surface === "preview") {
+      if (n.action === "close") {
+        if (typeof s.closePreview === "function") s.closePreview();
+        return { ok: true, status: "preview_closed", intent: n };
+      }
+      if (typeof s.openPreview === "function") {
+        s.openPreview({
+          projectId: n.context?.projectId || n.context?.workspaceId || null,
+          path: n.context?.filePath || n.context?.path || "index.html",
+          title: n.context?.title || "Preview",
+        });
+        return { ok: true, status: "preview_opened", intent: n };
+      }
+      if (n.required) {
+        return { ok: false, status: "surface_unavailable", surface: "preview", intent: n };
+      }
+      return { ok: true, status: "optional_unavailable", surface: "preview", intent: n };
     }
     return { ok: true, status: "noop", intent: n };
   } catch (e) {

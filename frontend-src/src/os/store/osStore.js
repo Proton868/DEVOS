@@ -51,6 +51,39 @@ const useOsStore = create((set, get) => ({
     set({ editor: { open: true, file, scriptId, language } }),
   closeEditor: () => set({ editor: { open: false, file: null, scriptId: null, language: null } }),
 
+  // ── Workspace Preview (verified artifact presentation) ───
+  preview: {
+    open: false,
+    minimized: false,
+    projectId: null,
+    path: "index.html",
+    error: null,
+    title: "Preview",
+  },
+  openPreview: ({ projectId = null, path = "index.html", title = "Preview" } = {}) =>
+    set({
+      preview: {
+        open: true,
+        minimized: false,
+        projectId: projectId || null,
+        path: path || "index.html",
+        error: null,
+        title: title || "Preview",
+      },
+    }),
+  closePreview: () =>
+    set((s) => ({
+      preview: { ...s.preview, open: false, minimized: false, error: null },
+    })),
+  minimizePreview: () =>
+    set((s) => ({ preview: { ...s.preview, minimized: true } })),
+  restorePreview: () =>
+    set((s) => ({ preview: { ...s.preview, minimized: false, open: true } })),
+  setPreviewPath: (path) =>
+    set((s) => ({ preview: { ...s.preview, path: path || "index.html", error: null } })),
+  setPreviewError: (error) =>
+    set((s) => ({ preview: { ...s.preview, error: error || null } })),
+
   // ── Copilot ──────────────────────────────────────────────
   nuhaMode: "chat", // chat | plan | action
   setNuhaMode: (mode) => set({ nuhaMode: mode || "chat" }),

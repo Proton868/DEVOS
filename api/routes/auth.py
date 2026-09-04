@@ -237,6 +237,13 @@ def _extract_token(request: Request) -> str:
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             token = auth[7:]
+    # Workspace preview iframes cannot set Authorization on subresource
+    # requests; allow a short-lived token query param (same JWT as Bearer).
+    if not token and request is not None:
+        try:
+            token = request.query_params.get("token") or request.query_params.get("access_token")
+        except Exception:
+            token = None
     return token
 
 
