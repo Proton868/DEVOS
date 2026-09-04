@@ -2018,3 +2018,9 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
   font-size: 12px;
   cursor: pointer;
 }
+
+.sp-preview-status {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--sp-text-2, #9aa3b5);
+}

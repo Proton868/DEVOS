@@ -223,7 +223,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
+        # Workspace artifact preview sets its own CSP + frame policy; do not
+        # overwrite with the app shell policy (which allows connect-src https:).
+        is_preview = (
+            "/preview/" in (request.url.path or "")
+            or (request.url.path or "").endswith("/preview")
+            or response.headers.get("X-DevOS-Preview-Auth")
+        )
+        if not is_preview:
+            response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -234,18 +242,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # style-src keeps 'unsafe-inline' because Monaco and several React
         # components set inline style attributes at runtime (acceptable
         # residual risk -- style-only injection can't execute script).
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "script-src 'self'; "
-            "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data: blob:; "
-            "font-src 'self' data:; "
-            "worker-src 'self' blob:; "
-            "connect-src 'self' ws: wss: https:; "
-            "frame-ancestors 'none'; "
-            "base-uri 'self'; "
-            "form-action 'self'"
-        )
+        if not is_preview:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: blob:; "
+                "font-src 'self' data:; "
+                "worker-src 'self' blob:; "
+                "connect-src 'self' ws: wss: https:; "
+                "frame-ancestors 'none'; "
+                "base-uri 'self'; "
+                "form-action 'self'"
+            )
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         # Cross-origin isolation headers (security-audit P3h) -- defense in
         # depth against Spectre-style side channels and cross-origin window

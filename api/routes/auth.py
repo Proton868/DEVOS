@@ -70,6 +70,64 @@ def make_jwt(uid, admin=False, expire_hours: int = None):
     )
 
 
+# Preview tokens: short-lived, read-only, scoped to user + project (+ optional path prefix).
+# Never escalate to a full session. Typ claim distinguishes them from session JWTs.
+PREVIEW_TOKEN_TYP = "devos_preview"
+PREVIEW_TOKEN_TTL_SECONDS = 15 * 60  # 15 minutes
+
+
+def make_preview_token(
+    uid: str,
+    project_id: str,
+    *,
+    path_prefix: str = "",
+    ttl_seconds: int = PREVIEW_TOKEN_TTL_SECONDS,
+) -> dict:
+    """Mint a narrowly scoped preview credential.
+
+    Returns {token, expires_at, project_id, path_prefix, ttl_seconds}.
+    """
+    now = datetime.now(timezone.utc)
+    exp = now + timedelta(seconds=max(60, min(ttl_seconds, 60 * 60)))  # clamp 1m..1h
+    payload = {
+        "sub": uid,
+        "typ": PREVIEW_TOKEN_TYP,
+        "project_id": project_id,
+        "path_prefix": (path_prefix or "").lstrip("/"),
+        "scope": "preview:read",
+        "iss": JWT_ISSUER,
+        "aud": JWT_AUDIENCE,
+        "iat": now,
+        "exp": exp,
+    }
+    token = jwt.encode(payload, settings.JWT_SECRET, algorithm="HS256")
+    return {
+        "token": token,
+        "expires_at": exp.isoformat().replace("+00:00", "Z"),
+        "project_id": project_id,
+        "path_prefix": payload["path_prefix"],
+        "ttl_seconds": int((exp - now).total_seconds()),
+    }
+
+
+def decode_preview_token(token: str):
+    """Verify a preview credential. Returns payload or None."""
+    try:
+        payload = jwt.decode(
+            token, settings.JWT_SECRET, algorithms=["HS256"],
+            issuer=JWT_ISSUER, audience=JWT_AUDIENCE,
+        )
+    except Exception:
+        return None
+    if payload.get("typ") != PREVIEW_TOKEN_TYP:
+        return None
+    if payload.get("scope") != "preview:read":
+        return None
+    if not payload.get("sub") or not payload.get("project_id"):
+        return None
+    return payload
+
+
 def decode_local_token(token: str):
     """Verify a locally-issued HS256 JWT. Returns the payload dict, or None
     if the token isn't a valid local token (including: it's actually a
