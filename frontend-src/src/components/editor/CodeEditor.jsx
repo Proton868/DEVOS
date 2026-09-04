@@ -1,5 +1,8 @@
 import React, { useRef, useCallback, useEffect, useState } from "react";
 import Editor from "@monaco-editor/react";
+import { ensureMonaco } from "../../monacoSetup";
+
+ensureMonaco();
 import { X, Save, Zap, Split, ChevronRight, Terminal } from "lucide-react";
 import useStore from "../../store/useStore";
 import { api } from "../../services/api";

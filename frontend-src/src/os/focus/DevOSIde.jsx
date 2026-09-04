@@ -1,15 +1,22 @@
 /**
  * DevOS IDE — the ephemeral editor focus surface.
- * Appears spatially when the user selects "Edit Script" / "Open Code".
  * Real file loading via /api/files/{project}/read or /api/scripts/{id},
  * real saving via writeFile / updateFlowScript. Monaco underneath.
+ *
+ * Monaco is loaded from the bundled package (see monacoSetup.js) so CSP
+ * script-src 'self' does not leave the editor stuck on "Loading…".
  */
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import Editor from "@monaco-editor/react";
-import { ChevronLeft, Save, X, FileCode2 } from "lucide-react";
+import { ChevronLeft, Save, X, FileCode2, RefreshCw } from "lucide-react";
 import useOsStore from "../store/osStore";
 import useStore from "../../store/useStore";
 import { api, getLanguageFromPath } from "../../services/api";
+import { ensureMonaco } from "../../monacoSetup";
+
+ensureMonaco();
+
+const LOAD_TIMEOUT_MS = 12000;
 
 export default function DevOSIde({ onClose }) {
   const { editor, closeEditor } = useOsStore();
@@ -19,7 +26,9 @@ export default function DevOSIde({ onClose }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [monacoReady, setMonacoReady] = useState(false);
   const editorRef = useRef(null);
+  const loadGen = useRef(0);
 
   const target = editor.file
     ? { type: "file", path: editor.file }
@@ -31,37 +40,54 @@ export default function DevOSIde({ onClose }) {
     editor.language ||
     (editor.file ? getLanguageFromPath(editor.file) : "python");
 
-  // Load real content
-  useEffect(() => {
+  const loadContent = useCallback(async () => {
     if (!target) return;
-    let cancelled = false;
+    const gen = ++loadGen.current;
     setLoading(true);
     setError(null);
-    (async () => {
-      try {
+    setContent(null);
+
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Load timed out — check network or project path")), LOAD_TIMEOUT_MS)
+    );
+
+    try {
+      const work = (async () => {
         let code = "";
         let lang = language;
         if (target.type === "file") {
           const r = await api.readFile(target.path);
           code = r?.content ?? r?.data ?? (typeof r === "string" ? r : "");
+          if (code == null) code = "";
           lang = getLanguageFromPath(target.path);
         } else {
           const s = await api.flowScript(target.id);
           code = s?.code ?? s?.content ?? "";
-          if (s?.language) lang = s.language.toLowerCase() === "python" ? "python" : s.language.toLowerCase();
+          if (s?.language) {
+            lang = s.language.toLowerCase() === "python" ? "python" : s.language.toLowerCase();
+          }
         }
-        if (cancelled) return;
-        setContent(code);
-        setOriginal(code);
-        useOsStore.setState((st) => ({ editor: { ...st.editor, language: lang } }));
-      } catch (e) {
-        if (!cancelled) setError(e.message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [target?.type, target?.path, target?.id]);
+        return { code: String(code), lang };
+      })();
+
+      const { code, lang } = await Promise.race([work, timeout]);
+      if (gen !== loadGen.current) return;
+      setContent(code);
+      setOriginal(code);
+      useOsStore.setState((st) => ({ editor: { ...st.editor, language: lang } }));
+    } catch (e) {
+      if (gen !== loadGen.current) return;
+      setError(e?.message || String(e));
+      setContent("");
+      setOriginal("");
+    } finally {
+      if (gen === loadGen.current) setLoading(false);
+    }
+  }, [target?.type, target?.path, target?.id, language]);
+
+  useEffect(() => {
+    loadContent();
+  }, [loadContent]);
 
   const dirty = content !== null && content !== original;
 
@@ -85,7 +111,6 @@ export default function DevOSIde({ onClose }) {
     }
   }, [target, content, setStatus]);
 
-  // Ctrl/Cmd+S
   useEffect(() => {
     const h = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
@@ -101,7 +126,7 @@ export default function DevOSIde({ onClose }) {
   const title = target.type === "file" ? target.path : `script #${target.id}`;
 
   return (
-    <div className="sp-surface">
+    <div className="sp-surface sp-surface--seamless">
       <div className="sp-surface-head">
         <button className="sp-iconbtn" title="Back to canvas" onClick={() => { closeEditor(); onClose && onClose(); }}>
           <ChevronLeft size={15} />
@@ -109,6 +134,11 @@ export default function DevOSIde({ onClose }) {
         <span>DEVOS IDE</span>
         <span className="sub">· {title}{dirty ? " ●" : ""}</span>
         <span className="spacer" />
+        {error && (
+          <button className="sp-iconbtn" title="Retry load" onClick={loadContent}>
+            <RefreshCw size={14} />
+          </button>
+        )}
         <button className="sp-iconbtn" title={dirty ? "Save (unsaved changes)" : "Save"} disabled={!dirty || saving} onClick={save}>
           <Save size={15} />
         </button>
@@ -124,35 +154,46 @@ export default function DevOSIde({ onClose }) {
       ) : error ? (
         <div className="sp-insp-body">
           <div className="sp-logline lg-error">Failed to load {title}: {error}</div>
+          <button className="sp-chip" style={{ alignSelf: "flex-start" }} onClick={loadContent}>
+            Retry
+          </button>
         </div>
       ) : (
         <div className="sp-ide-body">
+          {!monacoReady && (
+            <div className="sp-ide-monaco-loading">Starting editor…</div>
+          )}
           <Editor
             key={title}
             language={language}
             value={content || ""}
             theme="vs-dark"
+            loading={<span style={{ color: "var(--sp-text-2)", fontSize: 12 }}>Starting editor…</span>}
             onChange={(v) => setContent(v ?? "")}
-            onMount={(ed) => { editorRef.current = ed; }}
+            onMount={(ed) => {
+              editorRef.current = ed;
+              setMonacoReady(true);
+            }}
             options={{
               fontSize: 13,
               fontFamily: "'JetBrains Mono','Fira Code',monospace",
               fontLigatures: true,
               lineHeight: 1.6,
-              minimap: { enabled: true, scale: 0.8 },
+              minimap: { enabled: window.innerWidth > 720, scale: 0.8 },
               scrollBeyondLastLine: false,
               bracketPairColorization: { enabled: true },
               smoothScrolling: true,
               cursorBlinking: "smooth",
               padding: { top: 10 },
-              tabSize: 4,
+              tabSize: 2,
+              automaticLayout: true,
             }}
           />
         </div>
       )}
       <div className="sp-ide-status">
         <span>{language}</span>
-        <span>{dirty ? "MODIFIED" : "SAVED"}</span>
+        <span>{loading ? "LOADING" : dirty ? "MODIFIED" : "SAVED"}</span>
         <span className="spacer" />
         <span>Ctrl+S to save</span>
       </div>

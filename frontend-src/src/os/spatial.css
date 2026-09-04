@@ -10,8 +10,8 @@
   --sp-bg-2: #10101c;
   --sp-panel: rgba(18, 18, 30, 0.72);
   --sp-panel-solid: #12121e;
-  --sp-border: rgba(128, 130, 190, 0.16);
-  --sp-border-bright: rgba(140, 145, 220, 0.32);
+  --sp-border: rgba(128, 130, 190, 0.08);
+  --sp-border-bright: rgba(140, 145, 220, 0.18);
   --sp-text-0: #eef0f8;
   --sp-text-1: #b8bccf;
   --sp-text-2: #7c819c;
@@ -21,8 +21,8 @@
   --sp-warn: #fbbf24;
   --sp-bad: #f87171;
   --sp-pink: #f472b6;
-  --sp-radius: 12px;
-  --sp-radius-sm: 8px;
+  --sp-radius: 6px;
+  --sp-radius-sm: 4px;
   --sp-font: "Inter", "SF Pro Display", system-ui, -apple-system, sans-serif;
   --sp-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
 }
@@ -190,6 +190,28 @@
   background: var(--sp-panel); border: 1px solid var(--sp-border);
   border-radius: var(--sp-radius); overflow: hidden;
 }
+/* Edge-to-edge focus surfaces — less "card in a card" */
+.sp-surface--seamless {
+  border: none;
+  border-radius: 0;
+  background: var(--sp-panel-solid, #12121e);
+  box-shadow: none;
+}
+.sp-focus-col .sp-surface {
+  border-left: none;
+  border-right: none;
+  border-radius: 0;
+}
+.sp-chat-float .sp-surface {
+  border-radius: var(--sp-radius-sm);
+  border-color: rgba(128, 130, 190, 0.1);
+}
+.sp-ide-monaco-loading {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--sp-text-2); font-size: 12px; pointer-events: none; z-index: 1;
+}
+.sp-ide-body .monaco-editor { border-radius: 0 !important; }
+
 .sp-surface-head {
   flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
   padding: 8px 12px; border-bottom: 1px solid var(--sp-border);
