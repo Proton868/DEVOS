@@ -1,10 +1,11 @@
 /**
- * MissionBar — compact OS control strip: branding (7-branch menorah),
- * project selector, CMD+K command entry, runtime status, notifications,
- * user controls.
+ * MissionBar — compact OS control strip: branding, project, CMD+K,
+ * runtime chips, notifications, user. Mobile collapses secondary chips.
  */
 import React, { useEffect, useRef, useState } from "react";
-import { Search, Bell, ChevronDown, LogOut, Settings, Check, Zap, Terminal, PanelLeft } from "lucide-react";
+import {
+  Search, Bell, ChevronDown, LogOut, Settings, Check, Zap, Terminal, PanelLeft, Menu, X,
+} from "lucide-react";
 import MenorahLogo from "../MenorahLogo";
 import useOsStore from "../store/osStore";
 import useStore from "../../store/useStore";
@@ -27,7 +28,7 @@ export default function MissionBar() {
     removePendingHitlRequest, user, logout, setStatus,
   } = useStore();
   const [projects, setProjects] = useState([]);
-  const [openPop, setOpenPop] = useState(null); // 'projects' | 'notif' | 'user'
+  const [openPop, setOpenPop] = useState(null); // projects | notif | user | more
   const [backendUp, setBackendUp] = useState(null);
   const barRef = useRef(null);
 
@@ -64,16 +65,21 @@ export default function MissionBar() {
     catch (e) { setStatus("Deny failed: " + e.message); }
   };
 
+  const notifCount = (pendingHitlRequests || []).length;
+
   return (
     <div className="sp-missionbar" ref={barRef}>
       <div className="sp-brand">
-        <MenorahLogo size={22} id="mb" />
-        DevOS
+        <MenorahLogo size={20} id="mb" />
+        <span className="sp-brand-text">DevOS</span>
       </div>
 
-      <div style={{ position: "relative" }}>
-        <button className="sp-project-btn" onClick={() => setOpenPop(openPop === "projects" ? null : "projects")}>
-          <span className="pj-label">{currentProject || "Project"}</span>
+      <div className="sp-mb-proj" style={{ position: "relative" }}>
+        <button
+          className="sp-project-btn"
+          onClick={() => setOpenPop(openPop === "projects" ? null : "projects")}
+        >
+          <span className="pj-label">{currentProject || "default"}</span>
           <ChevronDown size={12} />
         </button>
         {openPop === "projects" && (
@@ -82,78 +88,79 @@ export default function MissionBar() {
               <button
                 key={p}
                 className="sp-mb-item"
-                onClick={async () => { setOpenPop(null); if (p !== currentProject) { await setCurrentProject(p); window.dispatchEvent(new CustomEvent("devos:graph-changed")); } }}
+                onClick={async () => {
+                  setOpenPop(null);
+                  if (p !== currentProject) {
+                    await setCurrentProject(p);
+                    window.dispatchEvent(new CustomEvent("devos:graph-changed"));
+                  }
+                }}
               >
                 {p === currentProject ? <Check size={13} style={{ color: "var(--sp-good)" }} /> : <span style={{ width: 13 }} />}
                 {p}
               </button>
             ))}
-            {projects.length === 0 && (
-              <div style={{ padding: "6px 10px", color: "var(--sp-text-2)", fontSize: 11 }}>
-                Backend project list unavailable — using current project.
-              </div>
-            )}
           </div>
         )}
       </div>
 
-      <div className="sp-cmdk-wrap">
-        <div className="sp-cmdk-input" onClick={() => setCommandBar(true)} role="button" tabIndex={0}>
-          <Search size={13} />
-          <span className="cmdk-label">Search projects, agents, workflows, commands…</span>
-          <span className="k">CMD+K</span>
-        </div>
-      </div>
+      <button className="sp-cmdk-btn" onClick={() => setCommandBar(true)} title="Command palette (Ctrl/Cmd+K)">
+        <Search size={14} />
+        <span className="cmdk-label">Search…</span>
+        <span className="k">⌘K</span>
+      </button>
 
       <div className="sp-mb-right">
         <button
-          className={`sp-chip ${!railCollapsed ? "active-chip" : ""}`}
-          title={railCollapsed ? "Show Cosmic Sidebar" : "Hide Cosmic Sidebar"}
+          className={`sp-chip desktop-only ${!railCollapsed ? "active-chip" : ""}`}
+          title={railCollapsed ? "Show sidebar" : "Hide sidebar"}
           onClick={toggleRail}
         >
           <PanelLeft size={13} />
         </button>
         <button
-          className={`sp-chip ${terminalOpen ? "active-chip" : ""}`}
-          title={terminalOpen ? "Hide Ghost Terminal" : "Show Ghost Terminal (toggle)"}
+          className={`sp-chip desktop-only ${terminalOpen ? "active-chip" : ""}`}
+          title="Toggle terminal"
           onClick={toggleTerminal}
         >
           <Terminal size={13} />
         </button>
         <button
-          className={`sp-chip ${copilotOpen ? "active-chip" : ""}`}
-          title={copilotOpen ? (chatMode === "floating" ? "Chat floating — click to close" : "Chat docked — Shift+click to float") : "Open AI Copilot Chat"}
-          onClick={(e) => {
-            if (e.shiftKey && copilotOpen) { toggleChatMode(); return; }
+          className={`sp-chip desktop-only ${copilotOpen || chatMode === "docked" ? "active-chip" : ""}`}
+          title="AI chat"
+          onClick={() => {
             if (copilotOpen) closeCopilot();
-            else openCopilot(null, null);
+            else openCopilot(null, "");
+            toggleChatMode();
           }}
         >
-          <span style={{ fontSize: 11, fontWeight: 600 }}>AI</span>
+          AI
         </button>
-        <div className="sp-chip" title={backendUp == null ? "Checking backend…" : backendUp ? "Backend online" : "Backend offline"}>
-          <Zap size={12} className={backendUp ? "sp-status-ok" : backendUp === false ? "sp-status-off" : ""} />
-          <span className={backendUp ? "sp-status-ok" : backendUp === false ? "sp-status-off" : ""}>
-            {backendUp == null ? "…" : backendUp ? "100%" : "OFF"}
-          </span>
-        </div>
+        <span className={`sp-chip status-chip ${backendUp === false ? "bad" : "ok"}`} title={backendUp ? "Backend online" : "Backend unreachable"}>
+          <Zap size={12} />
+          <span className="status-pct">{backendUp === false ? "—" : "100%"}</span>
+        </span>
 
         <div style={{ position: "relative" }}>
-          <button className="sp-chip" title="Notifications" onClick={() => setOpenPop(openPop === "notif" ? null : "notif")}>
+          <button
+            className={`sp-chip ${notifCount ? "has-notif" : ""}`}
+            title="Notifications"
+            onClick={() => setOpenPop(openPop === "notif" ? null : "notif")}
+          >
             <Bell size={13} />
-            {pendingHitlRequests.length > 0 && <span className="dot-badge" />}
+            {notifCount > 0 && <span className="notif-dot">{notifCount}</span>}
           </button>
           {openPop === "notif" && (
-            <div className="sp-mb-pop sp-glass">
-              {pendingHitlRequests.length === 0 && (
-                <div style={{ padding: "8px 10px", color: "var(--sp-text-2)", fontSize: 12 }}>No pending approvals.</div>
+            <div className="sp-mb-pop sp-glass right0">
+              {notifCount === 0 && (
+                <div style={{ padding: "10px 12px", color: "var(--sp-text-2)", fontSize: 12 }}>No pending approvals.</div>
               )}
-              {pendingHitlRequests.map((r) => (
-                <div key={r.id} style={{ padding: "8px 10px", borderBottom: "1px solid var(--sp-border)" }}>
-                  <div style={{ fontSize: 12, color: "var(--sp-text-0)", marginBottom: 6 }}>{r.description || "Human approval required"}</div>
-                  <div className="sp-btn-row">
-                    <button className="sp-btn" onClick={() => deny(r.id)}>Deny</button>
-                    <button className="sp-btn primary" onClick={() => approve(r.id)}><Check size={11} /> Approve</button>
+              {(pendingHitlRequests || []).map((r) => (
+                <div key={r.id} className="sp-mb-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                  <span style={{ fontSize: 12 }}>{r.summary || r.action || r.id}</span>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button className="sp-btn primary" onClick={() => approve(r.id)}>Approve</button>
+                    <button className="sp-btn danger" onClick={() => deny(r.id)}>Deny</button>
                   </div>
                 </div>
               ))}
@@ -161,33 +168,48 @@ export default function MissionBar() {
           )}
         </div>
 
-        <div style={{ position: "relative" }}>
-          <button className="sp-chip" onClick={() => setOpenPop(openPop === "user" ? null : "user")}>
-            <span style={{
-              width: 18, height: 18, borderRadius: "50%", background: "linear-gradient(135deg, #22d3ee, #a78bfa)",
-              display: "inline-flex", alignItems: "center", justifyContent: "center",
-              fontSize: 9, fontWeight: 700, color: "#04121a",
-            }}>
-              {userName.slice(0, 2).toUpperCase()}
-            </span>
+        <div style={{ position: "relative" }} className="desktop-only">
+          <button className="sp-chip user-chip" onClick={() => setOpenPop(openPop === "user" ? null : "user")}>
             {userName}
             <ChevronDown size={11} />
           </button>
           {openPop === "user" && (
-            <div className="sp-mb-pop sp-glass">
+            <div className="sp-mb-pop sp-glass right0">
               <button className="sp-mb-item" onClick={() => { setOpenPop(null); setOverlay("settings"); }}>
                 <Settings size={13} /> Settings
               </button>
-              <button className="sp-mb-item" onClick={() => logout()}>
+              <button className="sp-mb-item" onClick={() => { setOpenPop(null); logout(); }}>
                 <LogOut size={13} /> Sign out
               </button>
             </div>
           )}
         </div>
 
-        <button className="sp-chip" title="System OS" onClick={() => setOverlay("system")}>
-          <Settings size={13} />
-        </button>
+        {/* Mobile overflow menu */}
+        <div style={{ position: "relative" }} className="mobile-only">
+          <button className="sp-chip" onClick={() => setOpenPop(openPop === "more" ? null : "more")} title="More">
+            {openPop === "more" ? <X size={14} /> : <Menu size={14} />}
+          </button>
+          {openPop === "more" && (
+            <div className="sp-mb-pop sp-glass right0">
+              <button className="sp-mb-item" onClick={() => { setOpenPop(null); toggleRail(); }}>
+                <PanelLeft size={13} /> {railCollapsed ? "Show" : "Hide"} sidebar
+              </button>
+              <button className="sp-mb-item" onClick={() => { setOpenPop(null); toggleTerminal(); }}>
+                <Terminal size={13} /> {terminalOpen ? "Hide" : "Show"} terminal
+              </button>
+              <button className="sp-mb-item" onClick={() => { setOpenPop(null); openCopilot(null, ""); }}>
+                AI chat
+              </button>
+              <button className="sp-mb-item" onClick={() => { setOpenPop(null); setOverlay("settings"); }}>
+                <Settings size={13} /> Settings
+              </button>
+              <button className="sp-mb-item" onClick={() => { setOpenPop(null); logout(); }}>
+                <LogOut size={13} /> Sign out ({userName})
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

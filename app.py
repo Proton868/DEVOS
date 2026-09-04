@@ -453,6 +453,22 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.ALLOWED_ORIGINS,
                    expose_headers=["X-Request-ID", "X-RateLimit-Remaining"])
 app.add_middleware(ObservabilityMiddleware)
 app.add_middleware(RateLimitMiddleware)
+
+@app.get("/carai-agency-logo.png")
+async def carai_logo():
+    """Serve brand logo from frontend root or static."""
+    from fastapi.responses import FileResponse
+    base = os.path.dirname(__file__)
+    for candidate in (
+        os.path.join(base, "frontend", "static", "carai-agency-logo.png"),
+        os.path.join(base, "frontend", "carai-agency-logo.png"),
+        os.path.join(base, "frontend-src", "public", "carai-agency-logo.png"),
+    ):
+        if os.path.isfile(candidate):
+            return FileResponse(candidate, media_type="image/png")
+    from fastapi import HTTPException
+    raise HTTPException(status_code=404, detail="Logo not found")
+
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 from api.routes import auth, chat, loop, scripts, memory, search, models, health, governance, extras, files, vcs, terminal, comms, workers, secrets as secrets_routes, user_settings, nodes
 from api.routes import capabilities, evidence, research, ponytail, workflow, enterprise, mcp as mcp_routes, marketplace, composer, agent as agent_routes, lsp as lsp_routes

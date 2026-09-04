@@ -352,7 +352,17 @@ export default function OrchestrationCanvas() {
       <div className="sp-canvas-titlebar">
         <span className="sp-canvas-title">Workflow Automation Canvas</span>
         <span className="sp-canvas-brand">
-          <img src="/carai-agency-logo.png" alt="CARAI Agency" className="sp-carai-logo" />
+          <img
+            src="/static/carai-agency-logo.png"
+            alt="CARAI Agency"
+            className="sp-carai-logo"
+            onError={(e) => {
+              e.currentTarget.style.display = "none";
+              const s = e.currentTarget.nextElementSibling;
+              if (s) s.style.display = "inline";
+            }}
+          />
+          <span style={{ display: "none" }}>CARAI Agency</span>
         </span>
       </div>
 
