@@ -38,3 +38,12 @@ Authoritative durable cache: `data/web_intel.sqlite3` table `web_cache`.
 - Cache hits skip network budget; refresh re-applies SSRF/robots/UCIP
 - Never bypasses safety on refresh
 
+
+
+## Acceptance
+
+See [ACCEPTANCE_CONTRACT.md](ACCEPTANCE_CONTRACT.md) for final closure status rules,
+test entry points, and security evidence requirements.
+
+Production crawl execution is **Jobs-only** (`job_type=web_crawl`).  
+Inline crawl is **test-only** via `DEVOS_WEB_CRAWL_INLINE_TEST=1`.

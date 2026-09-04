@@ -66,3 +66,8 @@ DevOS `TraceContext` is product authority. OTel bridges for export.
 
 See docs/architecture/web-intelligence.md. Multi-page public crawl under UCIP with durable frontier, robots, sitemaps, budgets, SSRF, evidence.
 
+
+
+## Acceptance contract
+
+See docs/architecture/ACCEPTANCE_CONTRACT.md for Web Intelligence + creative persona final closure criteria.
