@@ -12,7 +12,7 @@ import { ChevronLeft, Save, X, FileCode2, RefreshCw } from "lucide-react";
 import useOsStore from "../store/osStore";
 import useStore from "../../store/useStore";
 import { api, getLanguageFromPath } from "../../services/api";
-import { ensureMonaco } from "../../monacoSetup";
+import { ensureMonaco, probeMonacoAssets } from "../../monacoSetup";
 
 ensureMonaco();
 
@@ -91,16 +91,31 @@ export default function DevOSIde({ onClose }) {
     loadContent();
   }, [loadContent]);
 
-  // Bound Monaco init — never leave "Starting editor…" forever
+  // Probe same-origin Monaco assets, then bound init timeout
   const MONACO_TIMEOUT_MS = 15000;
   useEffect(() => {
     if (loading || error || monacoReady || monacoError) return;
-    const t = setTimeout(() => {
-      setMonacoError(
-        "Editor scripts did not become ready in time. Check network, CSP, or /static/monaco/vs assets."
+    let cancelled = false;
+    (async () => {
+      const probe = await probeMonacoAssets();
+      if (cancelled) return;
+      if (!probe.ok) {
+        setMonacoError(
+          `Monaco assets unavailable (${probe.reason}). Deploy must include frontend/static/monaco/vs (HTTP ${probe.status}).`
+        );
+      }
+    })();
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      setMonacoError((prev) =>
+        prev ||
+        "Editor scripts did not become ready in time. Check /static/monaco/vs/loader.js is HTTP 200."
       );
     }, MONACO_TIMEOUT_MS);
-    return () => clearTimeout(t);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [loading, error, monacoReady, monacoError, monacoAttempt]);
 
 
