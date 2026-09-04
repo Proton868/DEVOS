@@ -288,3 +288,112 @@ def profile_to_dict(profile, registry_meta: Optional[dict] = None) -> dict:
         # Explicit: XP is not authority
         "authority_note": "XP is informational only and does not grant UCIP capabilities or trust.",
     }
+
+
+async def award_agent_task_outcome(
+    *,
+    user_id: str,
+    task_id: str,
+    success: bool,
+    objective: str = "",
+    files_changed: Optional[list] = None,
+    persona_id: str = "nuha",
+) -> dict:
+    """Best-effort XP from verified agent completion. Own DB session.
+    Never raises into the agent stream — XP failures are logged only.
+    """
+    if not success or not user_id or not task_id:
+        return {"awarded": False, "reason": "not_successful"}
+    try:
+        from core.database import AsyncSessionLocal
+        from brain.personas import suggest_personas_for_goal
+    except Exception as e:
+        logger.warning(f"[persona_xp] import failed: {e}")
+        return {"awarded": False, "reason": str(e)}
+
+    specialist = persona_id or "nuha"
+    if specialist == "nuha":
+        suggested = suggest_personas_for_goal(objective or "")
+        if suggested:
+            specialist = suggested[0]
+
+    results = {}
+    try:
+        async with AsyncSessionLocal() as db:
+            # Specialist (or Nuha if no specialist) — task verified
+            key_base = f"agent-task:{task_id}"
+            results["specialist"] = await award_xp(
+                db,
+                user_id=user_id,
+                persona_id=specialist,
+                event_type="task_verified",
+                reason=f"Agent task verified: {(objective or '')[:160]}",
+                task_id=task_id,
+                source="agent_runtime",
+                verified=True,
+                idempotency_key=f"{key_base}:verified:{specialist}",
+                specialty_category=specialist if specialist != "nuha" else "orchestration",
+            )
+            if files_changed:
+                results["artifact"] = await award_xp(
+                    db,
+                    user_id=user_id,
+                    persona_id=specialist,
+                    event_type="artifact_created",
+                    reason=f"Files changed: {len(files_changed)}",
+                    task_id=task_id,
+                    source="agent_runtime",
+                    verified=True,
+                    idempotency_key=f"{key_base}:artifact:{specialist}",
+                    specialty_category=specialist if specialist != "nuha" else "orchestration",
+                )
+            # Nuha orchestration credit when a specialist did the work
+            if specialist != "nuha":
+                results["nuha"] = await award_xp(
+                    db,
+                    user_id=user_id,
+                    persona_id="nuha",
+                    event_type="orchestration_success",
+                    reason=f"Orchestrated {specialist} for task {task_id}",
+                    task_id=task_id,
+                    source="agent_runtime",
+                    verified=True,
+                    idempotency_key=f"{key_base}:orch:nuha",
+                    specialty_category="orchestration",
+                )
+            await db.commit()
+    except Exception as e:
+        logger.warning(f"[persona_xp] award_agent_task_outcome failed: {e}")
+        return {"awarded": False, "reason": str(e)}
+    return {"awarded": True, "results": results}
+
+
+async def award_user_accepted_change(
+    *,
+    user_id: str,
+    task_id: str,
+    change_id: str,
+    persona_id: str = "nuha",
+) -> dict:
+    """XP when user accepts an agent file change."""
+    if not user_id or not change_id:
+        return {"awarded": False}
+    try:
+        from core.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            r = await award_xp(
+                db,
+                user_id=user_id,
+                persona_id=persona_id or "nuha",
+                event_type="user_accepted_result",
+                reason=f"User accepted change {change_id}",
+                task_id=task_id,
+                source="agent_changes",
+                verified=True,
+                idempotency_key=f"accept:{change_id}",
+            )
+            await db.commit()
+            return r
+    except Exception as e:
+        logger.warning(f"[persona_xp] award_user_accepted_change failed: {e}")
+        return {"awarded": False, "reason": str(e)}

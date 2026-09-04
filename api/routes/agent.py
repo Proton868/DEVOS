@@ -115,6 +115,22 @@ async def run_agent(req: AgentRunReq, request: Request, db=Depends(get_db)):
     async def sse():
         try:
             async for event in runtime.run(req.objective.strip(), context):
+                try:
+                    et = (event or {}).get("type")
+                    data = (event or {}).get("data") or {}
+                    if et == "agent.completed" and data.get("success") is not False:
+                        from brain.persona_xp import award_agent_task_outcome
+                        tid = (event or {}).get("task_id") or data.get("task_id") or "unknown"
+                        await award_agent_task_outcome(
+                            user_id=user.id,
+                            task_id=str(tid),
+                            success=True,
+                            objective=req.objective.strip(),
+                            files_changed=data.get("files_changed") or [],
+                            persona_id="nuha",
+                        )
+                except Exception:
+                    pass
                 yield f"data: {json.dumps(event, default=str)}\n\n"
                 await asyncio.sleep(0)
         except Exception as e:
@@ -324,8 +340,20 @@ async def list_task_changes(task_id: str, request: Request, db=Depends(get_db)):
 async def accept_one(change_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    from brain.agent_changes import accept_change
-    return accept_change(change_id, user.id)
+    from brain.agent_changes import accept_change, get_change
+    result = accept_change(change_id, user.id)
+    try:
+        rec = get_change(change_id, user.id)
+        from brain.persona_xp import award_user_accepted_change
+        await award_user_accepted_change(
+            user_id=user.id,
+            task_id=(rec.task_id if rec else None) or "unknown",
+            change_id=change_id,
+            persona_id="nuha",
+        )
+    except Exception:
+        pass
+    return result
 
 
 @router.post("/changes/{change_id}/reject")
@@ -359,7 +387,18 @@ async def accept_all_changes(task_id: str, request: Request, db=Depends(get_db))
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from brain.agent_changes import accept_all
-    return accept_all(task_id, user.id)
+    result = accept_all(task_id, user.id)
+    try:
+        from brain.persona_xp import award_user_accepted_change
+        await award_user_accepted_change(
+            user_id=user.id,
+            task_id=task_id,
+            change_id=f"accept-all:{task_id}",
+            persona_id="nuha",
+        )
+    except Exception:
+        pass
+    return result
 
 
 @router.post("/{task_id}/changes/reject-all")
