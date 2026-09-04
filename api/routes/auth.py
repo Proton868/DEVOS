@@ -448,6 +448,12 @@ async def me(request: Request, db: AsyncSession = Depends(get_db)):
     tenant = await ensure_personal_tenant(db, user)
     return {"id": user.id, "username": user.username, "email": user.email,
             "is_admin": user.is_admin, "supabase_linked": bool(user.supabase_id),
+            "role": getattr(user, "role", None) or ("hegemon" if user.is_admin else "member"),
+            "plan": getattr(user, "plan", None) or ("hegemon" if user.is_admin else "recruit"),
+            "onboarding_status": getattr(user, "onboarding_status", None) or "NOT_STARTED",
+            "display_name": getattr(user, "display_name", None) or user.username,
+            "avatar_url": getattr(user, "avatar_url", None),
+
             "default_tenant_id": user.default_tenant_id or tenant.id}
 
 
