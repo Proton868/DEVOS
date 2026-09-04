@@ -93,35 +93,46 @@ function ExecutionHistory() {
 function SystemStatus() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
+  const [health, setHealth] = useState(null);
   useEffect(() => {
-    Promise.all([api.ucipHealth().catch((e) => ({ err: e })), api.getIndexStatus().catch(() => null)])
-      .then(([g, idx]) => {
-        if (g?.err) setErr(g.err.message || "Governance metrics unavailable");
-        setData({ governance: g?.err ? null : g, index: idx });
-      });
+    Promise.all([
+      api.ucipHealth().catch((e) => ({ err: e })),
+      api.getIndexStatus().catch(() => null),
+      api.getIndexStatus ? fetch("/api/health").then((r) => r.json()).catch(() => null) : null,
+    ]).then(([g, idx, h]) => {
+      if (g?.err) setErr(g.err.message || "Governance metrics unavailable");
+      setData({ governance: g?.err ? null : g, index: idx });
+      setHealth(h);
+    });
   }, []);
+
+  const g = data?.governance || {};
+  const cards = [
+    { label: "API Health", value: health?.status || "…", ok: health?.status === "ok" },
+    { label: "Database", value: health?.db || "…", ok: health?.db === "ok" },
+    { label: "Memory backend", value: health?.memory || "…" },
+    { label: "Providers", value: Array.isArray(health?.providers) ? health.providers.join(", ") : (health?.providers || "…") },
+    { label: "UCIP status", value: g.status || g.state || "…" },
+    { label: "UCIP traces", value: g.total_traces ?? g.traces ?? "—" },
+    { label: "Error rate", value: g.recent_error_rate != null ? `${(Number(g.recent_error_rate) * 100).toFixed(1)}%` : "—" },
+    { label: "Index", value: data?.index ? (data.index.status || data.index.state || "ready") : "—" },
+  ];
+
   return (
-    <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+    <div className="sp-system-status">
+      <p className="sp-system-lead">
+        System OS — live runtime health, governance (UCIP), and search index status.
+      </p>
       {err && <div className="sp-logline lg-error">{err}</div>}
-      {data?.governance && (
-        <>
-          <div className="sp-insp-sec">Governance / UCIP</div>
-          <pre style={{
-            margin: 0, fontFamily: "var(--sp-mono)", fontSize: 11, color: "var(--sp-text-1)",
-            background: "rgba(255,255,255,0.03)", padding: 10, borderRadius: 8, overflowX: "auto",
-          }}>{JSON.stringify(data.governance, null, 2)}</pre>
-        </>
-      )}
-      {data?.index && (
-        <>
-          <div className="sp-insp-sec">Search Index</div>
-          <pre style={{
-            margin: 0, fontFamily: "var(--sp-mono)", fontSize: 11, color: "var(--sp-text-1)",
-            background: "rgba(255,255,255,0.03)", padding: 10, borderRadius: 8, overflowX: "auto",
-          }}>{JSON.stringify(data.index, null, 2)}</pre>
-        </>
-      )}
       {!data && !err && <Fallback />}
+      <div className="sp-system-grid">
+        {cards.map((c) => (
+          <div key={c.label} className={`sp-system-card ${c.ok === true ? "ok" : c.ok === false ? "bad" : ""}`}>
+            <div className="sp-system-label">{c.label}</div>
+            <div className="sp-system-value">{String(c.value)}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
