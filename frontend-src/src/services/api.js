@@ -714,6 +714,17 @@ export const api = {
   getWorkspaceMeta: () => req("/api/models/settings"),
   // Back-compat alias used by App bootstrap
   getSettings: () => req("/api/settings").then((r) => r.settings || r),
+  changePassword: (current_password, new_password) =>
+    req("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password, new_password }),
+    }),
+  deleteAccount: (password, confirm = "DELETE") =>
+    req("/api/auth/delete-account", {
+      method: "POST",
+      body: JSON.stringify({ password: password || "", confirm }),
+    }),
+  getMe: () => req("/api/auth/me"),
   // Persist user preference bag (UserSettings.settings_json merge)
   saveSettings: (settings) =>
     req("/api/settings", {

@@ -7,6 +7,7 @@ import {
   Search, Bell, ChevronDown, LogOut, Settings, Check, Zap, Terminal, PanelLeft, Menu, X,
 } from "lucide-react";
 import MenorahLogo from "../MenorahLogo";
+import SteelpanSpinner, { useAiBusy } from "../SteelpanSpinner";
 import useOsStore from "../store/osStore";
 import useStore from "../../store/useStore";
 import { api } from "../../services/api";
@@ -32,6 +33,7 @@ export default function MissionBar() {
   const [projects, setProjects] = useState([]);
   const [openPop, setOpenPop] = useState(null); // projects | notif | user | more
   const [backendUp, setBackendUp] = useState(null);
+  const aiBusy = useAiBusy();
   const barRef = useRef(null);
 
   useEffect(() => {
@@ -138,6 +140,11 @@ export default function MissionBar() {
         >
           AI
         </button>
+        {aiBusy && (
+          <span className="sp-chip steelpan-chip" title="AI is working">
+            <SteelpanSpinner size={18} />
+          </span>
+        )}
         <span className={`sp-chip status-chip ${backendUp === false ? "bad" : "ok"}`} title={backendUp ? "Backend online" : "Backend unreachable"}>
           <Zap size={12} />
           <span className="status-pct">{backendUp === false ? "—" : "100%"}</span>

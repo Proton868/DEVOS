@@ -415,3 +415,78 @@ async def supabase_sync(request: Request, db: AsyncSession = Depends(get_db)):
                        action="supabase_sync", outcome="success")
     return {"id": user.id, "username": user.username, "email": user.email,
             "is_admin": user.is_admin, "supabase_linked": True}
+
+
+class ChangePasswordReq(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def _pw_len(cls, v):
+        if not v or len(v) < 8:
+            raise ValueError("new password must be at least 8 characters")
+        return v
+
+
+@router.post("/change-password")
+async def change_password(req: ChangePasswordReq, request: Request, db: AsyncSession = Depends(get_db)):
+    """Change the local account password. Supabase-only accounts should use Supabase recovery."""
+    user = await get_current_user(request, db)
+    if not user:
+        raise HTTPException(401)
+    if not user.hashed_password:
+        raise HTTPException(
+            400,
+            "This account has no local password (Supabase-only). "
+            "Reset the password in your identity provider instead.",
+        )
+    if not check_pw(req.current_password, user.hashed_password):
+        raise HTTPException(400, "Current password is incorrect")
+    user.hashed_password = hash_pw(req.new_password)
+    await db.commit()
+    from governance.audit import AuditLogger, AuditEventType
+    AuditLogger().log(
+        AuditEventType.LOGIN_SUCCESS, actor_id=user.id, tenant_id="default",
+        action="change_password", outcome="success",
+    )
+    return {"ok": True, "message": "Password updated"}
+
+
+class DeleteAccountReq(BaseModel):
+    password: str = ""
+    confirm: str = ""
+
+
+@router.post("/delete-account")
+async def delete_account(req: DeleteAccountReq, response: Response, request: Request, db: AsyncSession = Depends(get_db)):
+    """Permanently deactivate/delete the signed-in account.
+    Requires password confirmation for local accounts, or confirm=DELETE for others."""
+    user = await get_current_user(request, db)
+    if not user:
+        raise HTTPException(401)
+    if user.is_admin:
+        # Count admins — refuse to delete the last admin
+        from core.database import User as U
+        from sqlalchemy import select, func
+        r = await db.execute(select(func.count()).select_from(U).where(U.is_admin == True, U.is_active == True))  # noqa: E712
+        if int(r.scalar() or 0) <= 1:
+            raise HTTPException(400, "Cannot delete the last admin account")
+    if user.hashed_password:
+        if not req.password or not check_pw(req.password, user.hashed_password):
+            raise HTTPException(400, "Password required to delete this account")
+    elif (req.confirm or "").strip().upper() != "DELETE":
+        raise HTTPException(400, 'Type DELETE in the confirm field to permanently remove this account')
+
+    user.is_active = False
+    # Scrub local credentials so the account cannot log in again
+    user.hashed_password = None
+    await db.commit()
+    response.delete_cookie("devos_token")
+    from governance.audit import AuditLogger, AuditEventType
+    AuditLogger().log(
+        AuditEventType.LOGOUT, actor_id=user.id, tenant_id="default",
+        action="delete_account", outcome="success",
+    )
+    return {"ok": True, "message": "Account deleted"}
+

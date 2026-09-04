@@ -334,6 +334,160 @@ const SelInput = ({ label, value, onChange, options }) => (
   </label>
 );
 
+
+function AccountPanel({ local, patch, onClose }) {
+  const user = useStore((s) => s.user);
+  const logout = useStore((s) => s.logout);
+  const [me, setMe] = useState(null);
+  const [curPw, setCurPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [newPw2, setNewPw2] = useState("");
+  const [delPw, setDelPw] = useState("");
+  const [delConfirm, setDelConfirm] = useState("");
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(null);
+
+  useEffect(() => {
+    api.getMe?.().then(setMe).catch(() => setMe(null));
+  }, []);
+
+  const profile = me || user || {};
+
+  const doLogout = async () => {
+    try {
+      if (logout) await logout();
+      else await api.logout?.();
+    } catch {}
+    onClose?.();
+  };
+
+  const changePassword = async () => {
+    setMsg(null);
+    if (newPw.length < 8) {
+      setMsg({ type: "err", text: "New password must be at least 8 characters" });
+      return;
+    }
+    if (newPw !== newPw2) {
+      setMsg({ type: "err", text: "New passwords do not match" });
+      return;
+    }
+    setBusy("pw");
+    try {
+      await api.changePassword(curPw, newPw);
+      setCurPw(""); setNewPw(""); setNewPw2("");
+      setMsg({ type: "ok", text: "Password updated" });
+    } catch (e) {
+      setMsg({ type: "err", text: e.message || "Password change failed" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const deleteAccount = async () => {
+    setMsg(null);
+    if (!window.confirm("Permanently delete this account? This cannot be undone.")) return;
+    setBusy("del");
+    try {
+      await api.deleteAccount(delPw, delConfirm || "DELETE");
+      if (logout) await logout();
+      onClose?.();
+    } catch (e) {
+      setMsg({ type: "err", text: e.message || "Delete failed" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="settings-section">
+      <h3 className="settings-section-title">Account</h3>
+      <p className="settings-hint">Signed-in identity and security controls for this DevOS operator.</p>
+
+      <div className="settings-card" style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 10, marginBottom: 14 }}>
+        <div className="settings-row"><span>Username</span><strong>{profile.username || "—"}</strong></div>
+        <div className="settings-row"><span>Email</span><strong>{profile.email || "—"}</strong></div>
+        <div className="settings-row"><span>Role</span><strong>{profile.is_admin ? "Admin" : "Operator"}</strong></div>
+        <div className="settings-row"><span>Identity</span><strong>{profile.supabase_linked ? "Supabase linked" : "Local"}</strong></div>
+      </div>
+
+      <label className="settings-label">Display name</label>
+      <input
+        className="settings-input"
+        value={(local.account && local.account.display_name) || ""}
+        onChange={(e) => patch("account", "display_name", e.target.value)}
+        placeholder="How you appear in the UI"
+      />
+
+      <div style={{ marginTop: 18, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+        <h4 className="settings-section-title">Session</h4>
+        <button className="btn-secondary" onClick={doLogout}>Log out</button>
+      </div>
+
+      <div style={{ marginTop: 18, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+        <h4 className="settings-section-title">Change password</h4>
+        <p className="settings-hint">For local accounts only. Supabase-only users should use provider recovery.</p>
+        <label className="settings-label">Current password</label>
+        <input className="settings-input" type="password" value={curPw} onChange={(e) => setCurPw(e.target.value)} autoComplete="current-password" />
+        <label className="settings-label">New password</label>
+        <input className="settings-input" type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} autoComplete="new-password" />
+        <label className="settings-label">Confirm new password</label>
+        <input className="settings-input" type="password" value={newPw2} onChange={(e) => setNewPw2(e.target.value)} autoComplete="new-password" />
+        <button className="btn-primary" style={{ marginTop: 8 }} disabled={busy === "pw"} onClick={changePassword}>
+          {busy === "pw" ? "Updating…" : "Update password"}
+        </button>
+      </div>
+
+      <div style={{ marginTop: 18, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+        <h4 className="settings-section-title" style={{ color: "var(--red, #f85149)" }}>Danger zone</h4>
+        <p className="settings-hint">Delete permanently deactivates this account and clears the local login password.</p>
+        <label className="settings-label">Password (local accounts)</label>
+        <input className="settings-input" type="password" value={delPw} onChange={(e) => setDelPw(e.target.value)} />
+        <label className="settings-label">Or type DELETE to confirm</label>
+        <input className="settings-input" value={delConfirm} onChange={(e) => setDelConfirm(e.target.value)} placeholder="DELETE" />
+        <button className="btn-secondary" style={{ marginTop: 8, color: "var(--red, #f85149)", borderColor: "rgba(248,81,73,0.4)" }} disabled={busy === "del"} onClick={deleteAccount}>
+          {busy === "del" ? "Deleting…" : "Delete account"}
+        </button>
+      </div>
+
+      {msg && (
+        <p className={`provider-config-test-result ${msg.type === "ok" ? "ok" : "fail"}`} style={{ marginTop: 12 }}>
+          {msg.text}
+        </p>
+      )}
+    </div>
+  );
+}
+
+
+const SETTINGS_DEFAULTS = {
+  account: { display_name: "" },
+  ai: {
+    autocompleteEnabled: true,
+    autocompleteDelay: 400,
+    useCodebaseContext: true,
+    streamResponses: true,
+    temperature: 0.2,
+    maxContextFiles: 12,
+    agentAutonomy: "supervised",
+    showSteelpanBusy: true,
+    systemPromptExtra: "",
+  },
+  editor: { fontSize: 13, tabSize: 2, wordWrap: "on", minimap: false, lineNumbers: "on" },
+  git: { autofetch: true, confirmBeforePush: true },
+  workspace: { autoSave: true, restoreTabs: true },
+  notifications: { hitlToasts: true, runComplete: true, sound: false },
+  privacy: { shareTelemetry: false, storeChatHistory: true },
+};
+
+function withDefaults(s) {
+  const base = s && typeof s === "object" ? s : {};
+  const out = { ...base };
+  for (const [k, v] of Object.entries(SETTINGS_DEFAULTS)) {
+    out[k] = { ...v, ...(base[k] || {}) };
+  }
+  return out;
+}
+
 export default function SettingsModal({ embedded = false, onClose = null }) {
   const { settingsOpen, setSettingsOpen, providers, selectedProvider, selectedModel,
     setProvider, setModel, workspaceSettings, setWorkspaceSettings, theme, setTheme } = useStore();
@@ -352,10 +506,10 @@ export default function SettingsModal({ embedded = false, onClose = null }) {
     if (active) {
       if (!local) {
         api.getSettings().then(s => {
-          // /api/settings returns {settings: {...}} via getSettings helper which unwraps
-          setLocal(s && typeof s === "object" ? s : {});
-          setWorkspaceSettings(s || {});
-        }).catch(() => setLocal({}));
+          const merged = withDefaults(s && typeof s === "object" ? s : {});
+          setLocal(merged);
+          setWorkspaceSettings(merged);
+        }).catch(() => setLocal(withDefaults({})));
         // Also load model prefs into local.models if category endpoint available
         api.getModelPrefs?.().then((r) => {
           const models = r?.models || {};
@@ -407,22 +561,11 @@ export default function SettingsModal({ embedded = false, onClose = null }) {
           <div className="settings-content">
 
             {tab === "account" && (
-              <div className="settings-section">
-                <h3 className="settings-section-title">Account</h3>
-                <p className="settings-hint">Signed-in identity is managed by authentication. Profile fields below are personal preferences.</p>
-                <label className="settings-label">Display name</label>
-                <input className="settings-input" value={(local.account&&local.account.display_name)||""}
-                  onChange={(e)=>patch("account","display_name",e.target.value)} placeholder="Display name" />
-                <p className="settings-hint" style={{marginTop:8}}>Email and username come from your login identity and cannot be forged via settings.</p>
-                <div style={{marginTop:16, borderTop:"1px solid var(--border)", paddingTop:12}}>
-                  <h4 className="settings-section-title">Security</h4>
-                  <button className="btn-secondary" onClick={async () => {
-                    const logout = useStore.getState().logout || useStore.getState().logoutUser;
-                    if (logout) await logout();
-                    setSettingsOpen(false);
-                  }}>Log out</button>
-                </div>
-              </div>
+              <AccountPanel
+                local={local}
+                patch={patch}
+                onClose={handleClose}
+              />
             )}
             {tab === "appearance" && (
               <div className="settings-section">
@@ -525,18 +668,71 @@ export default function SettingsModal({ embedded = false, onClose = null }) {
               </div>
             )}
 
-            {tab === "ai" && s.ai && (
+            {tab === "ai" && (
               <div className="settings-section">
-                <Toggle label="Inline Autocomplete" value={s.ai.autocompleteEnabled} onChange={v=>patch("ai","autocompleteEnabled",v)}/>
-                <NumInput label="Autocomplete Delay (ms)" value={s.ai.autocompleteDelay} min={100} max={3000} step={100} onChange={v=>patch("ai","autocompleteDelay",v)}/>
-                <Toggle label="Codebase Context in Chat" value={s.ai.useCodebaseContext} onChange={v=>patch("ai","useCodebaseContext",v)}/>
+                <h3 className="settings-section-title">AI behavior</h3>
+                <p className="settings-hint">
+                  Controls how DevOS uses your connected LLM for chat, agents, and editor assistance.
+                  Wire providers under <strong>Providers</strong>; pick defaults under <strong>Models</strong>.
+                </p>
+                <div className="settings-card" style={{marginBottom:12, padding:12, border:"1px solid var(--border)", borderRadius:10}}>
+                  <div className="settings-row"><span>Active provider</span><strong>{selectedProvider || "—"}</strong></div>
+                  <div className="settings-row"><span>Active model</span><strong>{selectedModel || "default"}</strong></div>
+                  <div className="settings-row"><span>Providers available</span><strong>{(providers||[]).length}</strong></div>
+                </div>
+                <Toggle label="Inline autocomplete (ghost text)" value={!!(s.ai&&s.ai.autocompleteEnabled)} onChange={v=>patch("ai","autocompleteEnabled",v)}/>
+                <NumInput label="Autocomplete delay (ms)" value={(s.ai&&s.ai.autocompleteDelay)||400} min={100} max={3000} step={100} onChange={v=>patch("ai","autocompleteDelay",v)}/>
+                <Toggle label="Include codebase context in chat" value={!!(s.ai&&s.ai.useCodebaseContext)} onChange={v=>patch("ai","useCodebaseContext",v)}/>
+                <Toggle label="Stream responses" value={s.ai?.streamResponses !== false} onChange={v=>patch("ai","streamResponses",v)}/>
+                <Toggle label="Show steelpan when AI is busy" value={s.ai?.showSteelpanBusy !== false} onChange={v=>patch("ai","showSteelpanBusy",v)}/>
+                <NumInput label="Max context files" value={(s.ai&&s.ai.maxContextFiles)||12} min={1} max={50} step={1} onChange={v=>patch("ai","maxContextFiles",v)}/>
+                <NumInput label="Temperature" value={(s.ai&&s.ai.temperature)!=null?s.ai.temperature:0.2} min={0} max={2} step={0.1} onChange={v=>patch("ai","temperature",v)}/>
+                <SelInput label="Agent autonomy" value={(s.ai&&s.ai.agentAutonomy)||"supervised"} onChange={v=>patch("ai","agentAutonomy",v)} options={[
+                  {value:"supervised", label:"Supervised (HITL for risky actions)"},
+                  {value:"guided", label:"Guided (confirm writes)"},
+                  {value:"autonomous", label:"Autonomous (within policy)"},
+                ]}/>
+                <label className="settings-label" style={{marginTop:8}}>Extra system instructions</label>
+                <textarea
+                  className="settings-input"
+                  rows={4}
+                  placeholder="Optional instructions always sent to the model…"
+                  value={(s.ai&&s.ai.systemPromptExtra)||""}
+                  onChange={(e)=>patch("ai","systemPromptExtra",e.target.value)}
+                />
+                <p className="settings-hint">If the AI tab looked empty before, defaults are now applied even when the server had no saved AI prefs.</p>
               </div>
             )}
 
-            {tab === "git" && s.git && (
+            
+            {tab === "workspace" && (
               <div className="settings-section">
-                <Toggle label="Auto-fetch on open" value={s.git.autofetch} onChange={v=>patch("git","autofetch",v)}/>
-                <Toggle label="Confirm before push" value={s.git.confirmBeforePush} onChange={v=>patch("git","confirmBeforePush",v)}/>
+                <h3 className="settings-section-title">Workspace</h3>
+                <Toggle label="Auto-save files" value={!!(s.workspace&&s.workspace.autoSave)} onChange={v=>patch("workspace","autoSave",v)}/>
+                <Toggle label="Restore open tabs on launch" value={s.workspace?.restoreTabs !== false} onChange={v=>patch("workspace","restoreTabs",v)}/>
+              </div>
+            )}
+            {tab === "notifications" && (
+              <div className="settings-section">
+                <h3 className="settings-section-title">Notifications</h3>
+                <Toggle label="HITL approval toasts" value={s.notifications?.hitlToasts !== false} onChange={v=>patch("notifications","hitlToasts",v)}/>
+                <Toggle label="Notify when runs complete" value={s.notifications?.runComplete !== false} onChange={v=>patch("notifications","runComplete",v)}/>
+                <Toggle label="Sound effects" value={!!(s.notifications&&s.notifications.sound)} onChange={v=>patch("notifications","sound",v)}/>
+              </div>
+            )}
+            {tab === "privacy" && (
+              <div className="settings-section">
+                <h3 className="settings-section-title">Privacy</h3>
+                <Toggle label="Store chat history on server" value={s.privacy?.storeChatHistory !== false} onChange={v=>patch("privacy","storeChatHistory",v)}/>
+                <Toggle label="Share anonymous telemetry" value={!!(s.privacy&&s.privacy.shareTelemetry)} onChange={v=>patch("privacy","shareTelemetry",v)}/>
+              </div>
+            )}
+
+            {tab === "git" && (
+              <div className="settings-section">
+                <h3 className="settings-section-title">Git</h3>
+                <Toggle label="Auto-fetch on open" value={!!(s.git&&s.git.autofetch)} onChange={v=>patch("git","autofetch",v)}/>
+                <Toggle label="Confirm before push" value={s.git?.confirmBeforePush !== false} onChange={v=>patch("git","confirmBeforePush",v)}/>
               </div>
             )}
 

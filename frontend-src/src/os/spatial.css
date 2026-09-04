@@ -1503,3 +1503,37 @@
   height: 100%;
   z-index: 240;
 }
+
+/* Steelpan busy indicator */
+.sp-steelpan svg {
+  display: block;
+  transform-origin: 50% 50%;
+  animation: spn-spin 2.4s linear infinite;
+}
+.sp-steelpan .spn-ring {
+  transform-origin: 32px 32px;
+  animation: spn-pulse 1.2s ease-in-out infinite;
+}
+.sp-steelpan .spn-ring.r2 { animation-delay: 0.15s; }
+.sp-steelpan .spn-ring.r3 { animation-delay: 0.3s; }
+.sp-steelpan .spn-spark {
+  transform-origin: 32px 32px;
+  animation: spn-spark 1.6s ease-in-out infinite;
+}
+@keyframes spn-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+@keyframes spn-pulse {
+  0%, 100% { opacity: 0.45; stroke-width: 1; }
+  50% { opacity: 1; stroke-width: 1.8; }
+}
+@keyframes spn-spark {
+  0%, 100% { opacity: 0.35; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+.sp-chip.steelpan-chip {
+  padding: 3px 6px;
+  border-color: rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.08);
+}
