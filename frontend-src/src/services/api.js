@@ -345,6 +345,7 @@ const chatApi = {
     session_id,
     system,
     system_prompt,
+    persona_id,
   }) {
     const token = getToken();
     const finalMessage =
@@ -362,6 +363,7 @@ const chatApi = {
       provider: providerId,
       model,
       system_prompt: system_prompt || system,
+      persona_id: persona_id || "nuha",
     };
     const r = await fetch(`${BASE}/api/chat/send`, {
       method: "POST",
@@ -731,6 +733,18 @@ export const api = {
     req("/api/personas/prefs", { method: "PUT", body: JSON.stringify(body || {}) }),
   classifyIntent: (message) =>
     req("/api/personas/classify", { method: "POST", body: JSON.stringify({ message }) }),
+  getPersonaProfile: (id) => req(`/api/personas/${encodeURIComponent(id)}/profile`),
+  patchPersonaProfile: (id, body) =>
+    req(`/api/personas/${encodeURIComponent(id)}/profile`, {
+      method: "PATCH",
+      body: JSON.stringify(body || {}),
+    }),
+  getPersonaExperience: (id) =>
+    req(`/api/personas/${encodeURIComponent(id)}/experience`),
+  getPersonaLearning: (id) =>
+    req(`/api/personas/${encodeURIComponent(id)}/learning`),
+  getPersonaAccomplishments: (id) =>
+    req(`/api/personas/${encodeURIComponent(id)}/accomplishments`),
   // Persist user preference bag (UserSettings.settings_json merge)
   saveSettings: (settings) =>
     req("/api/settings", {

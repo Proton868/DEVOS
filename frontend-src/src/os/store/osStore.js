@@ -52,9 +52,21 @@ const useOsStore = create((set, get) => ({
   closeEditor: () => set({ editor: { open: false, file: null, scriptId: null, language: null } }),
 
   // ── Copilot ──────────────────────────────────────────────
-  copilot: { open: false, nodeId: null, seed: null },
-  openCopilot: (nodeId = null, seed = null) =>
-    set({ copilot: { open: true, nodeId, seed } }),
+  activePersonaId: "nuha",
+  setActivePersona: (id) => set({ activePersonaId: (id || "nuha").toLowerCase() }),
+  personaProfileOpen: null, // persona id or null
+  openPersonaProfile: (id) => set({ personaProfileOpen: id || "nuha", overlay: "persona-profile" }),
+  closePersonaProfile: () => set({ personaProfileOpen: null, overlay: null }),
+  copilot: { open: false, nodeId: null, seed: null, personaId: "nuha" },
+  openCopilot: (nodeId = null, seed = null, personaId = null) =>
+    set((s) => ({
+      copilot: {
+        open: true,
+        nodeId,
+        seed,
+        personaId: (personaId || s.activePersonaId || "nuha").toLowerCase(),
+      },
+    })),
   closeCopilot: () => set((s) => ({ copilot: { ...s.copilot, open: false, seed: null } })),
 
   // ── Inspector ────────────────────────────────────────────

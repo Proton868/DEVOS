@@ -1537,3 +1537,198 @@
   border-color: rgba(251, 191, 36, 0.35);
   background: rgba(251, 191, 36, 0.08);
 }
+
+/* Persona profile + copilot */
+.sp-persona-profile {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--sp-text-0);
+}
+.sp-persona-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--sp-border);
+  font-weight: 600;
+  font-size: 13px;
+}
+.sp-persona-body {
+  flex: 1;
+  overflow: auto;
+  padding: 14px 16px 24px;
+}
+.sp-persona-hero {
+  text-align: center;
+  margin-bottom: 14px;
+}
+.sp-persona-name {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.sp-persona-role {
+  font-size: 12px;
+  color: var(--sp-text-2);
+  margin-top: 4px;
+}
+.sp-persona-bar {
+  height: 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.08);
+  margin: 12px auto 6px;
+  max-width: 280px;
+  overflow: hidden;
+}
+.sp-persona-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #22d3ee, #a78bfa);
+  border-radius: 6px;
+}
+.sp-persona-xp {
+  font-size: 12px;
+  color: var(--sp-text-1);
+}
+.sp-persona-xp-next { color: var(--sp-text-2); }
+.sp-persona-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.sp-persona-stats div {
+  border: 1px solid var(--sp-border);
+  border-radius: 10px;
+  padding: 10px 8px;
+  text-align: center;
+  background: rgba(255,255,255,0.03);
+}
+.sp-persona-stats b { display: block; font-size: 16px; }
+.sp-persona-stats span { font-size: 10px; color: var(--sp-text-2); text-transform: uppercase; letter-spacing: 0.06em; }
+.sp-persona-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  color: var(--sp-text-1);
+  line-height: 1.55;
+}
+.sp-copilot {
+  display: flex;
+  flex-direction: column;
+  background: rgba(12,12,22,0.94);
+  border: 1px solid var(--sp-border-bright);
+  border-radius: 14px;
+  overflow: hidden;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 20px 50px rgba(0,0,0,0.45);
+}
+.sp-copilot.docked {
+  flex: 1;
+  min-height: 0;
+  border-radius: 12px;
+  margin: 8px;
+}
+.sp-copilot-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sp-border);
+  cursor: default;
+}
+.sp-copilot-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.sp-persona-lv {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(34,211,238,0.12);
+  color: var(--sp-accent);
+  border: 1px solid rgba(34,211,238,0.3);
+}
+.sp-copilot-sub {
+  padding: 4px 12px 8px;
+  font-size: 11px;
+  color: var(--sp-text-2);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.sp-copilot-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+  min-height: 120px;
+}
+.sp-copilot-empty {
+  color: var(--sp-text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+  padding: 8px 4px;
+}
+.sp-copilot-msg { margin-bottom: 10px; }
+.sp-copilot-msg.user { text-align: right; }
+.sp-copilot-bubble {
+  display: inline-block;
+  text-align: left;
+  max-width: 92%;
+  padding: 8px 11px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--sp-border);
+}
+.sp-copilot-msg.user .sp-copilot-bubble {
+  background: rgba(34,211,238,0.12);
+  border-color: rgba(34,211,238,0.3);
+}
+.sp-copilot-note {
+  font-size: 11.5px;
+  color: var(--sp-text-2);
+  padding: 8px;
+  border-left: 2px solid var(--sp-accent);
+  margin-bottom: 10px;
+}
+.sp-copilot-error {
+  color: var(--sp-bad);
+  font-size: 12px;
+  margin-top: 6px;
+}
+.sp-copilot-input {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--sp-border);
+  align-items: flex-end;
+}
+.sp-copilot-input textarea {
+  flex: 1;
+  resize: none;
+  min-height: 44px;
+  border-radius: 10px;
+  border: 1px solid var(--sp-border);
+  background: rgba(0,0,0,0.25);
+  color: var(--sp-text-0);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.sp-send-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(34,211,238,0.4);
+  background: rgba(34,211,238,0.15);
+  color: var(--sp-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.sp-send-btn:disabled { opacity: 0.4; cursor: default; }

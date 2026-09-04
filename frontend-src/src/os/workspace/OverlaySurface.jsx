@@ -19,6 +19,7 @@ const MCPPanel = lazy(() => import("../../components/mcp/MCPPanel"));
 const ResearchPanel = lazy(() => import("../../components/research/ResearchPanel"));
 const SettingsModal = lazy(() => import("../../components/settings/SettingsModal"));
 const ComposerPanel = lazy(() => import("../../components/composer/ComposerPanel"));
+const PersonaProfilePanel = lazy(() => import("../PersonaProfilePanel"));
 
 const TITLES = {
   files: "Files",
@@ -31,6 +32,7 @@ const TITLES = {
   history: "Execution History",
   system: "System OS",
   composer: "Composer",
+  "persona-profile": "Persona Profile",
 };
 
 function Fallback() {
@@ -154,6 +156,7 @@ export default function OverlaySurface({ isMobile }) {
     history: <ExecutionHistory />,
     system: <SystemStatus />,
     composer: <ComposerPanel embedded onClose={close} />,
+    "persona-profile": <PersonaProfilePanel />,
   }[overlay] || <Fallback />;
 
   return (

@@ -182,6 +182,52 @@ class WorkspaceLayout(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
+
+class PersonaProfile(Base):
+    """Per-user persona profile: display name, model prefs, XP aggregates.
+    XP never grants UCIP capabilities — informational only."""
+    __tablename__ = "persona_profiles"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    persona_id: Mapped[str] = mapped_column(String(64), index=True)  # stable id: nuha, web, …
+    display_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    xp: Mapped[int] = mapped_column(Integer, default=0)
+    level: Mapped[int] = mapped_column(Integer, default=1)
+    tasks_completed: Mapped[int] = mapped_column(Integer, default=0)
+    tasks_successful: Mapped[int] = mapped_column(Integer, default=0)
+    tasks_failed: Mapped[int] = mapped_column(Integer, default=0)
+    verified_outcomes: Mapped[int] = mapped_column(Integer, default=0)
+    delegations_received: Mapped[int] = mapped_column(Integer, default=0)
+    delegations_successful: Mapped[int] = mapped_column(Integer, default=0)
+    specialty_xp: Mapped[dict] = mapped_column(JSON, default=dict)  # category -> xp
+    accomplishments: Mapped[list] = mapped_column(JSON, default=list)
+    learning_events: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class PersonaExperienceEvent(Base):
+    """Idempotent XP ledger. Server-side authority only."""
+    __tablename__ = "persona_experience_events"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    persona_id: Mapped[str] = mapped_column(String(64), index=True)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    xp: Mapped[int] = mapped_column(Integer, default=0)
+    task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    evidence_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    source: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Idempotency key — unique per user so duplicates never double-award
+    idempotency_key: Mapped[str] = mapped_column(String(192), unique=True, index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

@@ -1,35 +1,34 @@
 /**
- * AICopilot — contextual DevOS AI assistant.
- * Understands current project, selected node/workflow, open file and code.
- * Real backend: /api/chat/send (SSE stream via api.streamChat).
+ * AICopilot — Nuha / persona chat surface (spatial focus layer).
+ * Real backend: /api/chat/send (SSE via api.streamChat) with persona_id.
  */
 import React, { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Send, X, ChevronRight, Move, PanelRight } from "lucide-react";
+import { Send, X, Move, PanelRight, UserRound } from "lucide-react";
 import useOsStore from "../store/osStore";
 import useStore from "../../store/useStore";
 import { api } from "../../services/api";
 
-function buildSystemPrompt({ node, editorFile, editorContent }) {
+function buildContextNote({ node, editorFile, editorContent, personaName }) {
   const proj = useStore.getState().currentProject;
-  let p = `You are DevOS AI, the operating intelligence of the DevOS AI Developer Operating System. ` +
-    `Current project: "${proj}".`;
+  let p = `Context: project "${proj}". Speaking as ${personaName || "Nuha"}.`;
   if (node) {
-    p += `\nThe user is looking at the "${node.title}" node (kind: ${node.kind}) on the workflow orchestration canvas.`;
-    if (node.script?.language) p += ` It is a ${node.script.language} script (PyRunner workflow node, id ${node.scriptId}).`;
+    p += ` User is focused on workflow node "${node.title}" (${node.kind}).`;
   }
-  if (editorFile) p += `\nAn open file is in the DevOS IDE: ${editorFile}.`;
+  if (editorFile) p += ` Open IDE file: ${editorFile}.`;
   if (editorContent) {
-    const code = editorContent.length > 3000 ? editorContent.slice(0, 3000) + "\n... (truncated)" : editorContent;
-    p += `\nCurrent code:\n\`\`\`\n${code}\n\`\`\``;
+    const code = editorContent.length > 2500 ? editorContent.slice(0, 2500) + "\n…(truncated)" : editorContent;
+    p += `\nCode excerpt:\n\`\`\`\n${code}\n\`\`\``;
   }
-  p += `\nWhen asked to run, edit, or connect things, explain the exact DevOS action (node context menu, CMD+K command) that performs it.`;
   return p;
 }
 
 export default function AICopilot({ floating = false }) {
-  const { copilot, closeCopilot, nodes, editor, chatMode, toggleChatMode } = useOsStore();
+  const {
+    copilot, closeCopilot, nodes, editor, chatMode, toggleChatMode,
+    activePersonaId, setActivePersona, openPersonaProfile,
+  } = useOsStore();
   const [pos, setPos] = useState({ x: null, y: null });
   const dragRef = useRef(null);
   const dragging = useRef(false);
@@ -38,8 +37,40 @@ export default function AICopilot({ floating = false }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [personaMeta, setPersonaMeta] = useState({ name: "Nuha", id: "nuha" });
+  const [error, setError] = useState(null);
   const bodyRef = useRef(null);
   const sessionIdRef = useRef(undefined);
+
+  const personaId = (copilot.personaId || activePersonaId || "nuha").toLowerCase();
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getPersonaProfile?.(personaId)
+      .then((p) => {
+        if (!cancelled && p) {
+          setPersonaMeta({
+            id: p.persona_id || personaId,
+            name: p.display_name || personaId,
+            level: p.level,
+            specialty: p.specialty,
+            provider: p.provider,
+            model: p.model,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPersonaMeta({ id: personaId, name: personaId === "nuha" ? "Nuha" : personaId });
+      });
+    return () => { cancelled = true; };
+  }, [personaId, copilot.open]);
+
+  // Reset session when persona switches
+  useEffect(() => {
+    sessionIdRef.current = undefined;
+    setMessages([]);
+    setError(null);
+  }, [personaId]);
 
   const onDragStart = (e) => {
     if (!floating) return;
@@ -48,6 +79,7 @@ export default function AICopilot({ floating = false }) {
     offset.current = { x: e.clientX - (rect?.left || 0), y: e.clientY - (rect?.top || 0) };
     e.preventDefault();
   };
+
   useEffect(() => {
     if (!floating) return;
     const move = (e) => {
@@ -57,7 +89,10 @@ export default function AICopilot({ floating = false }) {
     const up = () => { dragging.current = false; };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
-    return () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
   }, [floating]);
 
   const node = copilot.nodeId ? nodes.find((n) => n.id === copilot.nodeId) : null;
@@ -76,22 +111,29 @@ export default function AICopilot({ floating = false }) {
     const text = input.trim();
     if (!text || streaming) return;
     setInput("");
+    setError(null);
     const next = [...messages.filter((m) => m.role !== "system-note"), { role: "user", content: text }];
     setMessages([...next, { role: "assistant", content: "" }]);
     setStreaming(true);
     try {
-      const system = buildSystemPrompt({
+      const contextNote = buildContextNote({
         node,
         editorFile: editor.open ? editor.file : null,
-        editorContent: editor.open && editor.file ? null : node?.script?.code || null,
+        editorContent: null,
+        personaName: personaMeta.name,
       });
-      for await (const evt of api.streamChat({
-        providerId: selectedProvider,
-        model: selectedModel,
+      // Prefer persona-configured provider/model when set
+      const providerId = personaMeta.provider || selectedProvider;
+      const model = personaMeta.model || selectedModel;
+      const iter = api.streamChat({
+        providerId,
+        model,
         message: text,
         session_id: sessionIdRef.current,
-        system_prompt: system,
-      })) {
+        persona_id: personaId,
+        system_prompt: contextNote,
+      });
+      for await (const evt of iter) {
         if (evt.session_id) sessionIdRef.current = evt.session_id;
         if (evt.error) {
           setMessages((ms) => {
@@ -99,21 +141,24 @@ export default function AICopilot({ floating = false }) {
             copy[copy.length - 1] = { role: "assistant", content: `⚠️ ${evt.error}` };
             return copy;
           });
+          setError(evt.error);
           break;
         }
-        if (evt.text) {
+        if (evt.delta || evt.text) {
+          const chunk = evt.delta || evt.text || "";
           setMessages((ms) => {
             const copy = [...ms];
             const last = copy[copy.length - 1];
-            copy[copy.length - 1] = { ...last, content: (last.content || "") + evt.text };
+            copy[copy.length - 1] = { role: "assistant", content: (last?.content || "") + chunk };
             return copy;
           });
         }
       }
     } catch (e) {
+      setError(e.message || "Chat failed");
       setMessages((ms) => {
         const copy = [...ms];
-        copy[copy.length - 1] = { role: "assistant", content: `⚠️ ${e.message}` };
+        copy[copy.length - 1] = { role: "assistant", content: `⚠️ ${e.message || "Chat failed"}` };
         return copy;
       });
     } finally {
@@ -123,70 +168,91 @@ export default function AICopilot({ floating = false }) {
 
   if (!copilot.open) return null;
 
-  const floatStyle = floating && pos.x != null
-    ? { position: "fixed", left: pos.x, top: pos.y, width: 380, height: 480, zIndex: 520, flex: "none" }
-    : floating
-    ? { position: "fixed", right: 18, bottom: 72, width: 380, height: 480, zIndex: 520, flex: "none" }
-    : { flex: "0 0 42%", minHeight: 260 };
+  const style = floating
+    ? {
+        position: "fixed",
+        left: pos.x != null ? pos.x : undefined,
+        top: pos.y != null ? pos.y : undefined,
+        right: pos.x == null ? 16 : undefined,
+        bottom: pos.y == null ? 80 : undefined,
+        width: "min(380px, 92vw)",
+        height: "min(520px, 70vh)",
+        zIndex: 420,
+      }
+    : undefined;
 
   return (
-    <div className="sp-surface" style={floatStyle} ref={dragRef}>
-      <div
-        className="sp-surface-head"
-        style={floating ? { cursor: "grab" } : undefined}
-        onMouseDown={onDragStart}
-      >
-        {floating && <Move size={13} style={{ opacity: 0.55, marginRight: 4 }} />}
-        <span>AI Copilot Chat</span>
-        {node && <span className="sub">· {node.title}</span>}
+    <div
+      ref={dragRef}
+      className={`sp-copilot ${floating ? "floating" : "docked"}`}
+      style={style}
+    >
+      <div className="sp-copilot-head" onMouseDown={onDragStart}>
+        <span className="sp-copilot-title">
+          <UserRound size={14} />
+          {personaMeta.name}
+          {personaMeta.level != null && (
+            <span className="sp-persona-lv">Lv.{personaMeta.level}</span>
+          )}
+        </span>
         <span className="spacer" />
         <button
           className="sp-iconbtn"
-          title={floating ? "Dock chat to focus column" : "Float chat (movable)"}
-          onClick={(e) => { e.stopPropagation(); toggleChatMode(); }}
+          title="Persona profile"
+          onClick={() => openPersonaProfile(personaId)}
         >
-          <PanelRight size={14} />
+          ◉
         </button>
-        <button className="sp-iconbtn" title="Close copilot" onClick={closeCopilot}><X size={15} /></button>
+        <button className="sp-iconbtn" title="Dock / float" onClick={toggleChatMode}>
+          {floating ? <PanelRight size={14} /> : <Move size={14} />}
+        </button>
+        <button className="sp-iconbtn" title="Close" onClick={closeCopilot}>
+          <X size={15} />
+        </button>
       </div>
-      <div className="sp-ctx-strip">
-        <span className="sp-ctx-chip">project: {useStore.getState().currentProject}</span>
-        {node && <span className="sp-ctx-chip">node: {node.title}</span>}
-        {editor.open && editor.file && <span className="sp-ctx-chip">file: {editor.file}</span>}
+      <div className="sp-copilot-sub">
+        {personaMeta.specialty || "Orchestrator"} · {personaId === "nuha" ? "Default" : "Specialist"}
+        {(personaMeta.provider || selectedProvider) && (
+          <span> · {personaMeta.provider || selectedProvider}{personaMeta.model || selectedModel ? ` / ${personaMeta.model || selectedModel}` : ""}</span>
+        )}
       </div>
       <div className="sp-copilot-body" ref={bodyRef}>
         {messages.length === 0 && (
-          <div style={{ color: "var(--sp-text-2)", fontSize: 12 }}>
-            Contextual assistant — I can see the selected node, workflow, and code. Try:
-            "Why did this fail?", "Add retries", "Create a test", "Connect this to PyRunner".
+          <div className="sp-copilot-empty">
+            Talk to <strong>{personaMeta.name}</strong>. Creation and automation are orchestrated through
+            existing DevOS agents and UCIP — not a second runtime.
           </div>
         )}
         {messages.map((m, i) =>
           m.role === "system-note" ? (
-            <div key={i} style={{ color: "var(--sp-text-2)", fontSize: 11.5, display: "flex", alignItems: "center", gap: 6 }}>
-              <ChevronRight size={12} /> {m.content}
-            </div>
+            <div key={i} className="sp-copilot-note">{m.content}</div>
           ) : (
-            <div key={i} className={`sp-cmsg ${m.role === "user" ? "user" : ""}`}>
-              <span className="who">{m.role === "user" ? "User" : "DevOS AI"}</span>
-              <div className="bubble">
-                {m.role === "user" ? m.content : (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: CodeBlock, pre: ({ children }) => <>{children}</> }}>
-                    {m.content || (streaming && i === messages.length - 1 ? "▍" : "")}
+            <div key={i} className={`sp-copilot-msg ${m.role}`}>
+              <div className="sp-copilot-bubble">
+                {m.role === "assistant" ? (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {m.content || (streaming && i === messages.length - 1 ? "…" : "")}
                   </ReactMarkdown>
+                ) : (
+                  m.content
                 )}
               </div>
             </div>
           )
         )}
+        {error && <div className="sp-copilot-error">{error}</div>}
       </div>
       <div className="sp-copilot-input">
         <textarea
-          placeholder="Ask about this node, code, or execution…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          placeholder={`Message ${personaMeta.name}…`}
+          rows={2}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
           }}
         />
         <button className="sp-send-btn" onClick={send} disabled={streaming || !input.trim()}>
@@ -195,9 +261,4 @@ export default function AICopilot({ floating = false }) {
       </div>
     </div>
   );
-}
-
-function CodeBlock({ children, className }) {
-  const code = String(children).replace(/\n$/, "");
-  return <pre><code className={className}>{code}</code></pre>;
 }

@@ -21,10 +21,15 @@ export default function CosmicSidebar() {
   const {
     omniOpen, toggleOmni, overlay, setOverlay, nodes, workers, selectNode,
     openInspector, setDashboardOpen, setCommandBar, railCollapsed, toggleRail,
+    openPersonaProfile, openCopilot, setActivePersona, setOmniOpen,
   } = useOsStore();
 
   const [projects, setProjects] = useState([]);
-  const [collapsed, setCollapsed] = useState({ agents: false, workflows: false, projects: false });
+  const [collapsed, setCollapsed] = useState({ agents: false, workflows: false, projects: false, personas: false });
+  const [personaDir, setPersonaDir] = useState([]);
+  useEffect(() => {
+    api.listPersonas?.().then((r) => setPersonaDir(r.personas || [])).catch(() => {});
+  }, []);
 
   useEffect(() => {
     api.listProjects().then((r) => {
@@ -147,6 +152,35 @@ export default function CosmicSidebar() {
                 <span className="row-dot" style={{ background: "var(--sp-good)" }} />
               </button>
             ))}
+          </div>
+
+          <div className="sp-omni-sec">
+            <div className="sp-omni-label" onClick={() => setCollapsed((c) => ({ ...c, personas: !c.personas }))}>
+              Personas <span>{collapsed.personas ? "›" : "⌄"}</span>
+            </div>
+            {!collapsed.personas && (
+              <>
+                <button
+                  className="sp-omni-row"
+                  onClick={() => { setActivePersona("nuha"); openCopilot(null, null, "nuha"); }}
+                >
+                  ✦ Nuha
+                  <span className="row-dot" style={{ background: "var(--sp-accent)" }} />
+                </button>
+                {(personaDir.length ? personaDir : [{ id: "web", display_name: "Web Specialist", level: 1 }]).filter((p) => p.id !== "nuha").slice(0, 8).map((p) => (
+                  <button
+                    key={p.id}
+                    className="sp-omni-row"
+                    onClick={() => openPersonaProfile(p.id)}
+                    onDoubleClick={() => { setActivePersona(p.id); openCopilot(null, null, p.id); }}
+                    title="Click profile · double-click chat"
+                  >
+                    ◇ {p.display_name || p.name || p.id}
+                    <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--sp-text-2)" }}>Lv.{p.level || 1}</span>
+                  </button>
+                ))}
+              </>
+            )}
           </div>
 
           <div className="sp-omni-sec">
