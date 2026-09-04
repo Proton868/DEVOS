@@ -108,7 +108,7 @@ _TRANSITIONS: dict[OrchStatus, set[OrchStatus]] = {
     OrchStatus.RISK_ANALYSIS: {OrchStatus.VERIFICATION_DESIGN},
     OrchStatus.VERIFICATION_DESIGN: {OrchStatus.PLAN_READY},
     OrchStatus.NEEDS_CLARIFICATION: {OrchStatus.WAITING_FOR_USER},
-    OrchStatus.WAITING_FOR_USER: {OrchStatus.PLANNING},
+    OrchStatus.WAITING_FOR_USER: {OrchStatus.PLANNING, OrchStatus.ACTION_REQUESTED, OrchStatus.CANCELLED},
     OrchStatus.PLAN_READY: {OrchStatus.ACTION_REQUESTED, OrchStatus.COMPLETED},
     OrchStatus.ACTION_REQUESTED: {OrchStatus.AUTHORIZATION_PENDING, OrchStatus.PLANNING},
     OrchStatus.AUTHORIZATION_PENDING: {
@@ -219,6 +219,8 @@ class OrchestrationPlan:
     agent_task_ids: list[str] = field(default_factory=list)
     dag_valid: bool = True
     dag_issues: list[str] = field(default_factory=list)
+    revision: int = 1
+    revisions: list = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -238,6 +240,8 @@ class OrchestrationPlan:
             "edges": [e.to_dict() if hasattr(e, "to_dict") else e for e in self.edges],
             "dag_valid": self.dag_valid,
             "dag_issues": list(self.dag_issues),
+            "revision": self.revision,
+            "revisions": list(self.revisions or []),
             "personas": list(self.personas),
             "capabilities": list(self.capabilities),
             "dependencies": list(self.dependencies),
@@ -684,6 +688,33 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
     if not ok:
         await persist_plan(plan)
         return plan
+
+    # Autonomous parallel-ready mission loop (bounded concurrency via existing runtime)
+    try:
+        from brain.mission_engine import run_mission_parallel
+        plan.set_status(OrchStatus.DELEGATING)
+        plan.set_status(OrchStatus.DELEGATED)
+        plan.set_status(OrchStatus.QUEUED)
+        plan = await run_mission_parallel(plan)
+        # XP on verified completion only
+        if OrchStatus(plan.status) == OrchStatus.COMPLETED or plan.status == "completed":
+            plan.status = OrchStatus.COMPLETED.value
+            try:
+                from brain.persona_xp import award_xp
+                await award_xp(
+                    persona_id="nuha",
+                    event_type="task_verified",
+                    task_id=f"orch:{plan.id}",
+                    user_id=plan.user_id,
+                    evidence={"plan_id": plan.id, "revision": getattr(plan, "revision", 1)},
+                )
+            except Exception:
+                pass
+        await persist_plan(plan)
+        return plan
+    except Exception as e:
+        logger.exception("mission parallel path failed, falling back: %s", e)
+        plan.emit("mission.parallel_fallback", {"error": str(e)[:200]})
 
     plan.set_status(OrchStatus.DELEGATING)
     plan.emit("delegation.created", {"steps": [s.id for s in plan.steps]})

@@ -48,3 +48,24 @@ Agent self-report alone is insufficient. `orchestration_verify` inspects workspa
 
 `brain/capability_canon.py` maps `fs.read` / `ucip:filesystem.read` → `filesystem.read`.
 Aliases never expand authority.
+
+## Autonomous mission loop
+
+```mermaid
+flowchart TD
+  Nuha[Nuha Plan/Replan] --> DAG[DAG vN]
+  DAG --> Ready[Ready independent nodes]
+  Ready --> Batch[Conflict-aware batches]
+  Batch --> Runtime[Jobs / Agent Runtime]
+  Runtime --> Verify[Verification]
+  Verify --> Decide{Continue / Repair / Ask}
+  Decide -->|repair| Nuha
+  Decide -->|HITL| Wait[WAITING_FOR_USER]
+  Decide -->|done| Done[COMPLETED + XP]
+```
+
+- `get_ready_nodes` — all currently ready (not serialized by accident)
+- `partition_ready_for_parallel` — write-path conflict batches
+- `MAX_PARALLEL` env bound (default 3)
+- Plan revisions preserve verified nodes; new nodes re-authorize
+- Failure classification drives replan vs block
