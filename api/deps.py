@@ -24,3 +24,8 @@ def assert_safe_client_payload(payload: dict | None) -> None:
     hits = reject_authority_forgery(payload)
     if hits:
         raise HTTPException(400, f"forbidden authority fields in request: {hits}")
+
+
+#
+
+from governance.tenant_store import ensure_personal_tenant

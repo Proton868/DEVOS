@@ -14,4 +14,4 @@ Authenticated session → `users` row (account_id) → optional tenant membershi
 
 ## Avatar
 
-URL field only (`avatar_url`). Upload via FileService is **not** implemented.
+Avatar upload via FileService (`write_bytes` under `{user_id}/profile/`). Foreign account_id → 404.

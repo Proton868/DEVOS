@@ -164,6 +164,24 @@ class FileService:
         return {"path": rel_path, "size": p.stat().st_size,
                 "written_at": datetime.now(timezone.utc).isoformat()}
 
+    def write_bytes(self, rel_path: str, data: bytes) -> dict:
+        if len(data) > MAX_READ_BYTES:
+            raise ValueError(f"Content too large ({len(data)} bytes)")
+        p = self._resolve(rel_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+        return {"path": rel_path, "size": p.stat().st_size,
+                "written_at": datetime.now(timezone.utc).isoformat()}
+
+    def read_bytes(self, rel_path: str) -> bytes:
+        p = self._resolve(rel_path)
+        if not p.is_file():
+            raise FileNotFoundError(rel_path)
+        data = p.read_bytes()
+        if len(data) > MAX_READ_BYTES:
+            data = data[:MAX_READ_BYTES]
+        return data
+
     def create(self, rel_path: str, is_dir: bool = False) -> dict:
         p = self._resolve(rel_path)
         if is_dir:

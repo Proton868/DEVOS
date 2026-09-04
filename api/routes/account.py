@@ -1,5 +1,6 @@
-"""Account plan/profile/onboarding — identity layer only. Not UCIP authority."""
 from __future__ import annotations
+from pathlib import Path
+"""Account plan/profile/onboarding — identity layer only. Not UCIP authority."""
 
 from typing import Optional
 
@@ -122,3 +123,76 @@ async def bootstrap_owner(request: Request, db=Depends(get_db)):
         await db.commit()
         await db.refresh(user)
     return user_public(user)
+
+
+from fastapi import File, UploadFile
+from fastapi.responses import Response
+from execution.files import FileService
+
+_AVATAR_MAX = 2_000_000
+_AVATAR_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"}
+
+
+def _avatar_fs(user_id: str) -> FileService:
+    return FileService(str(user_id), "profile")
+
+
+@router.post("/avatar")
+async def upload_avatar(request: Request, db=Depends(get_db), file: UploadFile = File(...)):
+    user = await get_current_user(request, db)
+    ctype = (file.content_type or "").lower().split(";")[0].strip()
+    if ctype not in _AVATAR_TYPES:
+        raise HTTPException(400, "unsupported image type")
+    data = await file.read()
+    if len(data) > _AVATAR_MAX or len(data) < 12:
+        raise HTTPException(400, "invalid avatar size")
+    ok_magic = (
+        data[:8].startswith(b"\x89PNG")
+        or data[:2] == b"\xff\xd8"
+        or data[:4] == b"GIF8"
+        or (ctype == "image/webp" and data[:4] == b"RIFF")
+    )
+    if not ok_magic:
+        raise HTTPException(400, "invalid image content")
+    ext = {"image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/webp": "webp", "image/gif": "gif"}[ctype]
+    rel = f"avatar.{ext}"
+    fs = _avatar_fs(user.id)
+    # remove other extensions
+    for old in ("avatar.png", "avatar.jpg", "avatar.webp", "avatar.gif"):
+        try:
+            p = Path(fs.root) / old
+            if p.is_file() and old != rel:
+                p.unlink()
+        except Exception:
+            pass
+    fs.write_bytes(rel, data)
+    user.avatar_url = "/api/account/avatar"
+    await db.commit()
+    await db.refresh(user)
+    return user_public(user)
+
+
+@router.get("/avatar")
+async def get_own_avatar(request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    fs = _avatar_fs(user.id)
+    for name, mime in (
+        ("avatar.png", "image/png"),
+        ("avatar.jpg", "image/jpeg"),
+        ("avatar.webp", "image/webp"),
+        ("avatar.gif", "image/gif"),
+    ):
+        try:
+            raw = fs.read_bytes(name)
+            return Response(raw, media_type=mime)
+        except FileNotFoundError:
+            continue
+    raise HTTPException(404, "avatar not found")
+
+
+@router.get("/avatar/{account_id}")
+async def get_avatar_for_account(account_id: str, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    if str(account_id) != str(user.id):
+        raise HTTPException(404, "avatar not found")
+    return await get_own_avatar(request, db)

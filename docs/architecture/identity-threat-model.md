@@ -53,8 +53,8 @@ If/when user-owned rows are stored in Supabase Postgres, RLS must map `auth.uid(
 
 ## Avatar
 
-**IMPLEMENTED:** `avatar_url` string on profile (URL reference).  
-**NOT IMPLEMENTED:** FileService-backed avatar upload/object store.
+**IMPLEMENTED:** FileService-backed avatar upload at `POST /api/account/avatar` (user-owned `profile/avatar.*`).  
+**ALSO:** `avatar_url` field points at `/api/account/avatar`. Cross-account GET by id → 404.
 
 ## Threat matrix (summary)
 

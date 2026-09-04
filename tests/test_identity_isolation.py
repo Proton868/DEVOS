@@ -78,12 +78,13 @@ def test_web_crawl_list_scoped_by_user():
     assert raw is not None  # low-level store; ownership is API layer (documented)
 
 
-def test_avatar_is_url_field_not_upload():
-    """Truthful status: avatar_url string only — no FileService upload path in account API."""
+def test_avatar_uses_fileservice_upload():
+    """Avatar upload goes through FileService write_bytes under user profile project."""
     src = Path("api/routes/account.py").read_text()
     assert "avatar_url" in src
-    assert "UploadFile" not in src
-    assert "FileService" not in src
+    assert "UploadFile" in src
+    assert "FileService" in src
+    assert "write_bytes" in src or "write_bytes" in Path("execution/files.py").read_text()
 
 
 def test_ucip_deny_blocks_runtime_contract():
