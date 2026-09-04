@@ -69,6 +69,21 @@ def init_cache() -> None:
 
 init_cache()
 
+def _otel_cache(event: str, **attrs):
+    try:
+        from observability.tracing import start_span
+        safe = {k: v for k, v in attrs.items() if k not in ("body", "headers", "cookie", "authorization")}
+        # redaction: no credentials in URL attrs
+        if "url" in safe and isinstance(safe["url"], str):
+            u = safe["url"]
+            if "@" in u:
+                safe["url"] = u.split("@")[-1]
+        with start_span(f"web.cache.{event}", kind="internal", attributes=safe):
+            pass
+    except Exception:
+        pass
+
+
 
 def cache_key_for(url: str) -> str:
     nu = normalize_url(url) or (url or "").strip()
@@ -96,7 +111,9 @@ def lookup(url: str, *, now: Optional[float] = None) -> dict[str, Any]:
     # body is bytes
     exp = entry.get("expires_at") or 0
     if exp > now:
+        _otel_cache("hit", status="FRESH", content_hash=(entry.get("content_hash") or "")[:16])
         return {"status": "FRESH", "entry": entry}
+    _otel_cache("stale", content_hash=(entry.get("content_hash") or "")[:16])
     return {"status": "STALE", "entry": entry}
 
 
@@ -168,6 +185,7 @@ def put(
             c.commit()
         finally:
             c.close()
+    _otel_cache("update", version=version, content_changed=bool(previous_hash and previous_hash != chash))
     return row
 
 
@@ -188,7 +206,9 @@ def touch_validated(url: str, *, ttl_seconds: Optional[int] = None, now: Optiona
             )
             c.commit()
             r2 = c.execute("SELECT * FROM web_cache WHERE cache_key=?", (key,)).fetchone()
-            return dict(r2) if r2 else None
+            out = dict(r2) if r2 else None
+            _otel_cache("304", host=(normalize_url(url) or "")[:80])
+            return out
         finally:
             c.close()
 

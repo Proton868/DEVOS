@@ -512,6 +512,17 @@ async def dispatch_node(plan, node: OrchestrationNode) -> dict:
     except Exception:
         node.status = NodeStatus.RUNNING.value
 
+    node_caps = list(node.capabilities or [])
+    node_kind = ""
+    root_url = ""
+    crawl_id = getattr(node, "crawl_id", None) or ""
+    if "web.intelligence" in node_caps or (node.id or "").startswith("web_crawl"):
+        node_kind = "web_crawl"
+    # optional attrs from plan materialization
+    meta = getattr(node, "metadata", None) or {}
+    if isinstance(meta, dict):
+        root_url = meta.get("root_url") or root_url
+        crawl_id = meta.get("crawl_id") or crawl_id
     req = NodeExecutionRequest(
         plan_id=plan.id,
         node_id=node.id,
@@ -519,8 +530,12 @@ async def dispatch_node(plan, node: OrchestrationNode) -> dict:
         workspace_id=plan.workspace_id or "default",
         persona_id=node.persona_id,
         objective=f"Goal: {plan.goal}\nStep: {node.description}",
-        effective_caps=list(node.capabilities or []),
+        effective_caps=node_caps,
         authorization_decision="allow",
+        node_kind=node_kind,
+        root_url=root_url,
+        crawl_id=crawl_id or "",
+        force_refresh=bool(meta.get("force_refresh")) if isinstance(meta, dict) else False,
     )
     result = await run_node_on_agent_runtime(req)
     if result.task_id:
