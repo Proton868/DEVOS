@@ -58,6 +58,33 @@ const useOsStore = create((set, get) => ({
   setActivePlanId: (id) => set({ activePlanId: id || null }),
   orchestrationStatus: null,
   setOrchestrationStatus: (s) => set({ orchestrationStatus: s }),
+  // Live mission snapshot for canvas glow + Agency Dashboard (not a second shell)
+  orchestrationMission: null, // { planId, status, goal, nodes[], edges[], updatedAt }
+  setOrchestrationMission: (mission) => set({ orchestrationMission: mission || null }),
+  applyOrchestrationPlan: (plan) => {
+    if (!plan) return set({ orchestrationMission: null });
+    const nodes = plan.nodes || (plan.steps || []).map((s) => ({
+      id: s.id,
+      description: s.description,
+      persona_id: s.persona_id,
+      status: s.status || "pending",
+      capabilities: s.required_capabilities || s.capabilities || [],
+    }));
+    set({
+      activePlanId: plan.id || plan.plan_id || null,
+      orchestrationStatus: plan.status || null,
+      orchestrationMission: {
+        planId: plan.id || plan.plan_id,
+        status: plan.status,
+        goal: plan.goal,
+        nodes,
+        edges: plan.edges || [],
+        personas: plan.personas || [],
+        risk_level: plan.risk_level,
+        updatedAt: Date.now(),
+      },
+    });
+  },
   activePersonaId: "nuha",
   setActivePersona: (id) => set({ activePersonaId: (id || "nuha").toLowerCase() }),
   personaProfileOpen: null, // persona id or null

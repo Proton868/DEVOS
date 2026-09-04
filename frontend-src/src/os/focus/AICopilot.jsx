@@ -28,7 +28,7 @@ export default function AICopilot({ floating = false }) {
   const {
     copilot, closeCopilot, nodes, editor, chatMode, toggleChatMode,
     activePersonaId, setActivePersona, openPersonaProfile,
-    nuhaMode, setActivePlanId, setOrchestrationStatus,
+    nuhaMode, setActivePlanId, setOrchestrationStatus, applyOrchestrationPlan,
   } = useOsStore();
   const [pos, setPos] = useState({ x: null, y: null });
   const dragRef = useRef(null);
@@ -125,6 +125,9 @@ export default function AICopilot({ floating = false }) {
         if (res.plan_id) setActivePlanId(res.plan_id);
         setOrchestrationStatus(res.status || null);
         const plan = res.plan || {};
+        if (plan.id || plan.plan_id || res.plan_id) {
+          applyOrchestrationPlan({ ...plan, id: plan.id || plan.plan_id || res.plan_id, status: res.status || plan.status });
+        }
         const steps = (plan.steps || []).map((s, i) =>
           `${i + 1}. [${s.persona_id}] ${s.description}`
         ).join("\n");

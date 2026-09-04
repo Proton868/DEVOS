@@ -6,6 +6,7 @@
 import React, { useEffect } from "react";
 import { X, MoreHorizontal, ChevronDown, Bot, TerminalSquare, Braces, Cpu } from "lucide-react";
 import useOsStore from "../store/osStore";
+import { nodeGlowState, planGlowState } from "../orchestrationUi";
 import { api } from "../../services/api";
 
 const ICONS = [Braces, TerminalSquare, Bot, Cpu];
@@ -67,7 +68,7 @@ function barWidth(st) {
 }
 
 export default function AgencyDashboard() {
-  const { dashboardOpen, setDashboardOpen, workers, setWorkers, agentTasks, setAgentTasks, openInspector } = useOsStore();
+  const { dashboardOpen, setDashboardOpen, workers, setWorkers, agentTasks, setAgentTasks, openInspector, orchestrationMission, openPersonaProfile } = useOsStore();
 
   useEffect(() => {
     let alive = true;
@@ -103,6 +104,37 @@ export default function AgencyDashboard() {
           <button className="sp-iconbtn" title="Collapse" onClick={() => setDashboardOpen(false)}><ChevronDown size={14} /></button>
         </span>
       </div>
+      {orchestrationMission && (
+        <div className="sp-mission-strip">
+          <div className="sp-mission-head">
+            <span className={`sp-mission-badge st-${planGlowState(orchestrationMission.status)}`}>
+              {orchestrationMission.status || "mission"}
+            </span>
+            <span className="sp-mission-goal" title={orchestrationMission.goal}>
+              {orchestrationMission.goal || "Nuha mission"}
+            </span>
+          </div>
+          <div className="sp-mission-nodes">
+            {(orchestrationMission.nodes || []).map((n) => {
+              const st = nodeGlowState(n.status);
+              return (
+                <button
+                  key={n.id}
+                  type="button"
+                  className={`sp-mission-node st-${st} ${st.toLowerCase()}`}
+                  title={`${n.persona_id || ""}: ${n.description || n.id}`}
+                  onClick={() => n.persona_id && openPersonaProfile(n.persona_id)}
+                >
+                  <span className="mn-id">{n.id}</span>
+                  <span className="mn-persona">{n.persona_id || "—"}</span>
+                  <span className="mn-state">{st}</span>
+                  <span className={`mn-glow ${st.toLowerCase()}`} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div className="sp-agency-cards">
         {shown.length === 0 && (
           <span style={{ color: "var(--sp-text-2)", fontSize: 12 }}>
@@ -110,7 +142,19 @@ export default function AgencyDashboard() {
           </span>
         )}
         {shown.map((w, i) => {
-          const st = agentState(w, agentTasks);
+          let st = agentState(w, agentTasks);
+          // Overlay orchestration persona activity onto matching fleet cards
+          if (orchestrationMission?.nodes?.length) {
+            const slug = (w.slug || w.name || "").toString().toLowerCase();
+            const hit = orchestrationMission.nodes.find((n) => {
+              const p = (n.persona_id || "").toLowerCase();
+              return p && (slug.includes(p) || p.includes(slug.split("-")[0] || ""));
+            });
+            if (hit) {
+              const gst = nodeGlowState(hit.status);
+              if (gst !== "IDLE") st = gst;
+            }
+          }
           const Icon = ICONS[i % ICONS.length];
           const name = w.name || w.slug || `Agent ${i + 1}`;
           return (

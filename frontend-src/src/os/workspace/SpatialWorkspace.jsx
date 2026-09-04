@@ -12,6 +12,7 @@ import AICopilot from "../focus/AICopilot";
 import AgentInspector from "../focus/AgentInspector";
 import GhostTerminal from "../terminal/GhostTerminal";
 import AgencyDashboard from "../dashboard/AgencyDashboard";
+import MissionGlowOverlay from "../canvas/MissionGlowOverlay";
 
 export default function SpatialWorkspace({ isMobile }) {
   const { editor, copilot, inspector, overlay, chatMode, terminal } = useOsStore();
@@ -23,6 +24,7 @@ export default function SpatialWorkspace({ isMobile }) {
     <div className="sp-work">
       <div className="sp-canvas-region">
         <OrchestrationCanvas />
+        {!overlay && <MissionGlowOverlay />}
         {!overlay && <AgencyDashboard />}
       </div>
 

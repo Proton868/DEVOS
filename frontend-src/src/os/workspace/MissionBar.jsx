@@ -27,6 +27,10 @@ export default function MissionBar() {
   const nuhaMode = useOsStore((s) => s.nuhaMode);
   const setNuhaMode = useOsStore((s) => s.setNuhaMode);
   const orchestrationStatus = useOsStore((s) => s.orchestrationStatus);
+  const setOrchestrationStatus = useOsStore((s) => s.setOrchestrationStatus);
+  const activePlanId = useOsStore((s) => s.activePlanId);
+  const applyOrchestrationPlan = useOsStore((s) => s.applyOrchestrationPlan);
+
   const closeCopilot = useOsStore((s) => s.closeCopilot);
   const copilotOpen = useOsStore((s) => s.copilot.open);
   const {
@@ -156,6 +160,25 @@ export default function MissionBar() {
         </span>
         {orchestrationStatus && (
           <span className="sp-orch-status desktop-only">{orchestrationStatus}</span>
+        )}
+        {activePlanId && orchestrationStatus && !["completed", "cancelled", "blocked", "failed"].includes(String(orchestrationStatus).toLowerCase()) && (
+          <button
+            className="sp-chip desktop-only"
+            title="Cancel Nuha mission"
+            onClick={async () => {
+              try {
+                const plan = await api.cancelOrchestration(activePlanId);
+                if (plan) {
+                  applyOrchestrationPlan(plan);
+                  setOrchestrationStatus(plan.status);
+                }
+              } catch (e) {
+                setOrchestrationStatus("cancel failed");
+              }
+            }}
+          >
+            Cancel
+          </button>
         )}
         {aiBusy && (
           <span className="sp-chip steelpan-chip" title="AI is working">

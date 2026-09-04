@@ -1737,3 +1737,148 @@
 .sp-mode-chip { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; padding: 3px 7px; border-radius: 6px; border: none; background: transparent; color: var(--sp-text-2); cursor: pointer; }
 .sp-mode-chip.active { background: rgba(34,211,238,0.18); color: var(--sp-accent); }
 .sp-orch-status { font-size: 10px; color: var(--sp-text-2); margin-left: 6px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+
+/* ── Nuha mission → spatial glow (canvas + agency) ───────── */
+.sp-mission-glow-layer {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 10px;
+  z-index: 4;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.sp-mission-glow-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--sp-text-2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: uppercase;
+}
+.sp-mission-glow-label .live.on {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--sp-accent);
+  box-shadow: 0 0 8px var(--sp-accent);
+  animation: sp-pulse 1.4s ease-in-out infinite;
+}
+.sp-mission-glow-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  pointer-events: auto;
+}
+.sp-mission-edge {
+  width: 14px;
+  height: 2px;
+  background: rgba(255,255,255,0.15);
+  flex-shrink: 0;
+}
+.sp-canvas-mission-node {
+  pointer-events: auto;
+  border: 1px solid var(--sp-border);
+  background: rgba(10,12,22,0.85);
+  border-radius: 10px;
+  padding: 6px 10px;
+  min-width: 72px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--sp-text-1);
+  backdrop-filter: blur(8px);
+}
+.sp-canvas-mission-node .cmn-persona {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sp-text-0);
+  text-transform: capitalize;
+}
+.sp-canvas-mission-node .cmn-status {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+}
+.sp-canvas-mission-node.st-EXECUTING,
+.sp-canvas-mission-node.st-THINKING {
+  border-color: rgba(34,211,238,0.55);
+  box-shadow: 0 0 16px rgba(34,211,238,0.35);
+}
+.sp-canvas-mission-node.st-SUCCESS {
+  border-color: rgba(52,211,153,0.5);
+  box-shadow: 0 0 12px rgba(52,211,153,0.25);
+}
+.sp-canvas-mission-node.st-FAILED {
+  border-color: rgba(248,113,113,0.55);
+  box-shadow: 0 0 12px rgba(248,113,113,0.25);
+}
+.sp-canvas-mission-node.st-QUEUED {
+  border-color: rgba(251,191,36,0.45);
+}
+.sp-mission-strip {
+  padding: 8px 10px 4px;
+  border-bottom: 1px solid var(--sp-border);
+  margin-bottom: 6px;
+}
+.sp-mission-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.sp-mission-badge {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--sp-border);
+}
+.sp-mission-badge.st-EXECUTING,
+.sp-mission-badge.st-THINKING { color: var(--sp-accent); border-color: rgba(34,211,238,0.4); }
+.sp-mission-badge.st-SUCCESS { color: var(--sp-good); }
+.sp-mission-badge.st-FAILED { color: var(--sp-bad); }
+.sp-mission-goal {
+  font-size: 11px;
+  color: var(--sp-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.sp-mission-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.sp-mission-node {
+  border: 1px solid var(--sp-border);
+  background: rgba(255,255,255,0.03);
+  border-radius: 8px;
+  padding: 6px 8px;
+  min-width: 64px;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+.sp-mission-node .mn-id { font-size: 9px; color: var(--sp-text-2); display: block; }
+.sp-mission-node .mn-persona { font-size: 11px; font-weight: 600; display: block; text-transform: capitalize; }
+.sp-mission-node .mn-state { font-size: 9px; opacity: 0.8; }
+.sp-mission-node.st-EXECUTING {
+  border-color: rgba(34,211,238,0.5);
+  box-shadow: 0 0 12px rgba(34,211,238,0.3);
+}
+.sp-mission-node.st-SUCCESS { border-color: rgba(52,211,153,0.45); }
+.sp-mission-node.st-FAILED { border-color: rgba(248,113,113,0.5); }
+.sp-mission-node.st-QUEUED { border-color: rgba(251,191,36,0.4); }
+@keyframes sp-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
