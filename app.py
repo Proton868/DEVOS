@@ -156,6 +156,8 @@ async def lifespan(app: FastAPI):
             from brain.workflow_executor import handle_workflow_job
             app.state.job_worker = JobWorker()
             app.state.job_worker.register("workflow", handle_workflow_job)
+            from execution.web_intel.job_handler import handle_web_crawl_job
+            app.state.job_worker.register("web_crawl", handle_web_crawl_job)
             app.state.job_worker_task = app.state.job_worker.start()
     except Exception as _e:
         import logging; logging.getLogger("devos").warning("job worker: %s", _e)

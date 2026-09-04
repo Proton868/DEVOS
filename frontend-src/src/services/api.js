@@ -759,6 +759,11 @@ export const api = {
     const q = new URLSearchParams(params || {}).toString();
     return req(`/api/carai/transcript?${q}`);
   },
+  webCrawlCreate: (body) => req("/api/web/crawls", { method: "POST", body: JSON.stringify(body || {}) }),
+  webCrawlGet: (id) => req(`/api/web/crawls/${encodeURIComponent(id)}`),
+  webCrawlPages: (id) => req(`/api/web/crawls/${encodeURIComponent(id)}/pages`),
+  webCrawlCancel: (id) => req(`/api/web/crawls/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" }),
+  webCrawlResume: (id) => req(`/api/web/crawls/${encodeURIComponent(id)}/resume`, { method: "POST", body: "{}" }),
   webIntelFetch: (body) => req("/api/web-intel/fetch", { method: "POST", body: JSON.stringify(body || {}) }),
   cancelOrchestration: (id) =>
     req(`/api/orchestration/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" }),

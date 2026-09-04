@@ -57,7 +57,24 @@ _PATTERNS: list[tuple[re.Pattern, DeliveryIntent]] = [
      DeliveryIntent("publish", "external.publish", "publish", True)),
     (re.compile(r"\bshare\b", re.I),
      DeliveryIntent("share", "external.publish", "share", False)),
+    (re.compile(
+        r"\b(crawl|research|analyze)\b.*\b(website|site|business|company|online presence)\b|"
+        r"\bfind everything publicly available\b|"
+        r"\bpublic (website|business|social)\b|"
+        r"\bresearch this (website|business|company)\b|"
+        r"\bcrawl this (website|site)\b",
+        re.I,
+    ), DeliveryIntent("web_crawl", "web.intelligence", "web research", False)),
 ]
+
+def crawl_budgets_from_text(message: str) -> dict:
+    """Safe bounded budgets from NL — never unbounded."""
+    m = (message or "").lower()
+    if any(x in m for x in ("quickly", "quick check", "glance", "shallow")):
+        return {"max_depth": 1, "max_pages": 8, "max_requests": 12, "max_bytes": 1_000_000}
+    if any(x in m for x in ("entire", "whole website", "every public", "all pages", "deep")):
+        return {"max_depth": 3, "max_pages": 80, "max_requests": 120, "max_bytes": 8_000_000}
+    return {"max_depth": 2, "max_pages": 30, "max_requests": 50, "max_bytes": 3_000_000}
 
 
 def classify_delivery_intent(message: str) -> Optional[DeliveryIntent]:

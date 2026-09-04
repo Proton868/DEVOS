@@ -1,3 +1,4 @@
+import WebIntelSurface from "../surfaces/WebIntelSurface";
 /**
  * SpatialWorkspace — ONE workspace. Canvas is primary; IDE / Copilot /
  * Inspector appear as attached spatial focus surfaces; Ghost Terminal
@@ -15,6 +16,7 @@ import AgencyDashboard from "../dashboard/AgencyDashboard";
 import MissionGlowOverlay from "../canvas/MissionGlowOverlay";
 
 export default function SpatialWorkspace({ isMobile }) {
+  const webIntelOpen = useOsStore((s) => s.webIntel?.open);
   const { editor, copilot, inspector, overlay, chatMode, terminal } = useOsStore();
   const dockedChat = copilot.open && chatMode === "docked";
   const floatingChat = copilot.open && chatMode === "floating";
@@ -50,6 +52,7 @@ export default function SpatialWorkspace({ isMobile }) {
 
       {/* Ghost Terminal: open when contextual execution OR user toggled/pinned */}
       {!overlay && (terminal.open || terminal.pinned) && <GhostTerminal />}
+      {webIntelOpen && <WebIntelSurface />}
     </div>
   );
 }

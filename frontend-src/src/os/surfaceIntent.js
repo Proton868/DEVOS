@@ -3,7 +3,7 @@
  * Presentation only — never authorizes execution / UCIP.
  */
 
-export const SURFACE_TYPES = new Set(["chat", "ide", "flow", "research", "canvas", "preview", "artifact", "deployment", "logs", "none"]);
+export const SURFACE_TYPES = new Set(["chat", "ide", "flow", "research", "canvas", "preview", "artifact", "deployment", "logs", "web", "none"]);
 export const SURFACE_ACTIONS = new Set(["open", "focus", "reveal", "close", "none"]);
 
 /**
@@ -114,6 +114,12 @@ export function applySurfaceIntent(intent, store) {
       if (typeof store.openOverlay === "function") store.openOverlay("deployment");
       else if (typeof store.setOverlay === "function") store.setOverlay("deployment");
       return { ok: true, status: "opened", surface: "deployment", intent: n };
+    }
+    if (n.surface === "web") {
+      if (typeof store.openOverlay === "function") store.openOverlay("web");
+      else if (typeof store.setOverlay === "function") store.setOverlay("web");
+      else if (typeof store.openWebIntel === "function") store.openWebIntel(n.context || {});
+      return { ok: true, status: "opened", surface: "web", intent: n };
     }
     if (n.surface === "logs") {
       if (typeof store.openOverlay === "function") store.openOverlay("logs");

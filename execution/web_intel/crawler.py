@@ -13,6 +13,45 @@ from execution.web_intel.safety import is_url_allowed
 from execution.web_intel.robots import fetch_robots, RobotsRules
 from execution.web_intel.sitemap import fetch_sitemap_urls
 from execution.web_intel.extract import extract_html
+
+
+def _normalize_text_for_sim(text: str) -> str:
+    import re
+    s = (text or "").lower()
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:5000]
+
+
+def _text_similarity(a: str, b: str) -> float:
+    """Bounded Jaccard on word shingles — no vector DB."""
+    wa = set(_normalize_text_for_sim(a).split())
+    wb = set(_normalize_text_for_sim(b).split())
+    if not wa or not wb:
+        return 0.0
+    inter = len(wa & wb)
+    union = len(wa | wb)
+    return inter / union if union else 0.0
+
+
+# per-host last request time for crawl-delay
+_HOST_LAST: dict[str, float] = {}
+_MAX_CRAWL_DELAY = 30.0  # hard upper bound — malicious robots cannot hang forever
+
+
+def _pace_host(host: str, delay: float) -> None:
+    import time as _t
+    delay = min(max(0.0, delay), _MAX_CRAWL_DELAY)
+    if delay <= 0:
+        return
+    last = _HOST_LAST.get(host, 0.0)
+    wait = delay - (_t.time() - last)
+    if wait > 0:
+        # interruptible wait for cancel
+        end = _t.time() + wait
+        while _t.time() < end:
+            _t.sleep(min(0.25, end - _t.time()))
+    _HOST_LAST[host] = _t.time()
+
 from execution.web_intel.store import (
     create_crawl, get_crawl, update_crawl, emit_event, upsert_page,
     claim_queued_pages, list_pages,
@@ -199,6 +238,12 @@ def run_crawl(crawl_id: str) -> dict:
                     continue
 
             stats["requests"] += 1
+            host = urlparse(page["normalized_url"]).hostname or ""
+            delay = float(robots.crawl_delay or 0.0)
+            if delay > 0 and not is_cancelled(crawl_id):
+                _pace_host(host, delay)
+            if is_cancelled(crawl_id):
+                break
             body, status, ctype, final_or_err = _safe_fetch(
                 page["normalized_url"],
                 timeout=float(crawl["timeout"]),
@@ -222,6 +267,7 @@ def run_crawl(crawl_id: str) -> dict:
                     "duplicate_of_page_id": seen_hashes[chash],
                     "http_status": status, "content_type": ctype,
                     "canonical_url": final_url, "fetched_at": time.time(),
+                    "error": "CONTENT_HASH",
                 })
                 stats["pages_skipped"] += 1
                 continue
@@ -236,6 +282,29 @@ def run_crawl(crawl_id: str) -> dict:
                 extraction = {"extracted_text": text[:20000], "links": []}
             else:
                 extraction = {"extracted_text": text[:20000], "links": []}
+
+            # near-duplicate against previously extracted texts in this crawl
+            near_of = None
+            near_score = 0.0
+            etext = extraction.get("extracted_text") or ""
+            for prev in list_pages(crawl_id):
+                if prev.get("status") != "EXTRACTED" or not prev.get("extracted_text"):
+                    continue
+                sc = _text_similarity(etext, prev["extracted_text"])
+                if sc >= 0.92:
+                    near_of = prev["page_id"]
+                    near_score = sc
+                    break
+            if near_of:
+                upsert_page({
+                    **page, "status": "DUPLICATE", "content_hash": chash,
+                    "duplicate_of_page_id": near_of, "http_status": status,
+                    "content_type": ctype, "canonical_url": final_url,
+                    "fetched_at": time.time(), "extracted_text": etext,
+                    "error": f"NEAR_DUPLICATE:{near_score:.2f}",
+                })
+                stats["pages_skipped"] += 1
+                continue
 
             upsert_page({
                 **page,

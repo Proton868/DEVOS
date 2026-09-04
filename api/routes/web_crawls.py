@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from api.deps import get_current_user, get_db, ensure_personal_tenant
 from execution.web_intel.url_norm import normalize_url
 from execution.web_intel.safety import is_url_allowed
-from execution.web_intel.crawler import start_crawl, cancel_crawl, resume_crawl, build_report, collect_evidence
+from execution.web_intel.crawler import cancel_crawl, resume_crawl, build_report, collect_evidence
 from execution.web_intel.store import get_crawl, list_crawls, list_pages, list_events
 from observability.tracing import new_trace, set_current_trace, start_span
 
@@ -64,24 +64,47 @@ async def create_crawl(body: CrawlCreate, request: Request, db=Depends(get_db)):
     _ucip_web(str(user.id), nu)
     trace = new_trace()
     set_current_trace(trace)
-    with start_span("web.crawl.start", kind="client", attributes={"root": nu[:80]}):
-        crawl = start_crawl(
-            user_id=str(user.id),
-            root_url=body.root_url,
-            project_id=body.project_id,
-            persona_id=body.persona_id,
-            mission_id=body.mission_id,
-            max_depth=body.max_depth,
-            max_pages=body.max_pages,
-            max_bytes=body.max_bytes,
-            max_requests=body.max_requests,
-            same_domain_only=body.same_domain_only,
-            include_subdomains=body.include_subdomains,
-            obey_robots=body.obey_robots,
-            sitemap_enabled=body.sitemap_enabled,
-            trace_id=trace.trace_id,
+    from execution.web_intel.store import create_crawl
+    from execution.web_intel.url_norm import normalize_url as nurl
+    crawl = create_crawl({
+        "user_id": str(user.id),
+        "project_id": body.project_id,
+        "persona_id": body.persona_id,
+        "mission_id": body.mission_id,
+        "root_url": body.root_url,
+        "normalized_root_url": nu,
+        "max_depth": body.max_depth,
+        "max_pages": body.max_pages,
+        "max_bytes": body.max_bytes,
+        "max_requests": body.max_requests,
+        "same_domain_only": body.same_domain_only,
+        "include_subdomains": body.include_subdomains,
+        "obey_robots": body.obey_robots,
+        "sitemap_enabled": body.sitemap_enabled,
+        "trace_id": trace.trace_id,
+    })
+    job_id = None
+    try:
+        from workers.job_queue import enqueue
+        from governance.request_identity import get_tenant_context
+        ctx = await get_tenant_context(request, db, user)
+        job = await enqueue(
+            owner_id=str(user.id),
+            tenant_id=ctx.tenant_id,
+            job_type="web_crawl",
+            payload={"crawl_id": crawl["crawl_id"]},
+            actor_id=getattr(ctx.identity, "actor_id", None),
+            priority=80,
+            max_attempts=3,
         )
-    return crawl
+        job_id = job.id
+    except Exception as e:
+        # Fallback: run in-process background so single-node installs still work
+        import asyncio
+        from execution.web_intel.crawler import run_crawl
+        asyncio.create_task(asyncio.to_thread(run_crawl, crawl["crawl_id"]))
+        job_id = f"inline:{crawl['crawl_id']}"
+    return {**crawl, "job_id": job_id, "execution": "async"}
 
 
 @router.get("/crawls")

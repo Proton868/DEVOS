@@ -4,7 +4,9 @@
  */
 export function nodeGlowState(status) {
   const s = (status || "").toString().toLowerCase();
-  if (["running", "executing"].includes(s)) return "EXECUTING";
+  if (["running", "executing", "crawling"].includes(s)) return "EXECUTING";
+  if (["discovering"].includes(s)) return "THINKING";
+  if (["partial"].includes(s)) return "WAITING";
   if (["waiting_for_user", "awaiting_approval", "authorization_pending"].includes(s)) return "WAITING";
   if (["verifying"].includes(s)) return "VERIFYING";
   if (["recovering", "replanning", "thinking"].includes(s)) return "THINKING";

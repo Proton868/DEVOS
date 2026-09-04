@@ -51,6 +51,11 @@ const useOsStore = create((set, get) => ({
     set({ editor: { open: true, file, scriptId, language } }),
   closeEditor: () => set({ editor: { open: false, file: null, scriptId: null, language: null } }),
 
+  webIntel: { open: false, crawlId: null },
+  openWebIntel: ({ crawlId = null } = {}) =>
+    set({ webIntel: { open: true, crawlId: crawlId || null } }),
+  closeWebIntel: () => set({ webIntel: { open: false, crawlId: null } }),
+
   // ── Workspace Preview (verified artifact presentation) ───
   preview: {
     open: false,
