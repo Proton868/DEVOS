@@ -14,6 +14,11 @@ from execution.app_runtime import ApplicationRuntime, AppRuntimeSpec, get_runtim
 from execution.shares import create_share, get_share, revoke_share, read_share_bytes
 from execution.deploy import get_adapter, list_adapters
 from execution.app_detect import detect_application
+from execution.log_stream import subscribe, recent
+from execution.durable_store import list_runtimes, save_deployment, new_id
+from execution.cloudflare_tunnel_mgr import start_tunnel, stop_tunnel, tunnel_status, cloudflared_available, TunnelError
+from execution.delivery_executor import execute_delivery_plan
+import json, time, os
 
 router = APIRouter()
 
@@ -150,3 +155,96 @@ async def delivery_plan(request: Request, db=Depends(get_db), goal: str = "previ
     await get_current_user(request, db)
     from execution.delivery_dag import build_delivery_dag
     return build_delivery_dag(goal)
+
+
+from fastapi.responses import StreamingResponse
+
+
+@router.get("/{project_id}/runtime/logs")
+async def runtime_logs_sse(project_id: str, request: Request, db=Depends(get_db), runtime_id: Optional[str] = None):
+    """SSE stream of application runtime logs (replay + live)."""
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    rt = get_runtime(user.id, project_id)
+    rid = runtime_id or (rt.runtime_id if rt else None)
+    if not rid:
+        # fallback: most recent durable runtime for project
+        rows = list_runtimes(project_id)
+        rid = rows[0]["runtime_id"] if rows else f"proj:{project_id}"
+
+    async def gen():
+        async for item in subscribe(rid):
+            if await request.is_disconnected():
+                break
+            yield {"event": "log", "data": json.dumps(item)}
+
+    return StreamingResponse(
+        _sse_gen(rid, request), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _sse_gen(rid, request):
+    async for item in subscribe(rid):
+        if await request.is_disconnected():
+            break
+        payload = json.dumps(item)
+        yield f"event: log\ndata: {payload}\n\n"
+
+
+@router.get("/{project_id}/runtime/logs/recent")
+async def runtime_logs_recent(project_id: str, request: Request, db=Depends(get_db), runtime_id: Optional[str] = None):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    rt = get_runtime(user.id, project_id)
+    rid = runtime_id or (rt.runtime_id if rt else f"proj:{project_id}")
+    return {"logs": recent(rid)}
+
+
+class TunnelReq(BaseModel):
+    local_port: int = 3911
+    hostname: Optional[str] = None
+
+
+@router.post("/{project_id}/tunnel/start")
+async def tunnel_start(project_id: str, body: TunnelReq, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    try:
+        return await start_tunnel(user_id=user.id, project_id=project_id, local_port=body.local_port, hostname=body.hostname)
+    except TunnelError as e:
+        raise HTTPException(400, detail={"code": e.code, "message": str(e)})
+
+
+@router.post("/tunnel/{tunnel_id}/stop")
+async def tunnel_stop(tunnel_id: str, request: Request, db=Depends(get_db)):
+    await get_current_user(request, db)
+    return await stop_tunnel(tunnel_id)
+
+
+@router.get("/tunnel/{tunnel_id}")
+async def tunnel_get(tunnel_id: str, request: Request, db=Depends(get_db)):
+    await get_current_user(request, db)
+    return tunnel_status(tunnel_id)
+
+
+@router.get("/cloudflared/info")
+async def cloudflared_info(request: Request, db=Depends(get_db)):
+    await get_current_user(request, db)
+    return cloudflared_available()
+
+
+class DeliveryRunReq(BaseModel):
+    goal: str = "preview"
+    provider: Optional[str] = None
+
+
+@router.post("/{project_id}/delivery/run")
+async def delivery_run(project_id: str, body: DeliveryRunReq, request: Request, db=Depends(get_db)):
+    """Execute delivery DAG nodes through Application Runtime / adapters (Mission-compatible)."""
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    result = await execute_delivery_plan(
+        user_id=user.id, project_id=project_id, goal=body.goal, provider=body.provider,
+    )
+    return result

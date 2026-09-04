@@ -22,6 +22,8 @@ from typing import Optional
 from execution.files import FileService, PathViolation
 from execution.app_detect import detect_application
 from execution.isolation_runtime import wrap_command, isolation_available
+from execution.log_stream import publish_log
+from execution.durable_store import upsert_runtime, new_id
 
 logger = logging.getLogger("devos.app_runtime")
 
@@ -141,6 +143,8 @@ class ApplicationRuntime:
         self._proc: Optional[asyncio.subprocess.Process] = None
         self._log_buf: list[str] = []
         self._port: Optional[int] = None
+        self.runtime_id = new_id('rt_')
+        self._log_task = None
 
     def _cwd(self) -> str:
         return str(self.fs.root)
@@ -176,6 +180,10 @@ class ApplicationRuntime:
         err = stderr.decode(errors="replace")
         self._log_buf.append(out)
         self._log_buf.append(err)
+        for line in (out or '').splitlines():
+            publish_log(self.runtime_id, 'stdout', line)
+        for line in (err or '').splitlines():
+            publish_log(self.runtime_id, 'stderr', line)
         return proc.returncode or 0, out, err
 
     def _detect_and_plan(self) -> dict:
@@ -340,6 +348,15 @@ class ApplicationRuntime:
             evidence={"health": "ok", "bind": "127.0.0.1"},
         )
         _RUNTIME[runtime_key(self.spec.user_id, self.spec.project_id)] = self
+        upsert_runtime({
+            'runtime_id': self.runtime_id, 'user_id': self.spec.user_id,
+            'project_id': self.spec.project_id, 'status': self.status.state.value,
+            'pid': self.status.pid, 'port': self.status.port,
+            'cwd': self._cwd(), 'app_type': self.spec.kind,
+            'isolation_mode': isolation_available(),
+            'started_at': __import__('time').time(),
+        })
+        publish_log(self.runtime_id, 'system', f'ready port={self.status.port}')
         return self.status
 
     async def stop(self) -> AppRuntimeStatus:
