@@ -228,6 +228,7 @@ NUHA = Persona(
         "github.commit", "github.push", "github.branch", "github.pull_request",
         "deploy.vercel", "deploy.netlify", "deploy.cloudflare",
         "share.create", "publish",
+        "web.intelligence", "voice.session",
     ],
     allowed_tools=["*"],
     creation_domains=["*"],

@@ -750,6 +750,16 @@ export const api = {
   orchestrationRun: (body) =>
     req("/api/orchestration/run", { method: "POST", body: JSON.stringify(body || {}) }),
   getOrchestration: (id) => req(`/api/orchestration/${encodeURIComponent(id)}`),
+  caraiHealth: () => req("/api/carai/health"),
+  caraiCreateSession: (body) => req("/api/carai/sessions", { method: "POST", body: JSON.stringify(body || {}) }),
+  caraiSessionStatus: (id, status) =>
+    req(`/api/carai/sessions/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status }) }),
+  caraiTranscript: (body) => req("/api/carai/transcript", { method: "POST", body: JSON.stringify(body || {}) }),
+  caraiGetTranscript: (params) => {
+    const q = new URLSearchParams(params || {}).toString();
+    return req(`/api/carai/transcript?${q}`);
+  },
+  webIntelFetch: (body) => req("/api/web-intel/fetch", { method: "POST", body: JSON.stringify(body || {}) }),
   cancelOrchestration: (id) =>
     req(`/api/orchestration/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" }),
   resumeOrchestration: (id) =>

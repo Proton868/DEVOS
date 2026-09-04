@@ -2046,3 +2046,21 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
 .sp-mission-pivot { background: rgba(255,120,80,0.08); border-color: rgba(255,120,80,0.25); }
 .sp-mission-controls { display: flex; gap: 4px; align-items: center; }
 .sp-mission-empty { font-size: 11px; opacity: 0.6; letter-spacing: 0.06em; }
+.sp-voice-btn {
+  border: 1px solid var(--sp-border, rgba(255,255,255,0.12));
+  background: transparent;
+  color: var(--sp-text-1, #e8ecf4);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sp-voice-btn.active {
+  border-color: var(--sp-accent, #6cf);
+  color: var(--sp-accent, #6cf);
+}
+.sp-copilot-voice {
+  font-size: 12px;
+  opacity: 0.85;
+  padding: 4px 8px;
+}

@@ -511,6 +511,9 @@ app.include_router(composer.router,     prefix="/api/composer",    tags=["compos
 app.include_router(agent_routes.router, prefix="/api/agent",       tags=["agent"])
 app.include_router(personas_routes.router, prefix="/api/personas", tags=["personas"])
 app.include_router(orchestration_routes.router, prefix="/api/orchestration", tags=["orchestration"])
+from api.routes import carai as carai_routes, web_intel as web_intel_routes
+app.include_router(carai_routes.router)
+app.include_router(web_intel_routes.router)
 app.include_router(lsp_routes.router,   prefix="/api/lsp",         tags=["lsp"])
 app.include_router(user_settings.router)
 app.include_router(nodes.router)

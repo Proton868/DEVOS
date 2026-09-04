@@ -26,6 +26,8 @@ CANONICAL = {
     "vcs.push",
     "runtime.execute",
     "preview.serve",
+    "web.intelligence",
+    "voice.session",
 }
 
 # alias / ucip form → canonical
@@ -85,6 +87,10 @@ _ALIASES: dict[str, str] = {
     "inspect_git": "filesystem.read",
     "inspect_deployment": "filesystem.read",
     "inspect_evidence": "filesystem.read",
+    "web.intelligence": "web.intelligence",
+    "web.intel": "web.intelligence",
+    "voice.session": "voice.session",
+    "voice": "voice.session",
     "ucip:network.outbound": "external.publish",
     "ucip:filesystem.format": "db.drop",
 }
@@ -105,6 +111,8 @@ _TO_UCIP: dict[str, str] = {
     "vcs.push": "ucip:vcs.write",
     "runtime.execute": "ucip:execution.node",
     "preview.serve": "ucip:filesystem.read",
+    "web.intelligence": "ucip:search.web",
+    "voice.session": "ucip:api.call",
     "external.publish": "ucip:network.outbound",
     "deployment.production": "ucip:network.outbound",
     "production.delete": "ucip:filesystem.delete",
