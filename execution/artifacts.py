@@ -305,3 +305,19 @@ def list_artifact_metas(fs: FileService, limit: int = 500) -> list[ArtifactMeta]
         if len(out) >= limit:
             break
     return out
+
+
+def write_folder_files(fs: "FileService", files: list[tuple[str, bytes]]) -> list[ArtifactMeta]:
+    """Write multiple relative paths (browser directory upload). Never trust client paths."""
+    out: list[ArtifactMeta] = []
+    total = 0
+    for rel, data in files:
+        # reuse safe member naming rules
+        safe = _safe_member_name(rel)
+        total += len(data)
+        if total > MAX_EXTRACTED_SIZE:
+            raise ArtifactError("UPLOAD_TOO_LARGE", "Folder upload exceeds extracted size budget")
+        if len(data) > MAX_SINGLE_FILE_SIZE:
+            raise ArtifactError("UPLOAD_TOO_LARGE", f"File too large: {safe}")
+        out.append(write_bytes(fs, safe, data))
+    return out

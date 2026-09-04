@@ -21,6 +21,7 @@ from typing import Optional
 
 from execution.files import FileService, PathViolation
 from execution.app_detect import detect_application
+from execution.isolation_runtime import wrap_command, isolation_available
 
 logger = logging.getLogger("devos.app_runtime")
 
@@ -155,8 +156,9 @@ class ApplicationRuntime:
         env = filter_env(env_extra, allow_network=allow_network)
         self._log_buf.append(f"$ {' '.join(cmd)}\n")
         try:
+            run_cmd = wrap_command(cmd, cwd=self._cwd(), net=allow_network)
             proc = await asyncio.create_subprocess_exec(
-                *cmd,
+                *run_cmd,
                 cwd=self._cwd(),
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
@@ -224,7 +226,7 @@ class ApplicationRuntime:
             state=AppRuntimeState.BUILT,
             detail="dependencies installed",
             logs_tail="".join(self._log_buf)[-4000:],
-            evidence={"exit_code": 0, "detection": info},
+            evidence={"exit_code": 0, "detection": info, "isolation": isolation_available()},
         )
         return self.status
 

@@ -1,3 +1,4 @@
+import os
 """Files route — IDE file tree, read, write, create, rename, delete.
 Scoped to data/projects/{user_id}/{project_id}/, the same convention
 brain/builder.py uses, so the IDE and Project Builder share one file tree.
@@ -242,12 +243,28 @@ def _inject_html_base(html: str, base_href: str) -> str:
     return tag + html
 
 
-def _preview_csp() -> str:
+def _preview_csp(request: Request = None) -> str:
+    """CSP for untrusted artifacts. wasm-unsafe-eval only on PREVIEW_ORIGIN host."""
+    import os
+    from urllib.parse import urlparse
+    from core.config import settings
+    dedicated = (getattr(settings, "PREVIEW_ORIGIN", None) or os.environ.get("PREVIEW_ORIGIN") or "").strip()
+    host = ""
+    if request is not None:
+        try:
+            host = request.headers.get("host") or (request.url.hostname or "")
+        except Exception:
+            host = ""
+    allow_wasm = False
+    if dedicated and host:
+        dhost = urlparse(dedicated).hostname or dedicated.replace("https://", "").replace("http://", "").split("/")[0]
+        allow_wasm = bool(dhost and dhost.lower() in host.lower())
+    script = "script-src 'self'" + (" 'wasm-unsafe-eval'" if allow_wasm else "")
     return (
         "default-src 'none'; "
         "img-src 'self' data: blob:; "
         "style-src 'self' 'unsafe-inline'; "
-        "script-src 'self'; "
+        f"{script}; "
         "font-src 'self' data:; "
         "connect-src 'none'; "
         "media-src 'self'; "
@@ -259,6 +276,7 @@ def _preview_csp() -> str:
         "form-action 'none'; "
         "frame-ancestors 'self'"
     )
+
 
 
 def _artifact_type(path: str) -> str:
@@ -456,7 +474,7 @@ async def preview_workspace_file(
     headers = {
         "X-Content-Type-Options": "nosniff",
         "Cache-Control": "no-store",
-        "Content-Security-Policy": _preview_csp(),
+        "Content-Security-Policy": _preview_csp(request),
         "X-DevOS-Preview-Auth": auth_kind,
         "Cross-Origin-Resource-Policy": "same-site",
     }

@@ -143,3 +143,10 @@ async def deploy_project(project_id: str, body: DeployReq, request: Request, db=
         creds["CLOUDFLARE_TOKEN"] = body.token or os.environ.get("CLOUDFLARE_TOKEN")
     result = await adapter.deploy(project_path=project_id, meta={"user_id": user.id}, credentials=creds)
     return result.to_dict()
+
+
+@router.get("/plan")
+async def delivery_plan(request: Request, db=Depends(get_db), goal: str = "preview"):
+    await get_current_user(request, db)
+    from execution.delivery_dag import build_delivery_dag
+    return build_delivery_dag(goal)

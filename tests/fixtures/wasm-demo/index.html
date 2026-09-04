@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>WASM Demo</title></head>
+<body>
+  <h1 id="out">pending</h1>
+  <script type="module">
+    const res = await fetch('./module.wasm');
+    const buf = await res.arrayBuffer();
+    await WebAssembly.instantiate(buf);
+    document.getElementById('out').textContent = 'wasm-ok';
+  </script>
+</body></html>

@@ -79,6 +79,10 @@ class Settings(BaseSettings):
         if not self.JWT_SECRET:
             self.JWT_SECRET = _get_or_create_persisted_secret()
     JWT_EXPIRE_HOURS: int = 168
+    PREVIEW_ORIGIN: str = ""  # e.g. https://preview.example.com
+    VERCEL_TOKEN: str = ""
+    NETLIFY_TOKEN: str = ""
+    GITHUB_TOKEN: str = ""
     ADMIN_USER: str = "Admin"
     ADMIN_EMAIL: str = "admin@localhost"
     ADMIN_PASSWORD: str = "123456.."

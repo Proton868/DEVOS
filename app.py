@@ -479,7 +479,7 @@ async def carai_logo():
     raise HTTPException(status_code=404, detail="Logo not found")
 
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
-from api.routes import auth, chat, loop, scripts, memory, search, models, health, governance, extras, files, vcs, terminal, comms, workers, secrets as secrets_routes, user_settings, nodes, artifacts, delivery
+from api.routes import auth, chat, loop, scripts, memory, search, models, health, governance, extras, files, vcs, terminal, comms, workers, secrets as secrets_routes, user_settings, nodes, artifacts, delivery, github as github_routes
 from api.routes import capabilities, evidence, research, ponytail, workflow, enterprise, mcp as mcp_routes, marketplace, composer, agent as agent_routes, lsp as lsp_routes, personas as personas_routes, orchestration as orchestration_routes
 app.include_router(auth.router,       prefix="/api/auth",       tags=["auth"])
 app.include_router(chat.router,       prefix="/api/chat",       tags=["chat"])

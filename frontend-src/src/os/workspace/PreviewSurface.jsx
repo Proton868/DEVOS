@@ -103,6 +103,21 @@ export default function PreviewSurface() {
     setNonce((n) => n + 1);
   }, []);
 
+  const runtimeAction = useCallback(async (action) => {
+    const sessionTok = getToken();
+    if (!sessionTok) return;
+    try {
+      await fetch(`${baseUrl()}/api/delivery/${encodeURIComponent(projectId)}/runtime`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${sessionTok}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      setNonce((n) => n + 1);
+    } catch (e) {
+      setPreviewError(String(e?.message || e));
+    }
+  }, [projectId, setPreviewError]);
+
   const onOpenBrowser = useCallback(async () => {
     let tok = previewToken;
     if (!tok) {
@@ -148,6 +163,9 @@ export default function PreviewSurface() {
           {statusLabel ? <span className="sp-preview-status">{statusLabel}</span> : null}
         </div>
         <div className="sp-preview-actions">
+          <button type="button" className="sp-btn" onClick={() => runtimeAction("start")} title="Start app">Start</button>
+          <button type="button" className="sp-btn" onClick={() => runtimeAction("stop")} title="Stop app">Stop</button>
+          <button type="button" className="sp-btn" onClick={() => runtimeAction("restart")} title="Restart">Restart</button>
           <button type="button" className="sp-btn" onClick={onRefresh} title="Refresh">Refresh</button>
           <button type="button" className="sp-btn" onClick={onOpenBrowser} title="Open in Browser">Open in Browser</button>
           <button type="button" className="sp-btn" onClick={minimizePreview} title="Minimize">—</button>

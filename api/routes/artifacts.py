@@ -133,3 +133,34 @@ async def secret_scan(project_id: str, request: Request, db=Depends(get_db), req
         if is_secret_path(m.path):
             hits.append({"path": m.path, "reason": "secret_path_pattern"})
     return {"hits": hits, "blocked": len(hits) > 0, "note": "Heuristic only — not a complete secret scanner"}
+
+
+class FolderFile(BaseModel):
+    path: str
+    content_b64: Optional[str] = None
+
+
+class FolderUploadReq(BaseModel):
+    files: List[FolderFile]
+
+
+@router.post("/{project_id}/upload-folder")
+async def upload_folder(project_id: str, body: FolderUploadReq, request: Request, db=Depends(get_db)):
+    """Native multi-file/folder upload with server-side path canonicalization."""
+    import base64
+    from execution.artifacts import write_folder_files
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    if len(body.files) > 5000:
+        raise HTTPException(400, detail={"code": "UPLOAD_TOO_LARGE", "message": "too many files"})
+    pairs = []
+    for f in body.files:
+        raw = base64.b64decode(f.content_b64 or "") if f.content_b64 else b""
+        pairs.append((f.path, raw))
+    try:
+        metas = write_folder_files(_fs(user.id, project_id), pairs)
+    except ArtifactError as e:
+        raise HTTPException(400, detail={"code": e.code, "message": str(e)})
+    except PathViolation as e:
+        raise HTTPException(400, detail={"code": "PATH_VIOLATION", "message": str(e)})
+    return {"count": len(metas), "artifacts": [m.to_dict() for m in metas[:100]]}
