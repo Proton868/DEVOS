@@ -47,6 +47,11 @@ def _host_resolves_private(host: str) -> bool:
 
 
 def is_url_allowed(url: str, *, allowlist: list[str] | None = None) -> tuple[bool, str]:
+    import os
+    if os.environ.get('DEVOS_WEB_INTEL_TEST_ALLOW_LOCALHOST') == '1':
+        host = (urlparse(normalize_url(url) or url).hostname or '').lower()
+        if host in ('127.0.0.1', 'localhost'):
+            return True, 'test_localhost_override'
     nu = normalize_url(url)
     if not nu:
         return False, "empty_url"

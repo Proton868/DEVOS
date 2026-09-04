@@ -61,3 +61,8 @@ Dispatcher claims → delivers → marks delivered; bounded retry; idempotency k
 
 DevOS `TraceContext` is product authority. OTel bridges for export.  
 `traceparent` is **not** identity, authentication, or capability.
+
+## Web Intelligence
+
+See docs/architecture/web-intelligence.md. Multi-page public crawl under UCIP with durable frontier, robots, sitemaps, budgets, SSRF, evidence.
+

@@ -514,6 +514,8 @@ app.include_router(orchestration_routes.router, prefix="/api/orchestration", tag
 from api.routes import carai as carai_routes, web_intel as web_intel_routes
 app.include_router(carai_routes.router)
 app.include_router(web_intel_routes.router)
+from api.routes import web_crawls as web_crawls_routes
+app.include_router(web_crawls_routes.router)
 app.include_router(lsp_routes.router,   prefix="/api/lsp",         tags=["lsp"])
 app.include_router(user_settings.router)
 app.include_router(nodes.router)
