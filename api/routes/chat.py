@@ -118,7 +118,7 @@ async def edit(req: EditReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
-    brain = BrainLLM(provider=req.providerId or provider, model=model or req.model, user_id=user.id)
+    brain = await BrainLLM.for_user(db, user.id, provider=req.providerId or provider, model=model or req.model)
 
     lang_hint = f" ({req.language})" if req.language else ""
     if req.selectedCode.strip():
@@ -175,7 +175,7 @@ async def explain(req: ExplainReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
-    brain = BrainLLM(provider=req.providerId or provider, model=model or req.model, user_id=user.id)
+    brain = await BrainLLM.for_user(db, user.id, provider=req.providerId or provider, model=model or req.model)
 
     lang_hint = f" ({req.language})" if req.language else ""
     system = (
@@ -255,7 +255,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
     await db.commit()
 
     from brain.llm import BrainLLM
-    brain = BrainLLM(provider=req.provider or session.provider, model=req.model or session.model or None)
+    brain = await BrainLLM.for_user(db, user.id, provider=req.provider or session.provider, model=req.model or session.model or None)
 
     async def sse():
         full = ""

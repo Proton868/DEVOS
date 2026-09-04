@@ -102,8 +102,8 @@ export default function UserProviderCredentials() {
       setMsg((m) => ({
         ...m,
         [id]: r.ok
-          ? { type: "ok", text: "Connection OK" }
-          : { type: "err", text: r.error || "Connection failed" },
+          ? { type: "ok", text: r.sample ? `Connection OK — "${r.sample}"` : "Connection OK" }
+          : { type: "err", text: [r.error, r.hint].filter(Boolean).join(" — ") || "Connection failed" },
       }));
     } catch (e) {
       setMsg((m) => ({ ...m, [id]: { type: "err", text: e.message || "Test failed" } }));

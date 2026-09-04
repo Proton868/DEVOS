@@ -111,21 +111,42 @@ class TestConnectionReq(BaseModel):
 
 @router.post("/providers/test")
 async def test_provider_connection(req: TestConnectionReq, request: Request, db=Depends(get_db)):
-    """Send a trivial 1-token completion to verify a provider's credentials
-    and connectivity actually work, rather than just checking a key is set."""
+    """Send a trivial completion to verify a provider's credentials and
+    connectivity. Uses the caller's saved user credential when present,
+    otherwise the system .env key / OLLAMA_HOST."""
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    from brain.llm import BrainLLM
+    from brain.llm import BrainLLM, load_user_provider_key
+    provider = (req.provider or "").strip().lower()
+    if not provider:
+        return {"ok": False, "provider": req.provider, "error": "provider is required"}
+    api_keys = {}
+    user_key = await load_user_provider_key(db, user.id, provider)
+    if user_key:
+        api_keys[provider] = user_key
     try:
-        brain = BrainLLM(provider=req.provider)
-        reply = await brain.stream_chat(
-            [{"role": "user", "content": "Reply with exactly: OK"}],
-        )
-        if isinstance(reply, str) and reply.startswith("All providers failed"):
-            return {"ok": False, "provider": req.provider, "error": reply}
-        return {"ok": True, "provider": req.provider, "sample": (reply or "")[:120]}
+        brain = BrainLLM(provider=provider, user_id=user.id, api_keys=api_keys)
+        # Call the single provider only — do not cascade to fallbacks during a test
+        reply = await brain._call(provider, [{"role": "user", "content": "Reply with exactly: OK"}])
+        return {
+            "ok": True,
+            "provider": provider,
+            "sample": (reply or "")[:120],
+            "used_user_credential": bool(user_key),
+        }
     except Exception as e:
-        return {"ok": False, "provider": req.provider, "error": str(e)}
+        return {
+            "ok": False,
+            "provider": provider,
+            "error": str(e),
+            "used_user_credential": bool(user_key),
+            "hint": (
+                "Saved user key was used." if user_key else
+                "No user credential found — using system .env key / OLLAMA_HOST. "
+                "Save a key under Settings → Providers → My provider credentials, "
+                "or set the system key in Settings → Providers (admin)."
+            ),
+        }
 
 
 # ── AI inline code completion (Cursor-style ghost text) ─────────────────
@@ -149,7 +170,7 @@ async def complete(req: CompleteReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
-    brain = BrainLLM(provider=req.providerId, model=req.model, user_id=user.id)
+    brain = await BrainLLM.for_user(db, user.id, provider=req.providerId, model=req.model)
     system = (
         "You are a code completion engine, like GitHub Copilot. Given code "
         "before and after the cursor, output ONLY the text that should be "

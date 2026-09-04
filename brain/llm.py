@@ -14,6 +14,47 @@ from core.config import settings
 logger = logging.getLogger("devos.brain")
 
 
+# Map provider id -> settings attribute for API key / host
+_PROVIDER_KEY_ATTR = {
+    "openrouter": "OPENROUTER_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "huggingface": "HUGGINGFACE_API_KEY",
+    "nararouter": "NARAROUTER_API_KEY",
+}
+
+
+async def load_user_provider_key(db, user_id: str, provider: str) -> Optional[str]:
+    """Load PROVIDER_<ID>_KEY from the encrypted Secret store for this user."""
+    if not db or not user_id or not provider:
+        return None
+    try:
+        from sqlalchemy import select
+        from core.database import Secret
+        from governance.secrets_vault import decrypt
+        secret_name = f"PROVIDER_{provider.upper()}_KEY"
+        r = await db.execute(
+            select(Secret).where(Secret.owner_id == user_id, Secret.name == secret_name)
+        )
+        row = r.scalar_one_or_none()
+        if not row:
+            return None
+        return decrypt(row.encrypted_value)
+    except Exception as e:
+        logger.warning(f"[llm] could not load user key for {provider}: {e}")
+        return None
+
+
+def system_provider_key(provider: str) -> str:
+    attr = _PROVIDER_KEY_ATTR.get(provider)
+    if not attr:
+        return ""
+    return (getattr(settings, attr, None) or "").strip()
+
+
+
+
 class BrainLLM:
     """
     The Brain. provider can be:
@@ -42,14 +83,38 @@ class BrainLLM:
         return cls._shared_http
 
     def __init__(self, provider: Optional[str] = None, model: Optional[str] = None,
-                 user_id: Optional[str] = None, *, purpose: str = "chat"):
+                 user_id: Optional[str] = None, *, purpose: str = "chat",
+                 api_keys: Optional[dict] = None):
         self.provider = provider or settings.DEFAULT_PROVIDER
         self.user_id = user_id
         self.purpose = purpose  # chat | coding | reasoning | fast | vision
         # Explicit model wins; otherwise fall back to this user's preference,
         # then leave None so provider-specific system defaults apply.
         self.model = model or self._user_default_model(user_id, purpose)
+        # Optional per-call key overrides (user secrets). Keyed by provider id.
+        self._api_keys = {k.lower(): v for k, v in (api_keys or {}).items() if v}
         self._http = self._get_http_client()
+        self.last_error: Optional[str] = None
+
+    def _key_for(self, provider: str) -> str:
+        """User override key first, then system .env / settings."""
+        p = (provider or "").lower()
+        if p in self._api_keys and self._api_keys[p]:
+            return self._api_keys[p]
+        return system_provider_key(p)
+
+    @classmethod
+    async def for_user(cls, db, user_id: str, provider: Optional[str] = None,
+                       model: Optional[str] = None, *, purpose: str = "chat"):
+        """Construct BrainLLM with this user's encrypted provider keys loaded."""
+        from core.config import settings as _s
+        keys = {}
+        for pid in ("openrouter", "deepseek", "gemini", "openai", "huggingface", "nararouter"):
+            k = await load_user_provider_key(db, user_id, pid)
+            if k:
+                keys[pid] = k
+        return cls(provider=provider, model=model, user_id=user_id, purpose=purpose, api_keys=keys)
+
 
     @staticmethod
     def _user_default_model(user_id: Optional[str], purpose: str) -> Optional[str]:
@@ -117,31 +182,31 @@ class BrainLLM:
             return await self._ollama(messages)
         elif provider == "openrouter":
             return await self._openai_compat(
-                settings.OPENROUTER_BASE_URL, settings.OPENROUTER_API_KEY,
-                settings.OPENROUTER_DEFAULT_MODEL, messages,
+                settings.OPENROUTER_BASE_URL, self._key_for("openrouter"),
+                self.model or settings.OPENROUTER_DEFAULT_MODEL, messages,
                 extra_headers={"HTTP-Referer": "https://devos.local", "X-Title": "DevOS"},
             )
         elif provider == "deepseek":
             return await self._openai_compat(
-                settings.DEEPSEEK_BASE_URL, settings.DEEPSEEK_API_KEY,
-                settings.DEEPSEEK_DEFAULT_MODEL, messages,
+                settings.DEEPSEEK_BASE_URL, self._key_for("deepseek"),
+                self.model or settings.DEEPSEEK_DEFAULT_MODEL, messages,
             )
         elif provider == "gemini":
             return await self._gemini(messages)
         elif provider == "huggingface":
             return await self._openai_compat(
-                settings.HUGGINGFACE_BASE_URL, settings.HUGGINGFACE_API_KEY,
-                settings.HUGGINGFACE_DEFAULT_MODEL, messages,
+                settings.HUGGINGFACE_BASE_URL, self._key_for("huggingface"),
+                self.model or settings.HUGGINGFACE_DEFAULT_MODEL, messages,
             )
         elif provider == "nararouter":
             return await self._openai_compat(
-                settings.NARAROUTER_BASE_URL, settings.NARAROUTER_API_KEY,
-                settings.NARAROUTER_DEFAULT_MODEL, messages,
+                settings.NARAROUTER_BASE_URL, self._key_for("nararouter"),
+                self.model or settings.NARAROUTER_DEFAULT_MODEL, messages,
             )
         elif provider == "openai":
             return await self._openai_compat(
-                "https://api.openai.com/v1", settings.OPENAI_API_KEY,
-                "gpt-4o-mini", messages,
+                "https://api.openai.com/v1", self._key_for("openai"),
+                self.model or "gpt-4o-mini", messages,
             )
         raise ValueError(f"Unknown provider: {provider}")
 
@@ -158,19 +223,32 @@ class BrainLLM:
 
     async def _ollama(self, messages: list[dict]) -> str:
         model = self.model or settings.OLLAMA_DEFAULT_MODEL
-        r = await self._http.post(
-            f"{settings.OLLAMA_HOST.rstrip('/')}/api/chat",
-            json={"model": model, "messages": messages, "stream": False,
-                  "options": {"temperature": 0.1}},
-        )
-        r.raise_for_status()
-        return r.json()["message"]["content"]
+        host = (settings.OLLAMA_HOST or "").rstrip("/")
+        if not host:
+            raise ValueError("OLLAMA_HOST is empty — set it in Settings → Providers")
+        try:
+            r = await self._http.post(
+                f"{host}/api/chat",
+                json={"model": model, "messages": messages, "stream": False,
+                      "options": {"temperature": 0.1}},
+            )
+            r.raise_for_status()
+            return r.json()["message"]["content"]
+        except httpx.ConnectError as e:
+            raise ValueError(
+                f"Cannot reach Ollama at {host} ({e}). "
+                "If Ollama runs on the same machine as DevOS, try http://127.0.0.1:11434 "
+                "or the host's LAN IP. From Docker use host.docker.internal:11434."
+            ) from e
+        except httpx.HTTPStatusError as e:
+            body = (e.response.text or "")[:200]
+            raise ValueError(f"Ollama at {host} returned {e.response.status_code}: {body}") from e
 
     async def _openai_compat(self, base_url: str, api_key: str, model: str,
                                messages: list[dict],
                                extra_headers: Optional[dict] = None) -> str:
         if not api_key:
-            raise ValueError("No API key")
+            raise ValueError("No API key configured for this provider (save a user credential or system key in Settings)")
         model = self.model or model
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         if extra_headers:
@@ -184,11 +262,11 @@ class BrainLLM:
         return r.json()["choices"][0]["message"]["content"]
 
     async def _gemini(self, messages: list[dict]) -> str:
-        if not settings.GEMINI_API_KEY:
+        if not self._key_for("gemini"):
             raise ValueError("No Gemini API key")
         model = self.model or settings.GEMINI_DEFAULT_MODEL
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-               f"{model}:generateContent?key={settings.GEMINI_API_KEY}")
+               f"{model}:generateContent?key={self._key_for('gemini')}")
         contents = []
         system_text = ""
         for m in messages:
@@ -234,12 +312,19 @@ class BrainLLM:
         providers = [self.provider] + [
             p for p in self._all_providers() if p != self.provider
         ]
+        last_error = None
         for provider in providers:
             try:
                 return await self._call(provider, messages)
             except Exception as e:
+                last_error = f"{provider}: {e}"
+                self.last_error = last_error
                 logger.warning(f"Chat provider {provider} failed: {e}")
-        return "All providers failed. Check your API keys, endpoints, and Ollama connection."
+        detail = last_error or "no providers attempted"
+        return (
+            "All providers failed. Check your API keys, endpoints, and Ollama connection. "
+            f"Last error: {detail}"
+        )
 
     async def list_models(self, provider: Optional[str] = None) -> list[dict]:
         provider = provider or self.provider
