@@ -646,6 +646,29 @@ export default function SettingsModal({ embedded = false, onClose = null }) {
             {tab === "appearance" && (
               <div className="settings-section">
                 <h3 className="settings-section-title">Appearance</h3>
+                <p className="settings-hint">DevOS spatial personalization — each option applies immediately.</p>
+                <label className="settings-label">Spatial density</label>
+                <select className="settings-input" value={(local.appearance&&local.appearance.density)||"comfortable"}
+                  onChange={(e)=>{ patch("appearance","density",e.target.value); document.documentElement.setAttribute("data-sp-density", e.target.value); }}>
+                  <option value="compact">Compact</option>
+                  <option value="comfortable">Comfortable</option>
+                  <option value="spacious">Spacious</option>
+                </select>
+                <label className="settings-label">Glow / ambient</label>
+                <select className="settings-input" value={(local.appearance&&local.appearance.glow)||"subtle"}
+                  onChange={(e)=>{ patch("appearance","glow",e.target.value); document.documentElement.setAttribute("data-sp-glow", e.target.value); }}>
+                  <option value="off">Off</option>
+                  <option value="subtle">Subtle</option>
+                  <option value="full">Full</option>
+                </select>
+                <label className="settings-label">Motion</label>
+                <select className="settings-input" value={(local.appearance&&local.appearance.motion)||"normal"}
+                  onChange={(e)=>{ patch("appearance","motion",e.target.value); document.documentElement.setAttribute("data-sp-motion", e.target.value); }}>
+                  <option value="reduced">Reduced</option>
+                  <option value="normal">Normal</option>
+                  <option value="dynamic">Dynamic</option>
+                </select>
+
                 <label className="settings-label">Theme</label>
                 <select className="settings-input" value={(local.appearance&&local.appearance.theme)||theme||"dark"}
                   onChange={(e)=>{ patch("appearance","theme",e.target.value); setTheme(e.target.value); }}>

@@ -1882,3 +1882,52 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
+
+
+/* Nuha-first chat polish */
+.sp-copilot-thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--sp-accent);
+}
+.sp-think-glow {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--sp-accent);
+  box-shadow: 0 0 10px var(--sp-accent);
+  animation: sp-pulse 1.2s ease-in-out infinite;
+}
+.sp-nuha-hero-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--sp-text-0);
+  margin-bottom: 6px;
+}
+.sp-nuha-hero-sub {
+  font-size: 12.5px;
+  color: var(--sp-text-2);
+  line-height: 1.45;
+  max-width: 36ch;
+}
+.sp-copilot-input textarea {
+  min-height: 36px !important;
+  max-height: 96px;
+  padding: 8px 10px !important;
+  font-size: 13px !important;
+  resize: none;
+}
+.sp-omni-sec .sp-omni-row { /* denser */ }
+.sp-omni-personas-scroll {
+  max-height: 240px;
+  overflow-y: auto;
+}
+/* Appearance density */
+html[data-sp-density="compact"] .sp-copilot-msg { margin-bottom: 4px; }
+html[data-sp-density="spacious"] .sp-copilot-msg { margin-bottom: 14px; }
+html[data-sp-glow="off"] .sp-canvas-mission-node,
+html[data-sp-glow="off"] .sp-mission-node { box-shadow: none !important; }
+html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
+  box-shadow: 0 0 22px rgba(34,211,238,0.55);
+}

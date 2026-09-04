@@ -25,6 +25,16 @@ function useIsMobile() {
 }
 
 export default function DevOSWorkspace() {
+  // Nuha-first: open primary AI conversation on authenticated workspace entry
+  useEffect(() => {
+    const st = useOsStore.getState();
+    if (!st.copilot?.open) {
+      st.setActivePersona?.("nuha");
+      st.openCopilot(null, null, "nuha");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const isMobile = useIsMobile();
   const statusMessage = useStore((s) => s.statusMessage);
   const setCommandBar = useOsStore((s) => s.setCommandBar);

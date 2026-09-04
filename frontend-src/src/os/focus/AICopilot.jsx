@@ -258,8 +258,12 @@ export default function AICopilot({ floating = false }) {
       <div className="sp-copilot-body" ref={bodyRef}>
         {messages.length === 0 && (
           <div className="sp-copilot-empty">
-            Talk to <strong>{personaMeta.name}</strong>. Creation and automation are orchestrated through
-            existing DevOS agents and UCIP — not a second runtime.
+            <div className="sp-nuha-hero-title">{personaId === "nuha" ? "What are we building?" : `Talk to ${personaMeta.name}`}</div>
+            <div className="sp-nuha-hero-sub">
+              {personaId === "nuha"
+                ? "Nuha is DevOS intelligence. Chat here, or ask Nuha to open IDE / Flow when the work needs a canvas."
+                : "Specialist persona — Nuha remains the primary orchestrator."}
+            </div>
           </div>
         )}
         {messages.map((m, i) =>
@@ -280,13 +284,19 @@ export default function AICopilot({ floating = false }) {
           )
         )}
         {error && <div className="sp-copilot-error">{error}</div>}
+        {streaming && (
+          <div className="sp-copilot-thinking" aria-live="polite">
+            <span className="sp-think-glow" />
+            {personaMeta.name} is thinking…
+          </div>
+        )}
       </div>
       <div className="sp-copilot-input">
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={`Message ${personaMeta.name}…`}
-          rows={2}
+          rows={1}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();

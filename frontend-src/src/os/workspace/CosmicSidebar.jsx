@@ -3,7 +3,7 @@
  * Icon rail + Omni-Panel. Navigation activates contextual views/overlays
  * INSIDE the spatial workspace; the canvas remains the primary environment.
  */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   Home, Folder, Bot, Workflow, Cpu, History, GitBranch, Search, Brain,
   Blocks, Settings, ChevronLeft, ChevronRight, Layers, FlaskConical, FilePlus2,
@@ -19,7 +19,7 @@ const dotColor = (st) =>
 
 export default function CosmicSidebar() {
   const {
-    omniOpen, toggleOmni, overlay, setOverlay, nodes, workers, selectNode,
+    omniOpen, toggleOmni, overlay, setOverlay, nodes, workers, selectNode, orchestrationMission,
     openInspector, setDashboardOpen, setCommandBar, railCollapsed, toggleRail,
     openPersonaProfile, openCopilot, setActivePersona, setOmniOpen,
   } = useOsStore();
@@ -27,6 +27,31 @@ export default function CosmicSidebar() {
   const [projects, setProjects] = useState([]);
   const [collapsed, setCollapsed] = useState({ agents: false, workflows: false, projects: false, personas: false });
   const [personaDir, setPersonaDir] = useState([]);
+  const omniPanelRef = useRef(null);
+  // Outside click / Escape closes Omni (not when overlay dialog is open)
+  useEffect(() => {
+    if (!omniOpen) return undefined;
+    const onDown = (e) => {
+      if (overlay) return;
+      const el = omniPanelRef.current;
+      if (!el) return;
+      if (el.contains(e.target)) return;
+      // ignore clicks on rail toggle buttons
+      if (e.target.closest?.(".sp-rail-btn, .sp-mb-item")) return;
+      setOmniOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape" && !overlay) setOmniOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown, { passive: true });
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [omniOpen, overlay, setOmniOpen]);
   useEffect(() => {
     api.listPersonas?.().then((r) => setPersonaDir(r.personas || [])).catch(() => {});
   }, []);
@@ -39,7 +64,20 @@ export default function CosmicSidebar() {
   }, []);
 
   const workflowNodes = Array.isArray(nodes) ? nodes.filter((n) => n.kind === "runtime") : [];
-  const agentRows = Array.isArray(workers) ? workers.slice(0, 4) : [];
+  // Fleet: real workers + live mission persona activity (not decorative)
+  const agentRows = (() => {
+    const fromWorkers = Array.isArray(workers) ? workers : [];
+    if (fromWorkers.length) return fromWorkers;
+    const nodes = orchestrationMission?.nodes || [];
+    if (!nodes.length) return [];
+    return nodes.map((n) => ({
+      slug: n.persona_id || n.id,
+      name: n.persona_id || n.id,
+      status: n.status,
+      _mission: true,
+    }));
+  })();
+
 
   const railItems = [
     { key: "canvas", icon: Home, title: "Canvas / Omni", onClick: () => { setOverlay(null); useOsStore.getState().setOmniOpen(true); setDashboardOpen(true); } },
@@ -130,7 +168,7 @@ export default function CosmicSidebar() {
       )}
 
       {omniOpen && (
-        <div className="sp-omni">
+        <div className="sp-omni" ref={omniPanelRef}>
           <div className="sp-omni-head">
             Omni-Panel
             <button title="Hide Omni-Panel — reopen with the Omni tab or Menorah icon" onClick={toggleOmni}>
@@ -159,7 +197,7 @@ export default function CosmicSidebar() {
               Personas <span>{collapsed.personas ? "›" : "⌄"}</span>
             </div>
             {!collapsed.personas && (
-              <>
+              <div className="sp-omni-personas-scroll">
                 <button
                   className="sp-omni-row"
                   onClick={() => { setActivePersona("nuha"); openCopilot(null, null, "nuha"); }}
@@ -167,7 +205,7 @@ export default function CosmicSidebar() {
                   ✦ Nuha
                   <span className="row-dot" style={{ background: "var(--sp-accent)" }} />
                 </button>
-                {(personaDir.length ? personaDir : [{ id: "web", display_name: "Web Specialist", level: 1 }]).filter((p) => p.id !== "nuha").slice(0, 8).map((p) => (
+                {(personaDir.length ? personaDir : []).filter((p) => (p.id || "").toLowerCase() !== "nuha").map((p) => (
                   <button
                     key={p.id}
                     className="sp-omni-row"
@@ -179,7 +217,7 @@ export default function CosmicSidebar() {
                     <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--sp-text-2)" }}>Lv.{p.level || 1}</span>
                   </button>
                 ))}
-              </>
+              </div>
             )}
           </div>
 
@@ -188,18 +226,31 @@ export default function CosmicSidebar() {
               Agent Fleet <span>{collapsed.agents ? "›" : "⌄"}</span>
             </div>
             {!collapsed.agents && (
-              agentRows.length ? agentRows.map((w, i) => (
+              agentRows.length ? agentRows.map((w, i) => {
+                const st = (w.status || w.state || "IDLE").toString().toUpperCase();
+                const label = w.name || w.slug || `Agent ${i + 1}`;
+                return (
                 <button
                   key={w.slug || w.id || i}
                   className="sp-omni-row"
-                  onClick={() => setDashboardOpen(true)}
-                  title={w.description || w.slug}
+                  onClick={() => {
+                    if (w._mission && w.slug) {
+                      setActivePersona(w.slug);
+                      openCopilot(null, null, w.slug);
+                    } else {
+                      setDashboardOpen(true);
+                    }
+                  }}
+                  title={w.description || w.slug || st}
                 >
-                  <Bot size={13} /> {w.name || w.slug || `Agent ${i + 1}`}
-                  <span className="row-dot" style={{ background: dotColor("IDLE") }} />
+                  <Bot size={13} /> {label}
+                  <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--sp-text-2)" }}>{st}</span>
+                  <span className="row-dot" style={{ background: dotColor(st) }} />
                 </button>
-              )) : (
-                <div style={{ padding: "4px 8px", color: "var(--sp-text-2)", fontSize: 11.5 }}>Loading agent fleet…</div>
+              ); }) : (
+                <div style={{ padding: "4px 8px", color: "var(--sp-text-2)", fontSize: 11.5 }}>
+                  No active agents. Start a Nuha mission or wait for the fleet API.
+                </div>
               )
             )}
           </div>
