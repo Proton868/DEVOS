@@ -297,12 +297,12 @@ const gitApi = {
   gitCheckout: (branch, create) => req(`/api/vcs/${getCurrentProject()}/checkout`, { method: "POST", body: JSON.stringify({ branch, create: !!create }) }),
   gitDiscard:  (path) => req(`/api/vcs/${getCurrentProject()}/discard`, { method: "POST", body: JSON.stringify({ path }) }),
   gitDiff:     (path, staged = false) => req(`/api/vcs/${getCurrentProject()}/diff${path ? `?path=${encodeURIComponent(path)}&staged=${staged}` : `?staged=${staged}`}`),
-  // gitAddRemote: called by a component but was never in the original
-  // api.js either (a pre-existing gap in DevOS itself, not introduced by
-  // this rewiring) — and DevOS's GitService has no add-remote wrapper
-  // yet. Real gap on both sides; flagged rather than silently stubbed.
-  gitAddRemote: notImplemented("gitAddRemote",
-    "Neither the original DevOS backend nor DevOS's GitService implement this yet."),
+  gitAddRemote: (name, url) =>
+    req(`/api/vcs/${getCurrentProject()}/remote`, {
+      method: "POST",
+      body: JSON.stringify({ name: name || "origin", url }),
+    }),
+  gitListRemotes: () => req(`/api/vcs/${getCurrentProject()}/remotes`),
 };
 
 // ── Terminal (new — DevOS never had this in api.js since its own

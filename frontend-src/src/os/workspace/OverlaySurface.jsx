@@ -131,17 +131,18 @@ export default function OverlaySurface({ isMobile }) {
 
   if (!overlay) return null;
 
+  const close = () => setOverlay(null);
   const body = {
     files: <FileTree />,
-    git: <GitPanel />,
-    search: <SearchPanel />,
+    git: <GitPanel embedded onClose={close} />,
+    search: <SearchPanel embedded onClose={close} />,
     memory: <MemoryViewer />,
-    mcp: <MCPPanel onClose={() => setOverlay(null)} />,
-    research: <ResearchPanel />,
-    settings: <SettingsModal embedded onClose={() => setOverlay(null)} />,
+    mcp: <MCPPanel onClose={close} />,
+    research: <ResearchPanel embedded onClose={close} />,
+    settings: <SettingsModal embedded onClose={close} />,
     history: <ExecutionHistory />,
     system: <SystemStatus />,
-    composer: <ComposerPanel />,
+    composer: <ComposerPanel embedded onClose={close} />,
   }[overlay] || <Fallback />;
 
   return (

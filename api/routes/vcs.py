@@ -132,3 +132,22 @@ async def discard(project_id: str, req: DiscardReq, request: Request, db=Depends
     if not approved:
         raise HTTPException(403, "Discard not approved (denied or timed out)")
     return await _service(user.id, project_id).discard(req.path)
+
+
+class AddRemoteReq(BaseModel):
+    name: str = "origin"
+    url: str
+
+
+@router.post("/{project_id}/remote")
+async def add_remote(project_id: str, req: AddRemoteReq, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    return await _service(user.id, project_id).add_remote(req.name, req.url)
+
+
+@router.get("/{project_id}/remotes")
+async def list_remotes(project_id: str, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    return await _service(user.id, project_id).list_remotes()

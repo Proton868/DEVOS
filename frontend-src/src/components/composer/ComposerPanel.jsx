@@ -56,7 +56,7 @@ function FileResult({ result, accepted, onToggle }) {
   );
 }
 
-export default function ComposerPanel() {
+export default function ComposerPanel({ embedded = false, onClose = null }) {
   const { composerOpen, setComposerOpen, selectedProvider, selectedModel,
     openTabs, activeTab } = useStore();
 
@@ -141,7 +141,7 @@ export default function ComposerPanel() {
 
   const reset = () => { setPhase("input"); setPlan(null); setResults([]); setAccepted(new Set()); setError(null); };
 
-  if (!composerOpen) return null;
+  if (!(embedded || composerOpen)) return null;
 
   return (
     <div className="composer-panel">

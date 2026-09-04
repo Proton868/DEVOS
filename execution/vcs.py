@@ -120,3 +120,20 @@ class GitService:
         an autonomous agent calling this goes through HITL; direct human
         IDE use does not, same trust-model reasoning as terminal.py."""
         return await self._run("checkout", "--", path)
+
+    async def add_remote(self, name: str, url: str) -> dict:
+        """Add a git remote (e.g. origin). Fails if remote already exists."""
+        return await self._run("remote", "add", name, url)
+
+    async def list_remotes(self) -> dict:
+        if not await self.is_repo():
+            return {"success": True, "remotes": []}
+        r = await self._run("remote", "-v")
+        remotes = []
+        seen = set()
+        for line in r["stdout"].splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] not in seen:
+                seen.add(parts[0])
+                remotes.append({"name": parts[0], "url": parts[1]})
+        return {"success": True, "remotes": remotes}

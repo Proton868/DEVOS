@@ -7,7 +7,7 @@ import {
 import useStore from "../../store/useStore";
 import { api } from "../../services/api";
 
-export default function ResearchPanel() {
+export default function ResearchPanel({ embedded = false, onClose = null }) {
   const { researchOpen, setResearchOpen } = useStore();
   const [question, setQuestion] = useState("");
   const [depth, setDepth] = useState("standard");
@@ -21,7 +21,7 @@ export default function ResearchPanel() {
   const inputRef = useRef(null);
 
   useEffect(() => {
-    if (researchOpen) {
+    if (embedded || researchOpen) {
       loadJobs();
     }
   }, [researchOpen]);
@@ -108,7 +108,7 @@ export default function ResearchPanel() {
     setExpandedSources((s) => ({ ...s, [id]: !s[id] }));
   };
 
-  if (!researchOpen) return null;
+  if (!(embedded || researchOpen)) return null;
 
   return (
     <div className="research-panel">

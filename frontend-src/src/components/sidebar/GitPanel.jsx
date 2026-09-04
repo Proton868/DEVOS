@@ -73,8 +73,10 @@ function CommitHistory({ commits }) {
   );
 }
 
-export default function GitPanel() {
+export default function GitPanel({ embedded = false, onClose = null }) {
   const { gitOpen, setGitOpen, gitStatus, setGitStatus, setStatus } = useStore();
+  const active = embedded || gitOpen;
+  const handleClose = () => { if (onClose) onClose(); else handleClose(); };
   const [commitMsg, setCommitMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [diff, setDiff] = useState(null);
@@ -86,13 +88,53 @@ export default function GitPanel() {
   const refresh = useCallback(async () => {
     try {
       const s = await api.gitStatus();
-      setGitStatus(s);
+      // Normalize backend shape { is_repo, branch, files:[{path,status}] }
+      // into the panel's staged/modified/untracked lists.
+      if (s && Array.isArray(s.files)) {
+        const staged = [], modified = [], created = [], deleted = [], untracked = [];
+        for (const f of s.files) {
+          const code = (f.status || "").trim();
+          const path = f.path;
+          if (!path) continue;
+          // porcelain: XY where X=index, Y=worktree
+          const x = code[0] || " ";
+          const y = code[1] || " ";
+          if (x === "?" || code === "??") untracked.push(path);
+          else {
+            if (x !== " " && x !== "?") staged.push(path);
+            if (y === "M") modified.push(path);
+            else if (y === "A" || y === "N") created.push(path);
+            else if (y === "D") deleted.push(path);
+            else if (y === "?" ) untracked.push(path);
+            else if (x === "M" && y === " ") { /* staged only */ }
+            else if (y !== " " && y !== "?") modified.push(path);
+          }
+        }
+        setGitStatus({
+          ...s,
+          isRepo: s.is_repo ?? s.isRepo ?? true,
+          branch: s.branch,
+          staged,
+          modified,
+          created,
+          deleted,
+          untracked,
+          commits: s.commits || [],
+          branches: s.branches || (s.branch ? [s.branch] : []),
+          remotes: s.remotes || [],
+        });
+      } else {
+        setGitStatus({
+          ...s,
+          isRepo: s?.is_repo ?? s?.isRepo ?? false,
+        });
+      }
     } catch (e) {
       setStatus("Git error: " + e.message);
     }
   }, [setGitStatus, setStatus]);
 
-  useEffect(() => { if (gitOpen) refresh(); }, [gitOpen, refresh]);
+  useEffect(() => { if (active) refresh(); }, [active, refresh]);
 
   const showDiff = async (file) => {
     setDiffFile(file);
@@ -167,13 +209,13 @@ export default function GitPanel() {
     refresh();
   };
 
-  if (!gitOpen) return null;
+  if (!active) return null;
 
-  if (!gitStatus?.isRepo) return (
+  if (!(gitStatus?.isRepo || gitStatus?.is_repo)) return (
     <div className="git-panel">
       <div className="git-header">
         <GitBranch size={14} /> <span>Source Control</span>
-        <button className="git-icon-btn" onClick={() => setGitOpen(false)}><X size={13} /></button>
+        <button className="git-icon-btn" onClick={handleClose}><X size={13} /></button>
       </div>
       <div className="git-no-repo">
         <p>Not a git repository.</p>
@@ -197,7 +239,7 @@ export default function GitPanel() {
           <button title="Pull" onClick={doPull} disabled={loading}><Download size={12} /></button>
           <button title="Push" onClick={doPush} disabled={loading}><Upload size={12} /></button>
           <button title="Refresh" onClick={refresh}><RefreshCw size={12} /></button>
-          <button onClick={() => setGitOpen(false)}><X size={13} /></button>
+          <button onClick={handleClose}><X size={13} /></button>
         </div>
       </div>
 

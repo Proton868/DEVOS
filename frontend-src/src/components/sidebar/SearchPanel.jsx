@@ -3,7 +3,7 @@ import { Search, X, File, ChevronRight } from "lucide-react";
 import useStore from "../../store/useStore";
 import { api, getLanguageFromPath } from "../../services/api";
 
-export default function SearchPanel() {
+export default function SearchPanel({ embedded = false, onClose = null }) {
   const { searchOpen, setSearchOpen, searchResults, setSearchResults, openFile } = useStore();
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -35,7 +35,7 @@ export default function SearchPanel() {
     } catch {}
   };
 
-  if (!searchOpen) return null;
+  if (!(embedded || searchOpen)) return null;
 
   return (
     <div className="search-panel">
