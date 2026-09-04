@@ -43,8 +43,9 @@ async def get_job(job_id: str, request: Request, db=Depends(get_db)):
     r = await db.execute(select(ExecutionJob).where(ExecutionJob.id==job_id))
     job = r.scalar_one_or_none()
     if not job: raise HTTPException(404, "job not found")
-    if job.owner_id != user.id and not getattr(user,"is_admin",False):
-        if not job.tenant_id or not await is_tenant_member(db, user.id, job.tenant_id):
-            raise HTTPException(403, "forbidden")
+    # Owner-scoped: tenant membership alone must not grant job IDOR access.
+    # Explicit collaboration shares would be a separate authorized capability.
+    if str(job.owner_id) != str(user.id) and not getattr(user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="forbidden")
     return {"id":job.id,"job_type":job.job_type,"status":job.status,"payload":job.payload,
         "result":job.result,"error":job.error,"attempts":job.attempts,"isolation":job.isolation}

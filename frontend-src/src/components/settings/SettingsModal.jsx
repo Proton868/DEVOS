@@ -626,7 +626,17 @@ export default function SettingsModal({ embedded = false, onClose = null }) {
           <h2>⚙️ Settings</h2>
           {user && (
             <div className="sp-settings-profile" title="Your DevOS identity">
-              <div className="sp-settings-avatar" aria-hidden>{(user.display_name || user.username || "?").slice(0,1).toUpperCase()}</div>
+              <label className="sp-settings-avatar-upload" title="Upload avatar">
+                <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" style={{display:"none"}} onChange={async (e) => {
+                  const f = e.target.files && e.target.files[0]; if (!f) return;
+                  const fd = new FormData(); fd.append("file", f);
+                  try {
+                    const r = await fetch("/api/account/avatar", { method: "POST", headers: { Authorization: `Bearer ${localStorage.getItem("devos_token")||""}` }, body: fd });
+                    if (r.ok) { const u = await r.json(); useStore.getState().setUser(u); }
+                  } catch (_) {}
+                }} />
+
+              <div className="sp-settings-avatar" aria-hidden>{(user.display_name || user.username || "?").slice(0,1).toUpperCase()}</div></label>
               <div className="sp-settings-id">
                 <div className="sp-settings-name">{user.display_name || user.username}</div>
                 <div className="sp-settings-meta">{(user.role === "hegemon" || user.plan === "hegemon") ? "Hegemon" : (user.plan || "recruit").replace("_", " ")}</div>

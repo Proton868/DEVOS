@@ -1,4 +1,7 @@
-"""HTTP-level ownership / IDOR matrix — real FastAPI where environment allows."""
+"""HTTP ownership / IDOR matrix against discovered FastAPI routes.
+
+Uses two deterministic users (idor_a, idor_b) with real JWT auth.
+"""
 from __future__ import annotations
 
 import os
@@ -10,9 +13,9 @@ os.environ["DEVOS_JOB_WORKER"] = "0"
 os.environ["DEBUG"] = "true"
 os.environ["ADMIN_PASSWORD"] = "TestAdmin!Passw0rd-NotDefault"
 os.environ["ALLOWED_ORIGINS"] = '["http://localhost:3000"]'
+os.environ["AUTH_ENABLED"] = "true"
 
-fastapi = pytest.importorskip("fastapi")
-httpx = pytest.importorskip("httpx")
+pytest.importorskip("fastapi")
 
 
 @pytest.fixture(scope="module")
@@ -51,7 +54,6 @@ def users(client):
                         is_admin=False,
                         is_active=True,
                     )
-                    # set defaults if columns exist
                     if hasattr(u, "role"):
                         u.role = "member"
                     if hasattr(u, "plan"):
@@ -61,30 +63,38 @@ def users(client):
                     db.add(u)
                     await db.commit()
                     await db.refresh(u)
-                out[name] = {
-                    "id": u.id,
-                    "token": make_jwt(u.id, False),
-                    "user": u,
-                }
+                out[name] = {"id": u.id, "token": make_jwt(u.id, False)}
         return out
 
     try:
         loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-    return loop.run_until_complete(setup())
+    data = loop.run_until_complete(setup())
+    # Fixture identity assertions
+    assert data["idor_a"]["id"] != data["idor_b"]["id"]
+    return data
 
 
 def auth(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_fixture_identities_distinct(client, users):
+    ta, tb = users["idor_a"]["token"], users["idor_b"]["token"]
+    ra = client.get("/api/auth/me", headers=auth(ta))
+    rb = client.get("/api/auth/me", headers=auth(tb))
+    assert ra.status_code == 200 and rb.status_code == 200
+    assert ra.json()["id"] == users["idor_a"]["id"]
+    assert rb.json()["id"] == users["idor_b"]["id"]
+    assert ra.json()["id"] != rb.json()["id"]
+
+
 def test_profile_own_vs_foreign(client, users):
     ta, tb = users["idor_a"]["token"], users["idor_b"]["token"]
-    ra = client.get("/api/account/me", headers=auth(ta))
-    assert ra.status_code == 200, ra.text
-    # PATCH own
     r = client.patch(
         "/api/account/profile",
         headers=auth(ta),
@@ -93,19 +103,9 @@ def test_profile_own_vs_foreign(client, users):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body.get("display_name") == "Alice"
-    assert body.get("role") != "hegemon" or body.get("role") == "member"
-    # cannot set self to hegemon via profile
-    assert body.get("plan") in (None, "recruit", "outer_sect", "inner_sect", "conclave", "hegemon")
-    # plan should remain non-escalated if strip works — role from DB
-    assert body.get("role") in ("member", "elder", "hegemon")
-    if "role" in body and body["display_name"] == "Alice":
-        # escalation fields stripped: role should still be member
-        assert body.get("role") == "member"
-    # B cannot patch as A through account_id — only own profile endpoint exists
-    r2 = client.patch("/api/account/profile", headers=auth(tb), json={"display_name": "Hax"})
+    assert body.get("role") == "member"
+    r2 = client.patch("/api/account/profile", headers=auth(tb), json={"display_name": "Bob"})
     assert r2.status_code == 200
-    assert r2.json().get("display_name") == "Hax"
-    # A's name unchanged
     assert client.get("/api/account/me", headers=auth(ta)).json().get("display_name") == "Alice"
 
 
@@ -117,89 +117,101 @@ def test_plan_cannot_be_elder_hegemon(client, users):
 
 
 def test_web_crawl_idor(client, users):
-    from execution.web_intel.store import create_crawl, get_crawl
+    from execution.web_intel.store import create_crawl
     ta, tb = users["idor_a"]["token"], users["idor_b"]["token"]
     ca = create_crawl({
         "user_id": users["idor_a"]["id"],
         "root_url": "https://example.com",
         "normalized_root_url": "https://example.com",
     })
-    # B tries to get A's crawl
-    r = client.get(f"/api/web/crawls/{ca['crawl_id']}", headers=auth(tb))
-    assert r.status_code in (403, 404), r.text
-    # A can get own
-    r2 = client.get(f"/api/web/crawls/{ca['crawl_id']}", headers=auth(ta))
-    assert r2.status_code == 200, r2.text
-    # B cancel denied
-    r3 = client.post(f"/api/web/crawls/{ca['crawl_id']}/cancel", headers=auth(tb))
-    assert r3.status_code in (403, 404)
+    assert client.get(f"/api/web/crawls/{ca['crawl_id']}", headers=auth(tb)).status_code in (403, 404)
+    assert client.get(f"/api/web/crawls/{ca['crawl_id']}", headers=auth(ta)).status_code == 200
+    assert client.post(f"/api/web/crawls/{ca['crawl_id']}/cancel", headers=auth(tb)).status_code in (403, 404)
+    assert client.get(f"/api/web/crawls/{ca['crawl_id']}/pages", headers=auth(tb)).status_code in (403, 404)
+    assert client.get(f"/api/web/crawls/{ca['crawl_id']}/events", headers=auth(tb)).status_code in (403, 404)
+    assert client.get(f"/api/web/crawls/{ca['crawl_id']}/report", headers=auth(tb)).status_code in (403, 404)
+    assert client.post(f"/api/web/crawls/{ca['crawl_id']}/resume", headers=auth(tb)).status_code in (403, 404)
 
 
-def test_files_api_isolation(client, users):
+def test_files_http_isolation(client, users):
     ta, tb = users["idor_a"]["token"], users["idor_b"]["token"]
-    # write file as A
-    r = client.post(
-        "/api/files/write",
-        headers={**auth(ta), "Content-Type": "application/json"},
-        json={"project_id": "idor-proj", "path": "secret.txt", "content": "alpha-secret"},
+    proj = "idor-proj"
+    w = client.post(
+        f"/api/files/{proj}/write",
+        headers=auth(ta),
+        json={"path": "secret.txt", "content": "alpha-secret"},
     )
-    # endpoint path may differ
-    if r.status_code == 404:
-        r = client.put(
-            "/api/files/idor-proj/secret.txt",
-            headers={**auth(ta), "Content-Type": "application/json"},
-            json={"content": "alpha-secret"},
-        )
-    # If API shape unknown, use FileService unit already covered
-    if r.status_code >= 400:
-        from execution.files import FileService
-        FileService(users["idor_a"]["id"], "idor-proj").write("secret.txt", "alpha-secret")
-        try:
-            FileService(users["idor_b"]["id"], "idor-proj").read("secret.txt")
-            # different root — should not see A's content
-            content = FileService(users["idor_b"]["id"], "idor-proj").read("secret.txt")
-            assert "alpha-secret" not in str(content)
-        except Exception:
-            pass
-        return
-    # B tries read A's project path
-    r2 = client.get(
-        "/api/files/read",
+    assert w.status_code in (200, 201), w.text
+    # A can read
+    ra = client.get(f"/api/files/{proj}/read", headers=auth(ta), params={"path": "secret.txt"})
+    assert ra.status_code == 200
+    assert "alpha-secret" in ra.text
+    # B same project_id uses different user root — empty/missing, not A's secret
+    rb = client.get(f"/api/files/{proj}/read", headers=auth(tb), params={"path": "secret.txt"})
+    assert rb.status_code in (404, 400) or "alpha-secret" not in rb.text
+    # traversal attempt
+    trav = client.get(
+        f"/api/files/{proj}/read",
         headers=auth(tb),
-        params={"project_id": "idor-proj", "path": "secret.txt"},
+        params={"path": f"../{users['idor_a']['id']}/{proj}/secret.txt"},
     )
-    if r2.status_code == 200:
-        assert "alpha-secret" not in r2.text
+    assert trav.status_code in (400, 403, 404) or "alpha-secret" not in trav.text
 
 
 def test_avatar_upload_ownership(client, users):
     ta, tb = users["idor_a"]["token"], users["idor_b"]["token"]
-    # minimal PNG
     png = (
         b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
         b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
     )
-    files = {"file": ("a.png", io.BytesIO(png), "image/png")}
-    r = client.post("/api/account/avatar", headers=auth(ta), files=files)
+    r = client.post("/api/account/avatar", headers=auth(ta), files={"file": ("a.png", io.BytesIO(png), "image/png")})
     assert r.status_code == 200, r.text
-    # A can get
-    r2 = client.get("/api/account/avatar", headers=auth(ta))
-    assert r2.status_code == 200
-    assert r2.content[:4] == b"\x89PNG" or len(r2.content) > 0
-    # B cannot get A's by account id
-    r3 = client.get(f"/api/account/avatar/{users['idor_a']['id']}", headers=auth(tb))
-    assert r3.status_code in (403, 404)
-    # B own avatar missing
-    r4 = client.get("/api/account/avatar", headers=auth(tb))
-    assert r4.status_code == 404
-    # non-image denied
-    bad = client.post(
+    assert client.get("/api/account/avatar", headers=auth(ta)).status_code == 200
+    assert client.get(f"/api/account/avatar/{users['idor_a']['id']}", headers=auth(tb)).status_code in (403, 404)
+    assert client.get("/api/account/avatar", headers=auth(tb)).status_code == 404
+    assert client.post(
         "/api/account/avatar",
         headers=auth(ta),
         files={"file": ("x.txt", io.BytesIO(b"not-an-image-file!!"), "text/plain")},
-    )
-    assert bad.status_code == 400
+    ).status_code == 400
+
+
+def test_carai_session_idor(client, users):
+    ta, tb = users["idor_a"]["token"], users["idor_b"]["token"]
+    r = client.post("/api/carai/sessions", headers=auth(ta), json={})
+    if r.status_code >= 400:
+        pytest.skip(f"carai session create unavailable: {r.status_code}")
+    sid = r.json().get("session_id") or r.json().get("id")
+    assert sid
+    assert client.get(f"/api/carai/sessions/{sid}", headers=auth(ta)).status_code == 200
+    assert client.get(f"/api/carai/sessions/{sid}", headers=auth(tb)).status_code in (403, 404)
+
+
+def test_job_idor(client, users):
+    ta, tb = users["idor_a"]["token"], users["idor_b"]["token"]
+    # enqueue a job for A if endpoint exists
+    r = client.post("/api/jobs", headers=auth(ta), json={"job_type": "script", "payload": {"x": 1}})
+    if r.status_code >= 400:
+        # try list only
+        pytest.skip(f"job enqueue: {r.status_code} {r.text[:120]}")
+    jid = r.json().get("id")
+    assert jid
+    assert client.get(f"/api/jobs/{jid}", headers=auth(ta)).status_code == 200
+    assert client.get(f"/api/jobs/{jid}", headers=auth(tb)).status_code in (403, 404)
+
+
+def test_agent_task_idor_missing_task(client, users):
+    """Foreign task id must not leak — 403/404 for both if missing; if A creates, B denied."""
+    ta, tb = users["idor_a"]["token"], users["idor_b"]["token"]
+    fake = "nonexistent-task-id-idor"
+    ra = client.get(f"/api/agent/{fake}", headers=auth(ta))
+    rb = client.get(f"/api/agent/{fake}", headers=auth(tb))
+    assert ra.status_code in (403, 404)
+    assert rb.status_code in (403, 404)
+    assert client.post(f"/api/agent/{fake}/cancel", headers=auth(tb)).status_code in (403, 404)
 
 
 def test_unauthenticated_denied(client):
     assert client.get("/api/account/me").status_code in (401, 403)
+    assert client.get("/api/auth/me").status_code in (401, 403)
+    assert client.get("/api/files/x/read", params={"path": "a"}).status_code in (401, 403)

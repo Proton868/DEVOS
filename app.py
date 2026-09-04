@@ -530,6 +530,13 @@ app.include_router(lsp_routes.router,   prefix="/api/lsp",         tags=["lsp"])
 app.include_router(user_settings.router)
 app.include_router(nodes.router)
 
+try:
+    from api.routes.jobs import router as jobs_router
+    app.include_router(jobs_router)
+except Exception as _jobs_err:
+    import logging
+    logging.getLogger("devos").warning("jobs router: %s", _jobs_err)
+
 @app.get("/{full_path:path}", response_class=HTMLResponse)
 async def spa(request: Request, full_path: str):
     # Skip Jinja2 templating — index.html is a static React build
@@ -542,9 +549,3 @@ async def spa(request: Request, full_path: str):
         return FileResponse(index_path)
     return HTMLResponse(content="<html><body><h1>DevOS</h1><p>Frontend not found.</p></body></html>")
 
-try:
-    from api.routes.jobs import router as jobs_router
-    app.include_router(jobs_router)
-except Exception as _jobs_err:
-    import logging
-    logging.getLogger("devos").warning("jobs router: %s", _jobs_err)
