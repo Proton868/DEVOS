@@ -28,6 +28,7 @@ export default function AICopilot({ floating = false }) {
   const {
     copilot, closeCopilot, nodes, editor, chatMode, toggleChatMode,
     activePersonaId, setActivePersona, openPersonaProfile,
+    nuhaMode, setActivePlanId, setOrchestrationStatus,
   } = useOsStore();
   const [pos, setPos] = useState({ x: null, y: null });
   const dragRef = useRef(null);
@@ -116,13 +117,47 @@ export default function AICopilot({ floating = false }) {
     setMessages([...next, { role: "assistant", content: "" }]);
     setStreaming(true);
     try {
+      if (nuhaMode === "plan" || nuhaMode === "action") {
+        setOrchestrationStatus(nuhaMode === "plan" ? "planning…" : "executing…");
+        const res = nuhaMode === "plan"
+          ? await api.orchestrationPlan({ goal: text, persona_id: personaId })
+          : await api.orchestrationRun({ goal: text, persona_id: personaId });
+        if (res.plan_id) setActivePlanId(res.plan_id);
+        setOrchestrationStatus(res.status || null);
+        const plan = res.plan || {};
+        const steps = (plan.steps || []).map((s, i) =>
+          `${i + 1}. [${s.persona_id}] ${s.description}`
+        ).join("\n");
+        const body = [
+          `**Nuha ${nuhaMode.toUpperCase()}** — \`${res.status}\``,
+          plan.authority_note ? `_${plan.authority_note}_` : "",
+          "",
+          `**Goal:** ${plan.goal || text}`,
+          `**Risk:** ${plan.risk_level || "—"} · **HITL:** ${plan.requires_hitl ? "yes" : "no"}`,
+          `**Personas:** ${(plan.personas || []).join(", ") || "—"}`,
+          `**Capabilities (requirements, not grants):** ${(plan.capabilities || []).join(", ") || "—"}`,
+          "",
+          "**Steps:**",
+          steps || "(none)",
+          "",
+          "**Verification:**",
+          (plan.verification_plan || []).map((v) => `• ${v}`).join("\n") || "—",
+          nuhaMode === "plan"
+            ? "\n_Plan only — no files modified. Switch to Action or say Execute that plan to run._"
+            : `\n_Agent tasks: ${(plan.agent_task_ids || []).join(", ") || "—"}_`,
+        ].filter(Boolean).join("\n");
+        setMessages((ms) => {
+          const copy = [...ms];
+          copy[copy.length - 1] = { role: "assistant", content: body };
+          return copy;
+        });
+      } else {
       const contextNote = buildContextNote({
         node,
         editorFile: editor.open ? editor.file : null,
         editorContent: null,
         personaName: personaMeta.name,
       });
-      // Prefer persona-configured provider/model when set
       const providerId = personaMeta.provider || selectedProvider;
       const model = personaMeta.model || selectedModel;
       const iter = api.streamChat({
@@ -153,6 +188,7 @@ export default function AICopilot({ floating = false }) {
             return copy;
           });
         }
+      }
       }
     } catch (e) {
       setError(e.message || "Chat failed");

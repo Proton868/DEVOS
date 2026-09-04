@@ -745,6 +745,15 @@ export const api = {
     req(`/api/personas/${encodeURIComponent(id)}/learning`),
   getPersonaAccomplishments: (id) =>
     req(`/api/personas/${encodeURIComponent(id)}/accomplishments`),
+  orchestrationPlan: (body) =>
+    req("/api/orchestration/plan", { method: "POST", body: JSON.stringify(body || {}) }),
+  orchestrationRun: (body) =>
+    req("/api/orchestration/run", { method: "POST", body: JSON.stringify(body || {}) }),
+  getOrchestration: (id) => req(`/api/orchestration/${encodeURIComponent(id)}`),
+  cancelOrchestration: (id) =>
+    req(`/api/orchestration/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" }),
+  detectNuhaMode: (goal) =>
+    req("/api/orchestration/detect-mode", { method: "POST", body: JSON.stringify({ goal }) }),
   // Persist user preference bag (UserSettings.settings_json merge)
   saveSettings: (settings) =>
     req("/api/settings", {

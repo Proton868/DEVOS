@@ -471,7 +471,7 @@ async def carai_logo():
 
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 from api.routes import auth, chat, loop, scripts, memory, search, models, health, governance, extras, files, vcs, terminal, comms, workers, secrets as secrets_routes, user_settings, nodes
-from api.routes import capabilities, evidence, research, ponytail, workflow, enterprise, mcp as mcp_routes, marketplace, composer, agent as agent_routes, lsp as lsp_routes, personas as personas_routes
+from api.routes import capabilities, evidence, research, ponytail, workflow, enterprise, mcp as mcp_routes, marketplace, composer, agent as agent_routes, lsp as lsp_routes, personas as personas_routes, orchestration as orchestration_routes
 app.include_router(auth.router,       prefix="/api/auth",       tags=["auth"])
 app.include_router(chat.router,       prefix="/api/chat",       tags=["chat"])
 app.include_router(loop.router,       prefix="/api/loop",       tags=["loop"])
@@ -499,6 +499,7 @@ app.include_router(marketplace.router,  prefix="/api/marketplace", tags=["market
 app.include_router(composer.router,     prefix="/api/composer",    tags=["composer"])
 app.include_router(agent_routes.router, prefix="/api/agent",       tags=["agent"])
 app.include_router(personas_routes.router, prefix="/api/personas", tags=["personas"])
+app.include_router(orchestration_routes.router, prefix="/api/orchestration", tags=["orchestration"])
 app.include_router(lsp_routes.router,   prefix="/api/lsp",         tags=["lsp"])
 app.include_router(user_settings.router)
 app.include_router(nodes.router)

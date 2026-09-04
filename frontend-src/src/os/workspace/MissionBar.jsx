@@ -24,6 +24,9 @@ export default function MissionBar() {
   const toggleChatMode = useOsStore((s) => s.toggleChatMode);
   const chatMode = useOsStore((s) => s.chatMode);
   const openCopilot = useOsStore((s) => s.openCopilot);
+  const nuhaMode = useOsStore((s) => s.nuhaMode);
+  const setNuhaMode = useOsStore((s) => s.setNuhaMode);
+  const orchestrationStatus = useOsStore((s) => s.orchestrationStatus);
   const closeCopilot = useOsStore((s) => s.closeCopilot);
   const copilotOpen = useOsStore((s) => s.copilot.open);
   const {
@@ -140,6 +143,20 @@ export default function MissionBar() {
         >
           Nuha
         </button>
+        <span className="sp-mode-group desktop-only" title="Nuha operating mode">
+          {["chat", "plan", "action"].map((m) => (
+            <button
+              key={m}
+              className={`sp-mode-chip ${nuhaMode === m ? "active" : ""}`}
+              onClick={() => setNuhaMode(m)}
+            >
+              {m}
+            </button>
+          ))}
+        </span>
+        {orchestrationStatus && (
+          <span className="sp-orch-status desktop-only">{orchestrationStatus}</span>
+        )}
         {aiBusy && (
           <span className="sp-chip steelpan-chip" title="AI is working">
             <SteelpanSpinner size={18} />

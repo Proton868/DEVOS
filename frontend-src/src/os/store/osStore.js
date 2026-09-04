@@ -52,6 +52,12 @@ const useOsStore = create((set, get) => ({
   closeEditor: () => set({ editor: { open: false, file: null, scriptId: null, language: null } }),
 
   // ── Copilot ──────────────────────────────────────────────
+  nuhaMode: "chat", // chat | plan | action
+  setNuhaMode: (mode) => set({ nuhaMode: mode || "chat" }),
+  activePlanId: null,
+  setActivePlanId: (id) => set({ activePlanId: id || null }),
+  orchestrationStatus: null,
+  setOrchestrationStatus: (s) => set({ orchestrationStatus: s }),
   activePersonaId: "nuha",
   setActivePersona: (id) => set({ activePersonaId: (id || "nuha").toLowerCase() }),
   personaProfileOpen: null, // persona id or null

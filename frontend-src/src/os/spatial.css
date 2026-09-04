@@ -1732,3 +1732,8 @@
   cursor: pointer;
 }
 .sp-send-btn:disabled { opacity: 0.4; cursor: default; }
+
+.sp-mode-group { display: inline-flex; gap: 2px; margin-left: 4px; border: 1px solid var(--sp-border); border-radius: 8px; padding: 2px; }
+.sp-mode-chip { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; padding: 3px 7px; border-radius: 6px; border: none; background: transparent; color: var(--sp-text-2); cursor: pointer; }
+.sp-mode-chip.active { background: rgba(34,211,238,0.18); color: var(--sp-accent); }
+.sp-orch-status { font-size: 10px; color: var(--sp-text-2); margin-left: 6px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
