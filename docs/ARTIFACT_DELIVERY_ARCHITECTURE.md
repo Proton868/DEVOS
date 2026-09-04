@@ -49,3 +49,32 @@ Push remains EXTERNAL_SIDE_EFFECT — do not bypass UCIP.
 `IMPORTED → WORKING → BUILT → VERIFIED → READY → PREVIEWING → SHARED → DEPLOYED → PUBLISHED`
 
 Derived from workspace + verification + preview readiness + git + deployment evidence — not a second authority.
+
+## Application Runtime (Phase 3+)
+
+`execution.app_runtime.ApplicationRuntime`:
+
+- install / build / start / stop / restart
+- env via `filter_env` (deny secrets)
+- bind `127.0.0.1` only
+- health check before READY
+- static sites use FileService preview, not process runtime
+
+API: `POST /api/delivery/{project}/runtime` body `{action, port}`
+
+## Shares
+
+Opaque `/api/delivery/public/share/{id}` — no workspace path exposure.
+Revocable; secret paths blocked.
+
+## Deploy adapters
+
+`GET /api/delivery/deploy/providers`  
+`POST /api/delivery/{project}/deploy` `{provider}`
+
+Fail-closed without tokens. Auth probe when token present → `AUTHORIZED` (full file deploy needs project linkage).
+
+## Dedicated preview origin
+
+Configure `PREVIEW_ORIGIN` for production WASM/script isolation.
+Primary DevOS origin keeps restrictive CSP (no `wasm-unsafe-eval`).
