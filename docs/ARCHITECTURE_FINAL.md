@@ -71,3 +71,9 @@ See docs/architecture/web-intelligence.md. Multi-page public crawl under UCIP wi
 ## Acceptance contract
 
 See docs/architecture/ACCEPTANCE_CONTRACT.md for Web Intelligence + creative persona final closure criteria.
+
+## Identity isolation
+
+See docs/architecture/identity-contract.md and identity-threat-model.md.
+Avatar = URL field only (not FileService upload).
+

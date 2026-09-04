@@ -10,6 +10,7 @@ from sqlalchemy import select
 from api.deps import get_current_user, get_db, ensure_personal_tenant
 from core.database import User
 from core.config import settings
+from governance.identity_contract import reject_client_authority_fields
 
 router = APIRouter(prefix="/api/account", tags=["account"])
 
@@ -77,7 +78,10 @@ class ProfileBody(BaseModel):
 @router.patch("/profile")
 async def update_profile(body: ProfileBody, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
-    data = body.model_dump(exclude_unset=True)
+    # Hostile client may send role/plan/account_id — strip non-profile authority fields
+    data = reject_client_authority_fields(body.model_dump(exclude_unset=True))
+    allowed = {"display_name", "preferred_name", "avatar_url", "bio", "job_title", "organization", "timezone"}
+    data = {k: v for k, v in data.items() if k in allowed}
     for k, v in data.items():
         setattr(user, k, v)
     status = getattr(user, "onboarding_status", None) or "NOT_STARTED"
