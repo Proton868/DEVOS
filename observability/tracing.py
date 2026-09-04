@@ -153,7 +153,17 @@ def start_span(name: str, kind: str = "internal", attributes: Optional[dict] = N
     status = "ok"
     err = None
     try:
-        yield ctx
+        try:
+            from observability.otel import start_otel_span, init_otel
+            init_otel()
+            with start_otel_span(
+                name, kind=kind, attributes=attributes,
+                devos_trace_id=ctx.trace_id, devos_span_id=ctx.span_id,
+                devos_parent_span_id=ctx.parent_span_id,
+            ):
+                yield ctx
+        except Exception:
+            yield ctx
     except Exception as e:
         status = "error"
         err = {"message": str(e)[:300]}

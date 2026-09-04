@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from execution.saga_compensation import CompensationPolicy, policy_for
+from execution.saga_compensation import CompensationPolicy, CompensationMode, CompensationOutcome, policy_for, evaluate_conditions
 
 _LOCK = threading.Lock()
 _DB = Path("data/saga.sqlite3")
@@ -335,14 +335,28 @@ async def compensate_saga(
     completed = [s for s in saga.steps if s.status == "COMPLETED"]
     for step in reversed(completed):
         pol = step.compensation_policy or policy_for(step.action).to_dict()
-        mode = pol.get("mode", "MANUAL")
+        # normalize mode from formal policy (enum value or legacy uppercase)
+        mode_raw = (pol.get("mode") or "manual")
+        mode = str(mode_raw).lower()
         action = pol.get("action")
-        if mode == "NONE":
+        resource = (step.meta or {}).get("resource") or step.meta or {}
+        # reconstruct policy for evaluation
+        try:
+            formal = policy_for(step.action)
+        except Exception:
+            formal = None
+        if mode in ("none",):
             step.status = "SKIPPED"
             _save_step_row(step)
-            results.append({"step_id": step.step_id, "status": "SKIPPED"})
+            results.append({"step_id": step.step_id, "status": "SKIPPED", "outcome": CompensationOutcome.SKIPPED.value})
             continue
-        if mode == "AUTOMATIC" and action:
+        if mode == "automatic" and action:
+            allowed, why = evaluate_conditions(formal or policy_for(step.action), resource)
+            if not allowed:
+                step.status = "MANUAL_REMEDIATION"
+                _save_step_row(step)
+                results.append({"step_id": step.step_id, "status": "MANUAL_REMEDIATION", "outcome": CompensationOutcome.DENIED.value, "reason": why})
+                continue
             step.status = "COMPENSATING"
             _save_step_row(step)
             try:
@@ -353,21 +367,44 @@ async def compensate_saga(
                     r = await _run_compensation_action(
                         action, step.meta, user_id=user_id, project_id=project_id,
                     )
-                step.status = "COMPENSATED" if r.get("status") in ("ok", "already_compensated") else "MANUAL_REMEDIATION"
-                results.append({"step_id": step.step_id, "result": r, "status": step.status})
+                if r.get("status") in ("ok", "already_compensated"):
+                    step.status = "COMPENSATED"
+                    outcome = CompensationOutcome.ALREADY_COMPENSATED.value if r.get("status") == "already_compensated" else CompensationOutcome.COMPENSATED.value
+                else:
+                    step.status = "MANUAL_REMEDIATION"
+                    outcome = CompensationOutcome.MANUAL_REMEDIATION.value
+                results.append({"step_id": step.step_id, "result": r, "status": step.status, "outcome": outcome})
             except Exception as e:
                 step.status = "MANUAL_REMEDIATION"
                 step.error = str(e)[:300]
-                results.append({"step_id": step.step_id, "error": str(e)[:200]})
+                results.append({"step_id": step.step_id, "error": str(e)[:200], "outcome": CompensationOutcome.FAILED.value})
             _save_step_row(step)
-        elif mode in ("CONDITIONAL", "MANUAL"):
+        elif mode == "conditional" and action and formal:
+            allowed, why = evaluate_conditions(formal, resource)
+            if allowed and not formal.requires_hitl:
+                step.status = "COMPENSATING"
+                _save_step_row(step)
+                try:
+                    r = await _run_compensation_action(action, step.meta, user_id=user_id, project_id=project_id)
+                    step.status = "COMPENSATED" if r.get("status") in ("ok", "already_compensated") else "MANUAL_REMEDIATION"
+                    results.append({"step_id": step.step_id, "result": r, "status": step.status, "outcome": step.status.lower()})
+                except Exception as e:
+                    step.status = "MANUAL_REMEDIATION"
+                    step.error = str(e)[:300]
+                    results.append({"step_id": step.step_id, "outcome": CompensationOutcome.FAILED.value})
+                _save_step_row(step)
+            else:
+                step.status = "MANUAL_REMEDIATION"
+                _save_step_row(step)
+                results.append({"step_id": step.step_id, "status": "MANUAL_REMEDIATION", "outcome": CompensationOutcome.DENIED.value, "reason": why, "policy": pol})
+        elif mode in ("conditional", "manual"):
             step.status = "MANUAL_REMEDIATION"
             _save_step_row(step)
-            results.append({"step_id": step.step_id, "status": "MANUAL_REMEDIATION", "policy": pol})
+            results.append({"step_id": step.step_id, "status": "MANUAL_REMEDIATION", "outcome": CompensationOutcome.MANUAL_REMEDIATION.value, "policy": pol})
         else:
             step.status = "SKIPPED"
             _save_step_row(step)
-            results.append({"step_id": step.step_id, "status": "SKIPPED"})
+            results.append({"step_id": step.step_id, "status": "SKIPPED", "outcome": CompensationOutcome.SKIPPED.value})
 
     statuses = [s.status for s in saga.steps if s.status == "COMPLETED" or s.status in (
         "COMPENSATED", "MANUAL_REMEDIATION", "SKIPPED")]

@@ -16,10 +16,11 @@ from execution.cancel_cascade import request_delivery_cancel, clear_delivery_can
 
 
 def test_compensation_policies():
-    assert policy_for("preview").mode == "AUTOMATIC"
-    assert policy_for("github_push").mode == "MANUAL"
-    assert policy_for("deploy").mode == "MANUAL"
-    assert policy_for("inspect").mode == "NONE"
+    from execution.saga_compensation import CompensationMode
+    assert policy_for("preview").mode == CompensationMode.AUTOMATIC
+    assert policy_for("github_push").mode == CompensationMode.MANUAL
+    assert policy_for("deploy").mode == CompensationMode.MANUAL
+    assert policy_for("inspect").mode == CompensationMode.NONE
 
 
 def test_saga_success_and_load():

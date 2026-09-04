@@ -254,7 +254,18 @@ async def delivery_run(project_id: str, body: DeliveryRunReq, request: Request, 
 async def tracing_health_route(request: Request, db=Depends(get_db)):
     await get_current_user(request, db)
     from observability.tracing import tracing_health
-    return tracing_health()
+    from observability.otel import otel_health, init_otel
+    try:
+        init_otel()
+    except Exception:
+        pass
+    th = tracing_health()
+    return {
+        "tracing": "usable" if th.get("trace_storage_available") else "degraded",
+        "devos_tracing": th,
+        "otel": otel_health(),
+        "local_storage_available": th.get("trace_storage_available", False),
+    }
 
 
 @router.get("/tracing/{trace_id}")
