@@ -9,6 +9,7 @@ import { Send, X, Move, PanelRight, UserRound } from "lucide-react";
 import useOsStore from "../store/osStore";
 import useStore from "../../store/useStore";
 import { api } from "../../services/api";
+import { applySurfaceIntent } from "../surfaceIntent";
 
 function buildContextNote({ node, editorFile, editorContent, personaName }) {
   const proj = useStore.getState().currentProject;
@@ -163,6 +164,7 @@ export default function AICopilot({ floating = false }) {
       });
       const providerId = personaMeta.provider || selectedProvider;
       const model = personaMeta.model || selectedModel;
+      let surfaceIntent = null;
       const iter = api.streamChat({
         providerId,
         model,
@@ -182,6 +184,7 @@ export default function AICopilot({ floating = false }) {
           setError(evt.error);
           break;
         }
+        if (evt.surface_intent) surfaceIntent = evt.surface_intent;
         if (evt.delta || evt.text) {
           const chunk = evt.delta || evt.text || "";
           setMessages((ms) => {
@@ -192,7 +195,20 @@ export default function AICopilot({ floating = false }) {
           });
         }
       }
+      // After stream completes: Spatial Shell consumes Surface Intent (not execution)
+      if (surfaceIntent) {
+        const result = applySurfaceIntent(surfaceIntent, useOsStore);
+        if (!result.ok && result.status === "surface_unavailable") {
+          setMessages((ms) => [
+            ...ms,
+            {
+              role: "system-note",
+              content: `Could not open the ${result.surface || "requested"} surface — staying in chat with Nuha.`,
+            },
+          ]);
+        }
       }
+      } // end else chat stream
     } catch (e) {
       setError(e.message || "Chat failed");
       setMessages((ms) => {

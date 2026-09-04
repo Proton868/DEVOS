@@ -243,7 +243,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
     # Load history
     r = await db.execute(select(Message).where(Message.session_id==session.id).order_by(Message.created_at).limit(40))
     history = r.scalars().all()
-    from brain.personas import resolve_system_prompt, DEFAULT_PERSONA_ID, should_orchestrate_execution, classify_intent_heuristic
+    from brain.personas import resolve_system_prompt, DEFAULT_PERSONA_ID, should_orchestrate_execution, classify_intent_heuristic, surface_intent_for_message
     persona_id = req.persona_id or DEFAULT_PERSONA_ID
     base_system = req.system_prompt or session.system_prompt or resolve_system_prompt(persona_id)
     # Ensure Nuha (or selected persona) identity is present even when session had a legacy prompt
@@ -293,7 +293,8 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
         async with db:
             db.add(Message(session_id=session.id, role="assistant", content=full))
             await db.commit()
-        yield f"data: {json.dumps({'done':True,'session_id':session.id})}\n\n"
+        si = surface_intent_for_message(req.message)
+        yield f"data: {json.dumps({'done':True,'session_id':session.id,'surface_intent':si})}\n\n"
 
     return StreamingResponse(sse(), media_type="text/event-stream",
                               headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})

@@ -340,3 +340,60 @@ def should_orchestrate_execution(text: str) -> bool:
     """True when Nuha should prefer agent/workflow machinery over chat-only answers."""
     classes = set(classify_intent_heuristic(text))
     return bool(classes & {"CREATION", "EXECUTION", "AUTOMATION", "MULTI-DOMAIN"})
+
+
+def surface_intent_for_message(text: str) -> dict:
+    """
+    Structured Surface Intent for Spatial Shell (not an execution grant).
+
+    Derived from Nuha intent classification on the server — not a React heuristic.
+    Does not authorize UCIP work.
+    """
+    classes = set(classify_intent_heuristic(text))
+    # Default: stay in chat
+    intent = {
+        "surface": "chat",
+        "action": "none",
+        "required": False,
+        "reason": "Conversational response",
+        "confidence": 0.55,
+        "context": {},
+    }
+    if classes & {"AUTOMATION"}:
+        intent = {
+            "surface": "flow",
+            "action": "open",
+            "required": True,
+            "reason": "Automation/workflow task — Flow surface",
+            "confidence": 0.85,
+            "context": {},
+        }
+    elif classes & {"CREATION", "EXECUTION"} and "CODE" not in classes:
+        intent = {
+            "surface": "ide",
+            "action": "open",
+            "required": True,
+            "reason": "Creation/execution task — IDE surface",
+            "confidence": 0.82,
+            "context": {},
+        }
+    elif "CODE" in classes and not (classes & {"CREATION", "EXECUTION", "AUTOMATION"}):
+        intent = {
+            "surface": "chat",
+            "action": "none",
+            "required": False,
+            "reason": "Code snippet request can stay in chat",
+            "confidence": 0.7,
+            "context": {},
+        }
+    elif "RESEARCH" in classes or "ADVICE" in classes or "CONVERSATION" in classes:
+        intent = {
+            "surface": "chat",
+            "action": "none",
+            "required": False,
+            "reason": "Advisory/research conversation",
+            "confidence": 0.75,
+            "context": {},
+        }
+    intent["intent_classes"] = list(classes)
+    return intent
