@@ -60,6 +60,10 @@ export default function WebIntelSurface() {
         {pages.slice(0, 40).map((p) => (
           <li key={p.page_id} data-status={p.status}>
             <span className="sp-webintel-status">{p.status}</span>
+            {p.error === "STALE_CACHE" && <span className="sp-webintel-cache">STALE</span>}
+            {(p.extraction_json && String(p.extraction_json).includes("CACHE_HIT")) && <span className="sp-webintel-cache">CACHE HIT</span>}
+            {(p.extraction_json && String(p.extraction_json).includes("REVALIDATED")) && <span className="sp-webintel-cache">REVALIDATED</span>}
+            {(p.extraction_json && String(p.extraction_json).includes("FETCHED")) && <span className="sp-webintel-cache">LIVE FETCH</span>}
             <span className="sp-webintel-url">{p.normalized_url || p.url}</span>
           </li>
         ))}

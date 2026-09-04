@@ -69,25 +69,87 @@ def is_cancelled(crawl_id: str) -> bool:
     return crawl_id in _CANCEL
 
 
-def _safe_fetch(url: str, *, timeout: float, max_bytes: int) -> tuple[Optional[bytes], Optional[int], Optional[str], Optional[str]]:
-    """Returns body, http_status, content_type, final_url or error string in body slot with status None."""
+def _safe_fetch(
+    url: str,
+    *,
+    timeout: float,
+    max_bytes: int,
+    force_refresh: bool = False,
+) -> tuple[Optional[bytes], Optional[int], Optional[str], Optional[str], dict]:
+    """Returns body, http_status, content_type, final_url_or_error, provenance.
+
+    provenance.cache_status in FRESH/CACHE_HIT, REVALIDATED, FETCHED, FAILED, BLOCKED
+    """
+    from execution.web_intel import cache as web_cache
+
     ok, reason = is_url_allowed(url)
     if not ok:
-        return None, None, None, f"blocked:{reason}"
+        return None, None, None, f"blocked:{reason}", {"cache_status": "BLOCKED", "error": reason}
+
+    if not force_refresh:
+        hit = web_cache.lookup(url)
+        if hit["status"] == "FRESH" and hit["entry"] and hit["entry"].get("body") is not None:
+            e = hit["entry"]
+            prov = web_cache.provenance(e, cache_status="CACHE_HIT")
+            try:
+                from execution.web_intel.store import emit_event
+            except Exception:
+                pass
+            return (
+                e["body"],
+                e.get("http_status") or 200,
+                e.get("content_type"),
+                e.get("final_url") or url,
+                prov,
+            )
+
+    headers = {"User-Agent": "DevOS-WebIntel/1.0 (+public-research)"}
+    stale = web_cache.lookup(url) if not force_refresh else {"status": "MISSING", "entry": None}
+    entry = stale.get("entry")
+    if entry and not force_refresh:
+        if entry.get("etag"):
+            headers["If-None-Match"] = entry["etag"]
+        if entry.get("last_modified"):
+            headers["If-Modified-Since"] = entry["last_modified"]
+
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "DevOS-WebIntel/1.0 (+public-research)"})
+        req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             final = resp.geturl()
-            # re-validate redirect target
             ok2, reason2 = is_url_allowed(final)
             if not ok2:
-                return None, None, None, f"redirect_blocked:{reason2}"
+                return None, None, None, f"redirect_blocked:{reason2}", {"cache_status": "BLOCKED", "error": reason2}
+            status = getattr(resp, "status", None) or resp.getcode()
+            if status == 304 and entry and entry.get("body") is not None:
+                updated = web_cache.touch_validated(url)
+                e = updated or entry
+                prov = web_cache.provenance(e, cache_status="REVALIDATED")
+                return e.get("body"), 304, e.get("content_type"), e.get("final_url") or final, prov
             raw = resp.read(max_bytes + 1)
             if len(raw) > max_bytes:
                 raw = raw[:max_bytes]
-            return raw, getattr(resp, "status", None) or resp.getcode(), resp.headers.get("Content-Type"), final
+            ctype = resp.headers.get("Content-Type")
+            etag = resp.headers.get("ETag")
+            last_mod = resp.headers.get("Last-Modified")
+            web_cache.put(
+                url,
+                body=raw,
+                content_type=ctype,
+                http_status=status,
+                final_url=final,
+                etag=etag,
+                last_modified=last_mod,
+                headers={"etag": etag, "last_modified": last_mod},
+            )
+            e2 = web_cache.lookup(url)["entry"]
+            prov = web_cache.provenance(e2 or {}, cache_status="FETCHED")
+            return raw, status, ctype, final, prov
     except Exception as e:
-        return None, None, None, f"{type(e).__name__}:{str(e)[:180]}"
+        # stale fallback is optional — only if STALE and body present and not force
+        if entry and entry.get("body") is not None and not force_refresh:
+            prov = web_cache.provenance(entry, cache_status="STALE")
+            return entry["body"], entry.get("http_status") or 200, entry.get("content_type"), entry.get("final_url") or url, prov
+        return None, None, None, f"{type(e).__name__}:{str(e)[:180]}", {"cache_status": "FAILED", "error": str(e)[:180]}
 
 
 def enqueue_url(
@@ -237,18 +299,20 @@ def run_crawl(crawl_id: str) -> dict:
                     stats["pages_skipped"] += 1
                     continue
 
-            stats["requests"] += 1
             host = urlparse(page["normalized_url"]).hostname or ""
             delay = float(robots.crawl_delay or 0.0)
             if delay > 0 and not is_cancelled(crawl_id):
                 _pace_host(host, delay)
             if is_cancelled(crawl_id):
                 break
-            body, status, ctype, final_or_err = _safe_fetch(
+            body, status, ctype, final_or_err, fetch_prov = _safe_fetch(
                 page["normalized_url"],
                 timeout=float(crawl["timeout"]),
                 max_bytes=min(500_000, int(crawl["max_bytes"]) - stats["bytes"]),
+                force_refresh=bool(crawl.get("force_refresh")),
             )
+            if fetch_prov.get("cache_status") not in ("CACHE_HIT",):
+                stats["requests"] += 1
             if body is None:
                 upsert_page({
                     **page, "status": "FAILED", "error": final_or_err,
@@ -319,8 +383,9 @@ def run_crawl(crawl_id: str) -> dict:
                 "content_hash": chash,
                 "extracted_text": extraction.get("extracted_text"),
                 "links_json": json.dumps(extraction.get("links") or []),
-                "extraction_json": json.dumps(extraction),
+                "extraction_json": json.dumps({**extraction, "_cache": fetch_prov}),
                 "canonical_url": extraction.get("canonical_url") or final_url,
+                "error": None if fetch_prov.get("cache_status") != "STALE" else "STALE_CACHE",
             })
             emit_event(crawl_id, "crawl.page.fetched", {
                 "url": page["normalized_url"], "title": extraction.get("title"),

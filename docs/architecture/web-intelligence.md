@@ -26,3 +26,15 @@ Crawl: QUEUED → DISCOVERING → CRAWLING → COMPLETED | PARTIAL | FAILED | CA
 Page: DISCOVERED/QUEUED → FETCHING → EXTRACTED | DUPLICATE | BLOCKED | FAILED
 
 PARTIAL means a budget/limit stopped the crawl — not site completeness.
+
+## Web Intelligence Cache
+
+Authoritative durable cache: `data/web_intel.sqlite3` table `web_cache`.
+
+- States: FRESH / STALE / MISSING
+- Conditional: If-None-Match / If-Modified-Since → 304 revalidation
+- TTL: WEB_CACHE_TTL_SECONDS (default 86400), min/max bounds
+- Provenance: fetched_at vs last_validated_at vs cache_used_at
+- Cache hits skip network budget; refresh re-applies SSRF/robots/UCIP
+- Never bypasses safety on refresh
+
