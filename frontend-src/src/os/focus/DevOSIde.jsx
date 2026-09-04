@@ -12,9 +12,7 @@ import { ChevronLeft, Save, X, FileCode2, RefreshCw } from "lucide-react";
 import useOsStore from "../store/osStore";
 import useStore from "../../store/useStore";
 import { api, getLanguageFromPath } from "../../services/api";
-import { ensureMonaco, probeMonacoAssets } from "../../monacoSetup";
-
-ensureMonaco();
+import { loadMonaco, probeMonacoAssets } from "../../monacoSetup";
 
 const LOAD_TIMEOUT_MS = 12000;
 
@@ -91,32 +89,38 @@ export default function DevOSIde({ onClose }) {
     loadContent();
   }, [loadContent]);
 
-  // Probe same-origin Monaco assets, then bound init timeout
-  const MONACO_TIMEOUT_MS = 15000;
+  // Deterministic Monaco AMD load (singleton) — real errors, not a blind timeout
   useEffect(() => {
-    if (loading || error || monacoReady || monacoError) return;
+    if (loading || error) return;
     let cancelled = false;
+    setMonacoError(null);
+    setMonacoReady(false);
     (async () => {
-      const probe = await probeMonacoAssets();
-      if (cancelled) return;
-      if (!probe.ok) {
-        setMonacoError(
-          `Monaco assets unavailable (${probe.reason}). Deploy must include frontend/static/monaco/vs (HTTP ${probe.status}).`
-        );
+      try {
+        const probe = await probeMonacoAssets();
+        if (cancelled) return;
+        if (!probe.ok) {
+          setMonacoError(
+            `Monaco assets unavailable (${probe.reason}). HTTP ${probe.status}.`
+          );
+          return;
+        }
+        await loadMonaco();
+        if (cancelled) return;
+        setMonacoReady(true);
+        setMonacoError(null);
+      } catch (e) {
+        if (cancelled) return;
+        const msg = e?.message || String(e);
+        console.error("[DevOSIde] Monaco init failed:", msg, e);
+        setMonacoError(msg);
+        setMonacoReady(false);
       }
     })();
-    const timer = setTimeout(() => {
-      if (cancelled) return;
-      setMonacoError((prev) =>
-        prev ||
-        "Editor scripts did not become ready in time. Check /static/monaco/vs/loader.js is HTTP 200."
-      );
-    }, MONACO_TIMEOUT_MS);
     return () => {
       cancelled = true;
-      clearTimeout(timer);
     };
-  }, [loading, error, monacoReady, monacoError, monacoAttempt]);
+  }, [loading, error, monacoAttempt, target?.path, target?.id]);
 
 
   const dirty = content !== null && content !== original;
@@ -203,22 +207,22 @@ export default function DevOSIde({ onClose }) {
             Retry
           </button>
         </div>
+      ) : !monacoReady ? (
+        <div className="sp-insp-body" style={{ alignItems: "center", justifyContent: "center" }}>
+          <FileCode2 size={22} style={{ color: "var(--sp-text-2)" }} />
+          <span style={{ color: "var(--sp-text-2)" }}>Starting editor…</span>
+        </div>
       ) : (
         <div className="sp-ide-body">
-          {!monacoReady && (
-            <div className="sp-ide-monaco-loading">Starting editor…</div>
-          )}
           <Editor
             key={`${title}:${monacoAttempt}`}
             language={language}
             value={content || ""}
             theme="vs-dark"
-            loading={<span style={{ color: "var(--sp-text-2)", fontSize: 12 }}>Starting editor…</span>}
+            loading={<span style={{ color: "var(--sp-text-2)", fontSize: 12 }}>Mounting editor…</span>}
             onChange={(v) => setContent(v ?? "")}
             onMount={(ed) => {
               editorRef.current = ed;
-              setMonacoReady(true);
-              setMonacoError(null);
             }}
             options={{
               fontSize: 13,
