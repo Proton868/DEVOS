@@ -479,7 +479,7 @@ async def carai_logo():
     raise HTTPException(status_code=404, detail="Logo not found")
 
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
-from api.routes import auth, chat, loop, scripts, memory, search, models, health, governance, extras, files, vcs, terminal, comms, workers, secrets as secrets_routes, user_settings, nodes
+from api.routes import auth, chat, loop, scripts, memory, search, models, health, governance, extras, files, vcs, terminal, comms, workers, secrets as secrets_routes, user_settings, nodes, artifacts
 from api.routes import capabilities, evidence, research, ponytail, workflow, enterprise, mcp as mcp_routes, marketplace, composer, agent as agent_routes, lsp as lsp_routes, personas as personas_routes, orchestration as orchestration_routes
 app.include_router(auth.router,       prefix="/api/auth",       tags=["auth"])
 app.include_router(chat.router,       prefix="/api/chat",       tags=["chat"])
@@ -491,6 +491,7 @@ app.include_router(models.router,     prefix="/api/models",     tags=["models"])
 app.include_router(health.router,     prefix="/api/health",     tags=["health"])
 app.include_router(governance.router, prefix="/api/governance", tags=["governance"])
 app.include_router(extras.router,     prefix="/api/extras",     tags=["extras"])
+app.include_router(artifacts.router, prefix="/api/files", tags=["artifacts"])
 app.include_router(files.router,      prefix="/api/files",      tags=["files"])
 app.include_router(vcs.router,        prefix="/api/vcs",        tags=["vcs"])
 app.include_router(terminal.router,   prefix="/api/terminal",   tags=["terminal"])
