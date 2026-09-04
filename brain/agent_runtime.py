@@ -496,7 +496,15 @@ class AgentRuntime:
                     yield _emit(task, "agent.error", {"message": str(e)})
                     return
 
-                if text.startswith("All providers failed"):
+                if not text or not str(text).strip():
+                    # Provider returned empty — treat as model failure, not success
+                    task.status = AgentTaskStatus.FAILED
+                    task.error = "MODEL_UNAVAILABLE: empty completion from provider"
+                    task.completed_at = datetime.now(timezone.utc).isoformat()
+                    yield _emit(task, "agent.error", {"message": task.error})
+                    return
+
+                if str(text).startswith("All providers failed"):
                     task.status = AgentTaskStatus.FAILED
                     task.error = text
                     task.completed_at = datetime.now(timezone.utc).isoformat()
