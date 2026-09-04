@@ -281,7 +281,7 @@ Never invent tool names. Prefer progressive exploration:
 
 When the task is complete, respond with a final message that does NOT include a tool call JSON.
 To call a tool, output EXACTLY one JSON object on its own (no markdown fences), shape:
-{"thought":"brief safe status","action":"tool_name","action_input":{...}}
+{{"thought":"brief safe status","action":"tool_name","action_input":{{...}}}}
 
 Rules:
 - Prefer apply_patch / replace_text over rewriting entire files.

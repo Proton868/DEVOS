@@ -68,3 +68,52 @@ DEVOS_ORCH_FAKE_RUNTIME=1 DEVOS_ALLOW_FAKE_RUNTIME=1 \
 - Full shoe-store LIVE E2E requires a working LLM + Agent Runtime credentials.
 - Without them, missions fail honestly with `AGENT_RUNTIME_UNAVAILABLE` / `MODEL_UNAVAILABLE`.
 - Parallel dispatch is bounded; write-path conflicts serialize.
+
+## Bring-up report (2026-09-04 sandbox)
+
+### Path traced
+
+```text
+API/UI → orchestration → mission_engine → specialty ∩ UCIP
+  → orchestration_runtime → AgentRuntime.run → BrainLLM → workspace
+```
+
+### Issues found and fixed in code
+
+1. **SYSTEM_PROMPT.format KeyError `"thought"`**  
+   JSON example braces in `brain/agent_runtime.py` were not escaped.  
+   Fixed by doubling braces so only `{tools}` is substituted.
+
+### Live smoke results (this environment)
+
+| Step | Result |
+|------|--------|
+| Reach AgentRuntime | **PASS** — task IDs issued, `agent.started` events |
+| Format system prompt | **PASS** after fix |
+| Load BrainLLM / settings | **BLOCKED** — `pydantic_settings` not installed in bare sandbox Python; pip mirror 502 |
+| LLM provider | **BLOCKED** — no `OPENROUTER_API_KEY` / cloud keys in `.env`; Ollama `127.0.0.1:11434` not responding; remote ollama host error 1033 |
+| Workspace artifact | **BLOCKED** — depends on LLM tool loop |
+| Full shoe-store LIVE E2E | **BLOCKED** — provider + full app deps |
+
+Honest production path after prompt fix:
+
+```text
+SUCCESS False
+STATUS error
+ERROR AGENT_RUNTIME_UNAVAILABLE: No module named 'pydantic_settings'
+```
+
+(or `MODEL_UNAVAILABLE` once deps exist but keys do not)
+
+### Operator checklist to go green
+
+1. Install project deps (`pip install -r requirements.txt` or Docker compose).
+2. Set one of: `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or reachable Ollama.
+3. `DEFAULT_PROVIDER` matching that provider.
+4. Start app; `GET /api/health` → `mission_runtime.agent_runtime: import_ok`, providers non-empty.
+5. Minimal mission: create `hello.txt` via Plan/Action; inspect workspace file.
+6. Then shoe-store acceptance.
+
+### Fake runtime
+
+Still **test-only**. Never enable `DEVOS_ORCH_FAKE_RUNTIME` in production.
