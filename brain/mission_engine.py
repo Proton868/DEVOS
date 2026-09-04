@@ -581,19 +581,23 @@ async def run_mission_parallel(plan, max_parallel: Optional[int] = None) -> obje
     max_attempts = 2
 
     while True:
-        if (plan.status or "").lower() in ("cancellation_requested", "cancelling"):
-            # cancel outstanding
-            for n in plan.nodes:
-                if (n.status or "").lower() in ("running", "queued", "ready"):
-                    n.status = NodeStatus.CANCELLED.value
-            for tid in list(plan.agent_task_ids or []):
-                try:
-                    from brain.agent_runtime import request_cancel
-                    request_cancel(tid)
-                except Exception:
-                    pass
+        if (plan.status or "").lower() in ("cancellation_requested", "cancelling", "cancelled"):
+            try:
+                from execution.cancel_cascade import cascade_cancel_plan
+                evidence = await cascade_cancel_plan(plan)
+                plan.emit("orchestration.cancelled", evidence)
+            except Exception as e:
+                for n in plan.nodes:
+                    if (n.status or "").lower() in ("running", "queued", "ready"):
+                        n.status = NodeStatus.CANCELLED.value
+                for tid in list(plan.agent_task_ids or []):
+                    try:
+                        from brain.agent_runtime import request_cancel
+                        request_cancel(tid)
+                    except Exception:
+                        pass
+                plan.emit("orchestration.cancelled", {"error": str(e)[:200]})
             plan.status = "cancelled"
-            plan.emit("orchestration.cancelled", {})
             await persist_plan(plan)
             return plan
 

@@ -989,29 +989,79 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
 
 
 def request_cancel(plan_id: str) -> Optional[OrchestrationPlan]:
+    """Request cancellation and cascade to agent tasks, app runtime, tunnels.
+
+    Idempotent. Completed external side effects are not rolled back.
+    """
     plan = get_plan(plan_id)
     if not plan:
+        # try durable load sync path unavailable — mark flag anyway
+        try:
+            from execution.cancel_cascade import request_delivery_cancel
+            request_delivery_cancel(plan_id)
+        except Exception:
+            pass
         return None
-    st = OrchStatus(plan.status)
+    st = OrchStatus(plan.status) if plan.status else OrchStatus.IDLE
     if st in TERMINAL:
         return plan
-    # Force into cancellation path if allowed, else mark requested
     if can_transition(st, OrchStatus.CANCELLATION_REQUESTED):
         plan.set_status(OrchStatus.CANCELLATION_REQUESTED)
     else:
-        # Jump via running-compatible states if needed
         plan.status = OrchStatus.CANCELLATION_REQUESTED.value
         plan.emit("status.cancellation_requested", {"forced": True})
-    # Try agent cancel
-    for tid in plan.agent_task_ids:
+
+    # Synchronous cascade of best-effort stops; full async cascade in mission loop
+    try:
+        from execution.cancel_cascade import request_delivery_cancel, cascade_cancel_plan
+        request_delivery_cancel(plan_id)
+        import asyncio
         try:
-            from brain.agent_runtime import request_cancel as agent_cancel
-            agent_cancel(tid)
-        except Exception:
-            pass
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # schedule cascade; mission loop also handles cancellation_requested
+                asyncio.ensure_future(cascade_cancel_plan(plan))
+            else:
+                loop.run_until_complete(cascade_cancel_plan(plan))
+        except RuntimeError:
+            asyncio.run(cascade_cancel_plan(plan))
+    except Exception as e:
+        plan.emit("cancellation.cascade_error", {"error": str(e)[:200]})
+        for tid in plan.agent_task_ids or []:
+            try:
+                from brain.agent_runtime import request_cancel as agent_cancel
+                agent_cancel(tid)
+            except Exception:
+                pass
+
     if can_transition(OrchStatus(plan.status), OrchStatus.CANCELLING):
         plan.set_status(OrchStatus.CANCELLING)
-    if can_transition(OrchStatus(plan.status), OrchStatus.CANCELLED):
-        plan.set_status(OrchStatus.CANCELLED)
-    plan.emit("orchestration.cancelled", {"plan_id": plan.id})
+    # Leave as cancelling if mission loop is mid-flight; mark cancelled if idle
+    if (plan.status or "").lower() in ("cancellation_requested", "cancelling"):
+        # node marks
+        for n in plan.nodes or []:
+            if (n.status or "").lower() in ("running", "queued", "ready", "pending"):
+                n.status = "cancelled"
+        plan.set_status(OrchStatus.CANCELLED) if can_transition(OrchStatus(plan.status), OrchStatus.CANCELLED) else setattr(plan, "status", "cancelled")
+    plan.emit("orchestration.cancelled", {"plan_id": plan.id, "cascade": True})
+    try:
+        from brain.orchestration_store import persist_plan
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(persist_plan(plan))
+            else:
+                loop.run_until_complete(persist_plan(plan))
+        except Exception:
+            pass
+    except Exception:
+        pass
     return plan
+
+
+async def resume_orchestration(plan_id: str) -> dict:
+    """Public resume entry — delegates to durable_resume."""
+    from execution.durable_resume import resume_plan
+    return await resume_plan(plan_id)
+

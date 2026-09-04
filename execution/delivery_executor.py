@@ -21,6 +21,7 @@ async def execute_delivery_plan(
     goal: str = "preview",
     provider: Optional[str] = None,
     cancel_check=None,
+    plan_id: Optional[str] = None,
 ) -> dict[str, Any]:
     plan = build_delivery_dag(goal)
     evidence = []
@@ -29,6 +30,12 @@ async def execute_delivery_plan(
         AppRuntimeSpec(user_id=user_id, project_id=project_id)
     )
     log_id = rt.runtime_id if hasattr(rt, "runtime_id") else f"delivery:{project_id}"
+    if plan_id:
+        from execution.cancel_cascade import bind_delivery, is_delivery_cancelled
+        bind_delivery(plan_id, user_id=user_id, project_id=project_id,
+                      runtime_id=getattr(rt, "runtime_id", None))
+        if cancel_check is None:
+            cancel_check = lambda: is_delivery_cancelled(plan_id)
 
     for node in plan["nodes"]:
         if cancel_check and cancel_check():

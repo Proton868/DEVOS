@@ -114,6 +114,19 @@ async def orchestration_cancel(plan_id: str, request: Request, db=Depends(get_db
     return plan.to_dict() if plan else {"status": "not_found"}
 
 
+
+
+@router.post("/{plan_id}/resume")
+async def orchestration_resume(plan_id: str, request: Request, db=Depends(get_db)):
+    """Reconcile durable state and resume incomplete mission nodes."""
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    plan = await get_plan_durable(plan_id)
+    if not plan or plan.user_id != user.id:
+        raise HTTPException(404, "plan not found")
+    from execution.durable_resume import resume_plan
+    return await resume_plan(plan_id)
+
 @router.get("")
 async def orchestration_list(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
