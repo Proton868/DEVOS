@@ -52,7 +52,11 @@ def init_saga_db() -> None:
                   started_at REAL,
                   completed_at REAL,
                   failure TEXT,
-                  trace_id TEXT
+                  trace_id TEXT,
+                  pivot_reached INTEGER DEFAULT 0,
+                  pivot_step_id TEXT,
+                  pivot_action TEXT,
+                  pivot_at REAL
                 );
                 CREATE TABLE IF NOT EXISTS saga_steps (
                   step_id TEXT PRIMARY KEY,
@@ -80,6 +84,25 @@ def init_saga_db() -> None:
 
 
 init_saga_db()
+
+def _migrate_saga_columns():
+    with _LOCK:
+        c = _conn()
+        try:
+            cols = {r[1] for r in c.execute("PRAGMA table_info(sagas)").fetchall()}
+            for col, decl in (
+                ("pivot_reached", "INTEGER DEFAULT 0"),
+                ("pivot_step_id", "TEXT"),
+                ("pivot_action", "TEXT"),
+                ("pivot_at", "REAL"),
+            ):
+                if col not in cols:
+                    c.execute(f"ALTER TABLE sagas ADD COLUMN {col} {decl}")
+            c.commit()
+        finally:
+            c.close()
+
+_migrate_saga_columns()
 
 
 # Phase classification relative to pivot (point of no return)
@@ -139,6 +162,10 @@ class Saga:
     completed_at: Optional[float] = None
     failure: Optional[str] = None
     trace_id: Optional[str] = None
+    pivot_reached: bool = False
+    pivot_step_id: Optional[str] = None
+    pivot_action: Optional[str] = None
+    pivot_at: Optional[float] = None
     steps: list[SagaStep] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -153,6 +180,10 @@ class Saga:
             "completed_at": self.completed_at,
             "failure": self.failure,
             "trace_id": self.trace_id,
+            "pivot_reached": self.pivot_reached,
+            "pivot_step_id": self.pivot_step_id,
+            "pivot_action": self.pivot_action,
+            "pivot_at": self.pivot_at,
             "steps": [s.to_dict() for s in self.steps],
         }
 
@@ -163,10 +194,12 @@ def _save_saga_row(s: Saga) -> None:
         try:
             c.execute(
                 """INSERT OR REPLACE INTO sagas
-                   (saga_id,plan_id,mission_id,status,created_at,updated_at,started_at,completed_at,failure,trace_id)
-                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                   (saga_id,plan_id,mission_id,status,created_at,updated_at,started_at,completed_at,failure,trace_id,
+                    pivot_reached,pivot_step_id,pivot_action,pivot_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (s.saga_id, s.plan_id, s.mission_id, s.status, s.created_at, time.time(),
-                 s.started_at, s.completed_at, s.failure, s.trace_id),
+                 s.started_at, s.completed_at, s.failure, s.trace_id,
+                 1 if s.pivot_reached else 0, s.pivot_step_id, s.pivot_action, s.pivot_at),
             )
             c.commit()
         finally:
@@ -224,6 +257,10 @@ def load_saga(saga_id: str) -> Optional[Saga]:
         status=row["status"], created_at=row["created_at"], updated_at=row["updated_at"],
         started_at=row["started_at"], completed_at=row["completed_at"],
         failure=row["failure"], trace_id=row["trace_id"],
+        pivot_reached=bool(row["pivot_reached"] if "pivot_reached" in row.keys() else 0),
+        pivot_step_id=row["pivot_step_id"] if "pivot_step_id" in row.keys() else None,
+        pivot_action=row["pivot_action"] if "pivot_action" in row.keys() else None,
+        pivot_at=row["pivot_at"] if "pivot_at" in row.keys() else None,
     )
     for r in steps:
         s.steps.append(SagaStep(
@@ -267,6 +304,35 @@ def begin_step(saga: Saga, *, node_id: str, action: str, trace_id: Optional[str]
     return step
 
 
+
+
+def record_pivot(saga: Saga, step: SagaStep) -> None:
+    """Durably mark pivot reached — crash-safe; resume must not forget external success."""
+    if saga.pivot_reached:
+        return
+    saga.pivot_reached = True
+    saga.pivot_step_id = step.step_id
+    saga.pivot_action = step.action
+    saga.pivot_at = time.time()
+    _save_saga_row(saga)
+    try:
+        from execution.outbox import enqueue
+        enqueue(
+            "saga.pivoted",
+            aggregate_type="saga",
+            aggregate_id=saga.saga_id,
+            payload={
+                "plan_id": saga.plan_id,
+                "pivot_step_id": step.step_id,
+                "pivot_action": step.action,
+            },
+            trace_id=saga.trace_id,
+            idempotency_key=f"saga.pivoted:{saga.saga_id}:{step.step_id}",
+        )
+    except Exception:
+        pass
+
+
 def complete_step(step: SagaStep, *, evidence_id: Optional[str] = None, meta: Optional[dict] = None) -> None:
     step.status = "COMPLETED"
     step.completed_at = time.time()
@@ -276,6 +342,20 @@ def complete_step(step: SagaStep, *, evidence_id: Optional[str] = None, meta: Op
     if meta:
         step.meta.update(meta)
     _save_step_row(step)
+    phase = (step.meta or {}).get("phase") or classify_step_phase(step.action)
+    if phase == SAGA_PHASE_PIVOT:
+        # load saga to update pivot — step has saga_id
+        s = load_saga(step.saga_id)
+        if s:
+            record_pivot(s, step)
+    try:
+        from execution.outbox import enqueue
+        enqueue("saga.step_completed", aggregate_type="saga", aggregate_id=step.saga_id,
+                payload={"step_id": step.step_id, "action": step.action, "status": "COMPLETED"},
+                trace_id=step.trace_id,
+                idempotency_key=f"saga.step:{step.step_id}:completed")
+    except Exception:
+        pass
 
 
 def fail_step(step: SagaStep, error: str, *, evidence_id: Optional[str] = None) -> None:
@@ -350,6 +430,16 @@ async def compensate_saga(
     AUTOMATIC always; CONDITIONAL/MANUAL marked MANUAL_REMEDIATION unless only_automatic=False
     and caller has authorized (still no direct provider mutation for MANUAL destructive ops).
     """
+        # Reload durable pivot/state so in-memory object cannot erase pivot after crash-safe record
+    durable = load_saga(saga.saga_id)
+    if durable:
+        saga.pivot_reached = durable.pivot_reached
+        saga.pivot_step_id = durable.pivot_step_id
+        saga.pivot_action = durable.pivot_action
+        saga.pivot_at = durable.pivot_at
+        if durable.steps and len(durable.steps) >= len(saga.steps):
+            saga.steps = durable.steps
+
     if saga.status in ("COMPENSATED", "CANCELLED") and all(
         s.status in ("COMPENSATED", "SKIPPED", "PENDING", "FAILED") for s in saga.steps
     ):
