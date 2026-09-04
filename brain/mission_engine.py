@@ -36,41 +36,284 @@ MAX_PARALLEL = int(os.environ.get("DEVOS_ORCH_MAX_PARALLEL", "3"))
 
 
 class FailureClass(str, enum.Enum):
-    AUTHORIZATION_FAILURE = "authorization_failure"
-    HITL_REJECTED = "hitl_rejected"
+    TRANSIENT = "transient"
+    BUILD_FAILURE = "build_failure"
+    TEST_FAILURE = "test_failure"
+    CODE_ERROR = "code_error"
+    DEPENDENCY_FAILURE = "dependency_failure"
+    ENVIRONMENT_FAILURE = "environment_failure"
+    TOOL_FAILURE = "tool_failure"
     WORKSPACE_CONFLICT = "workspace_conflict"
+    AUTHORIZATION_FAILURE = "authorization_failure"
+    MISSING_INPUT = "missing_input"
+    MISSING_CREDENTIAL = "missing_credential"
+    USER_DECISION_REQUIRED = "user_decision_required"
+    EXTERNAL_SIDE_EFFECT = "external_side_effect"
+    HITL_REJECTED = "hitl_rejected"
+    BUDGET_EXCEEDED = "budget_exceeded"
     EXECUTION_ERROR = "execution_error"
     TIMEOUT = "timeout"
     RESOURCE_UNAVAILABLE = "resource_unavailable"
     PROVIDER_ERROR = "provider_error"
     VERIFICATION_FAILURE = "verification_failure"
     USER_BLOCKED = "user_blocked"
-    BUDGET_EXCEEDED = "budget_exceeded"
     UNKNOWN = "unknown"
 
 
-def classify_failure(error: Optional[str], status: str = "") -> FailureClass:
+class DecisionType(str, enum.Enum):
+    RETRY = "retry"
+    REPAIR = "repair"
+    REPLAN = "replan"
+    ADD_NODE = "add_node"
+    MODIFY_NODE = "modify_node"
+    REMOVE_NODE = "remove_node"
+    WAIT = "wait"
+    ASK_USER = "ask_user"
+    ABORT = "abort"
+    CONTINUE = "continue"
+    COMPLETE = "complete"
+
+
+@dataclass
+class ExecutionEvidence:
+    """Durable evidence for Nuha diagnosis — no fabricated fields."""
+    node_id: str
+    task_id: Optional[str] = None
+    persona_id: Optional[str] = None
+    workspace_id: Optional[str] = None
+    status: str = "unknown"
+    success: bool = False
+    error: Optional[str] = None
+    files_changed: list = field(default_factory=list)
+    verification: Optional[dict] = None
+    authorization_decision: Optional[str] = None
+    cancelled: bool = False
+    raw_summary: Optional[str] = None
+    unavailable: list = field(default_factory=list)  # fields runtime could not provide
+
+    def to_dict(self) -> dict:
+        return {
+            "node_id": self.node_id,
+            "task_id": self.task_id,
+            "persona_id": self.persona_id,
+            "workspace_id": self.workspace_id,
+            "status": self.status,
+            "success": self.success,
+            "error": self.error,
+            "files_changed": list(self.files_changed or []),
+            "verification": self.verification,
+            "authorization_decision": self.authorization_decision,
+            "cancelled": self.cancelled,
+            "raw_summary": self.raw_summary,
+            "unavailable": list(self.unavailable or []),
+        }
+
+
+@dataclass
+class NuhaDecision:
+    """Structured recovery decision — LLM never mutates the graph directly."""
+    decision_type: str
+    reason: str
+    evidence_refs: list = field(default_factory=list)
+    proposed_changes: list = field(default_factory=list)
+    required_capabilities: list = field(default_factory=list)
+    risk_class: str = "medium"
+    requires_user: bool = False
+    failure_class: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "decision_type": self.decision_type,
+            "reason": self.reason,
+            "evidence_refs": list(self.evidence_refs or []),
+            "proposed_changes": list(self.proposed_changes or []),
+            "required_capabilities": list(self.required_capabilities or []),
+            "risk_class": self.risk_class,
+            "requires_user": self.requires_user,
+            "failure_class": self.failure_class,
+        }
+
+
+def classify_failure(
+    error: Optional[str] = None,
+    status: str = "",
+    evidence: Optional[dict] = None,
+) -> FailureClass:
     e = (error or "").lower()
     s = (status or "").lower()
-    if "auth" in e or "denied" in e or "authorization" in e:
+    ev = evidence or {}
+    text = " ".join([
+        e, s,
+        str(ev.get("error") or ""),
+        str(ev.get("raw_summary") or ""),
+        str((ev.get("verification") or {}).get("errors") or ""),
+    ]).lower()
+
+    if "auth" in text or "denied" in text or "authorization" in text:
         return FailureClass.AUTHORIZATION_FAILURE
-    if "hitl" in e or "approval" in e:
+    if "hitl" in text or "approval" in text:
         return FailureClass.HITL_REJECTED
-    if "conflict" in e or "overwrite" in e:
+    if "credential" in text or "api key" in text or "secret" in text and "missing" in text:
+        return FailureClass.MISSING_CREDENTIAL
+    if "conflict" in text or "overwrite" in text:
         return FailureClass.WORKSPACE_CONFLICT
-    if "timeout" in e or "timed out" in e:
+    if "timeout" in text or "timed out" in text:
         return FailureClass.TIMEOUT
-    if "budget" in e or "max_steps" in e or "exhausted" in e:
+    if "budget" in text or "max_steps" in text or "exhausted" in text:
         return FailureClass.BUDGET_EXCEEDED
-    if "provider" in e or "api key" in e or "rate limit" in e:
+    if "rate limit" in text or "provider" in text:
         return FailureClass.PROVIDER_ERROR
-    if "resource" in e or "unavailable" in e:
+    if "resource" in text or "unavailable" in text:
         return FailureClass.RESOURCE_UNAVAILABLE
-    if "verif" in e:
+    if "npm err" in text or "build failed" in text or "compilation" in text or "cannot find module" in text:
+        return FailureClass.BUILD_FAILURE
+    if "test failed" in text or "assertion" in text or "jest" in text or "pytest" in text:
+        return FailureClass.TEST_FAILURE
+    if "syntaxerror" in text or "typeerror" in text or "import error" in text or "nameerror" in text:
+        return FailureClass.CODE_ERROR
+    if "enoent" in text or "module not found" in text or "dependency" in text:
+        return FailureClass.DEPENDENCY_FAILURE
+    if "permission denied" in text or "eacces" in text:
+        return FailureClass.ENVIRONMENT_FAILURE
+    if "deploy" in text or "production" in text:
+        return FailureClass.EXTERNAL_SIDE_EFFECT
+    if "verif" in text or (ev.get("verification") and not (ev.get("verification") or {}).get("passed")):
         return FailureClass.VERIFICATION_FAILURE
+    if "missing" in text and ("input" in text or "file" in text):
+        return FailureClass.MISSING_INPUT
+    if "transient" in text or "retry" in text or "503" in text or "temporarily" in text:
+        return FailureClass.TRANSIENT
     if s in ("failed", "error"):
         return FailureClass.EXECUTION_ERROR
     return FailureClass.UNKNOWN
+
+
+def diagnose_evidence(evidence: ExecutionEvidence) -> FailureClass:
+    return classify_failure(
+        error=evidence.error,
+        status=evidence.status,
+        evidence=evidence.to_dict(),
+    )
+
+
+def decide_recovery(
+    evidence: ExecutionEvidence,
+    attempt_count: int = 0,
+    max_attempts: int = 2,
+) -> NuhaDecision:
+    """
+    Typed recovery decision from evidence. Does not mutate the graph.
+    Graph changes happen only via apply_revision / repair after this decision.
+    """
+    fc = diagnose_evidence(evidence)
+    refs = [evidence.node_id]
+    if evidence.task_id:
+        refs.append(f"task:{evidence.task_id}")
+
+    if evidence.cancelled:
+        return NuhaDecision(
+            decision_type=DecisionType.ABORT.value,
+            reason="node cancelled",
+            evidence_refs=refs,
+            requires_user=False,
+            failure_class=fc.value,
+        )
+
+    if fc in (
+        FailureClass.AUTHORIZATION_FAILURE,
+        FailureClass.HITL_REJECTED,
+        FailureClass.MISSING_CREDENTIAL,
+        FailureClass.USER_DECISION_REQUIRED,
+        FailureClass.EXTERNAL_SIDE_EFFECT,
+        FailureClass.USER_BLOCKED,
+    ):
+        return NuhaDecision(
+            decision_type=DecisionType.ASK_USER.value,
+            reason=f"requires human: {fc.value}",
+            evidence_refs=refs,
+            requires_user=True,
+            failure_class=fc.value,
+            risk_class="high",
+        )
+
+    if fc == FailureClass.WORKSPACE_CONFLICT:
+        return NuhaDecision(
+            decision_type=DecisionType.WAIT.value if attempt_count < 1 else DecisionType.ASK_USER.value,
+            reason="workspace write conflict",
+            evidence_refs=refs,
+            requires_user=attempt_count >= 1,
+            failure_class=fc.value,
+        )
+
+    if fc == FailureClass.BUDGET_EXCEEDED:
+        return NuhaDecision(
+            decision_type=DecisionType.ASK_USER.value,
+            reason="budget exceeded",
+            evidence_refs=refs,
+            requires_user=True,
+            failure_class=fc.value,
+        )
+
+    if attempt_count >= max_attempts:
+        return NuhaDecision(
+            decision_type=DecisionType.ASK_USER.value,
+            reason=f"bounded attempts exhausted ({attempt_count})",
+            evidence_refs=refs,
+            requires_user=True,
+            failure_class=fc.value,
+        )
+
+    if fc == FailureClass.TRANSIENT:
+        return NuhaDecision(
+            decision_type=DecisionType.RETRY.value,
+            reason="transient failure — bounded retry",
+            evidence_refs=refs,
+            failure_class=fc.value,
+        )
+
+    if fc in (
+        FailureClass.BUILD_FAILURE,
+        FailureClass.CODE_ERROR,
+        FailureClass.TEST_FAILURE,
+        FailureClass.DEPENDENCY_FAILURE,
+        FailureClass.VERIFICATION_FAILURE,
+    ):
+        return NuhaDecision(
+            decision_type=DecisionType.REPAIR.value,
+            reason=f"evidence indicates {fc.value} — inject repair nodes",
+            evidence_refs=refs,
+            proposed_changes=[{"action": "repair_node", "target": evidence.node_id}],
+            required_capabilities=list(
+                canonicalize_set(["fs.read", "fs.write", "shell.exec"])
+            ),
+            failure_class=fc.value,
+        )
+
+    if fc in (FailureClass.PROVIDER_ERROR, FailureClass.TIMEOUT, FailureClass.RESOURCE_UNAVAILABLE):
+        return NuhaDecision(
+            decision_type=DecisionType.RETRY.value if attempt_count < max_attempts else DecisionType.ASK_USER.value,
+            reason=f"{fc.value}",
+            evidence_refs=refs,
+            requires_user=attempt_count >= max_attempts,
+            failure_class=fc.value,
+        )
+
+    # default: replan strategy once, then ask
+    if attempt_count < 1:
+        return NuhaDecision(
+            decision_type=DecisionType.REPLAN.value,
+            reason="unknown/execution failure — replan approach",
+            evidence_refs=refs,
+            proposed_changes=[{"action": "replace_strategy", "target": evidence.node_id}],
+            failure_class=fc.value,
+        )
+    return NuhaDecision(
+        decision_type=DecisionType.ASK_USER.value,
+        reason="recovery exhausted",
+        evidence_refs=refs,
+        requires_user=True,
+        failure_class=fc.value,
+    )
 
 
 def get_ready_nodes(nodes: list, edges: list) -> list:
@@ -361,23 +604,34 @@ async def run_mission_parallel(plan, max_parallel: Optional[int] = None) -> obje
             # terminal?
             statuses = [(n.status or "").lower() for n in plan.nodes]
             if any(s in ("failed", "blocked") for s in statuses):
-                # try replan on first failed without repair yet
                 failed = next(
                     (n for n in plan.nodes if (n.status or "").lower() == "failed"),
                     None,
                 )
-                if failed and attempts.get(failed.id, 0) < max_attempts:
-                    attempts[failed.id] = attempts.get(failed.id, 0) + 1
-                    fc = classify_failure(
-                        (failed.blocking_reason or ""),
-                        failed.status,
+                if failed:
+                    ev = ExecutionEvidence(
+                        node_id=failed.id,
+                        task_id=failed.job_or_task_id,
+                        persona_id=failed.persona_id,
+                        workspace_id=plan.workspace_id,
+                        status=failed.status,
+                        success=False,
+                        error=failed.blocking_reason,
+                        verification=failed.verification_evidence,
+                        authorization_decision=failed.authorization_decision,
                     )
-                    plan.status = "recovering"
-                    plan.emit("recovery.started", {"node_id": failed.id, "class": fc.value})
-                    plan.status = "replanning"
-                    apply_revision(plan, failed, fc)
-                    await persist_plan(plan)
-                    continue
+                    decision = decide_recovery(ev, attempts.get(failed.id, 0), max_attempts)
+                    plan.emit("nuha.decision", decision.to_dict())
+                    if decision.requires_user or decision.decision_type == DecisionType.ASK_USER.value:
+                        plan.status = "waiting_for_user"
+                        await persist_plan(plan)
+                        return plan
+                    if decision.decision_type in (DecisionType.REPAIR.value, DecisionType.REPLAN.value):
+                        attempts[failed.id] = attempts.get(failed.id, 0) + 1
+                        plan.status = "replanning"
+                        apply_revision(plan, failed, FailureClass(decision.failure_class or "unknown"))
+                        await persist_plan(plan)
+                        continue
                 plan.status = "failed"
                 await persist_plan(plan)
                 return plan
@@ -423,7 +677,60 @@ async def run_mission_parallel(plan, max_parallel: Optional[int] = None) -> obje
                 node = next((n for n in plan.nodes if n.id == r.get("node_id")), None)
                 if node:
                     propagate_failure(plan.nodes, plan.edges, node.id)
-                    # failure handled on next loop via replan
+                    # Evidence-driven decision (does not mutate graph itself)
+                    ev = ExecutionEvidence(
+                        node_id=node.id,
+                        task_id=node.job_or_task_id,
+                        persona_id=node.persona_id,
+                        workspace_id=plan.workspace_id,
+                        status=r.get("failure_class") or node.status,
+                        success=False,
+                        error=r.get("error"),
+                        files_changed=list((r.get("result") or {}).get("files_changed") or []),
+                        verification=r.get("evidence") or node.verification_evidence,
+                        authorization_decision=node.authorization_decision,
+                        cancelled=bool(r.get("cancelled")),
+                        raw_summary=str((r.get("result") or {}).get("summary") or "")[:2000] or None,
+                    )
+                    decision = decide_recovery(
+                        ev,
+                        attempt_count=attempts.get(node.id, 0),
+                        max_attempts=max_attempts,
+                    )
+                    plan.emit("nuha.decision", decision.to_dict())
+                    # Store evidence on plan events for audit/restart
+                    plan.emit("evidence.recorded", ev.to_dict())
+                    if not hasattr(plan, "evidence_log"):
+                        plan.evidence_log = []
+                    plan.evidence_log.append(ev.to_dict())
+
+                    if decision.decision_type == DecisionType.ASK_USER.value or decision.requires_user:
+                        plan.status = "waiting_for_user"
+                        plan.emit("mission.awaiting_user", {
+                            "reason": decision.reason,
+                            "node_id": node.id,
+                            "failure_class": decision.failure_class,
+                        })
+                        await persist_plan(plan)
+                        return plan
+                    if decision.decision_type == DecisionType.ABORT.value:
+                        plan.status = "cancelled"
+                        await persist_plan(plan)
+                        return plan
+                    if decision.decision_type in (
+                        DecisionType.REPAIR.value, DecisionType.REPLAN.value, DecisionType.ADD_NODE.value,
+                    ):
+                        attempts[node.id] = attempts.get(node.id, 0) + 1
+                        plan.status = "recovering"
+                        plan.emit("recovery.started", {"node_id": node.id, "decision": decision.to_dict()})
+                        plan.status = "replanning"
+                        fc = FailureClass(decision.failure_class or FailureClass.UNKNOWN.value)
+                        apply_revision(plan, node, fc)
+                        await persist_plan(plan)
+                    elif decision.decision_type == DecisionType.RETRY.value:
+                        attempts[node.id] = attempts.get(node.id, 0) + 1
+                        node.status = NodeStatus.PENDING.value
+                        plan.emit("recovery.retry", {"node_id": node.id, "attempt": attempts[node.id]})
 
         # XP only on verified success — existing path after full mission complete
         # loop continues until no ready / terminal
