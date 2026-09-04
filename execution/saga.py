@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from execution.saga_compensation import CompensationPolicy, CompensationMode, CompensationOutcome, policy_for, evaluate_conditions
+from execution.compensation_ucip import authorize_compensation
 
 _LOCK = threading.Lock()
 _DB = Path("data/saga.sqlite3")
@@ -79,6 +80,27 @@ def init_saga_db() -> None:
 
 
 init_saga_db()
+
+
+# Phase classification relative to pivot (point of no return)
+SAGA_PHASE_COMPENSABLE = "COMPENSABLE"
+SAGA_PHASE_PIVOT = "PIVOT"
+SAGA_PHASE_POST_PIVOT = "POST_PIVOT"
+
+_PIVOT_ACTIONS = {
+    "github_push", "github_pr", "deploy", "deploy_vercel", "deploy_netlify",
+    "publish", "publication", "github_repo",
+}
+
+
+def classify_step_phase(action: str, *, pivot_seen: bool = False) -> str:
+    a = (action or "").lower()
+    if a in _PIVOT_ACTIONS:
+        return SAGA_PHASE_PIVOT
+    if pivot_seen:
+        return SAGA_PHASE_POST_PIVOT
+    return SAGA_PHASE_COMPENSABLE
+
 
 
 @dataclass
@@ -223,6 +245,11 @@ def begin_step(saga: Saga, *, node_id: str, action: str, trace_id: Optional[str]
         saga.started_at = time.time()
         _save_saga_row(saga)
     pol = policy_for(action)
+    pivot_seen = any(
+        (s.meta or {}).get('phase') == SAGA_PHASE_PIVOT or s.action.lower() in _PIVOT_ACTIONS
+        for s in saga.steps if s.status == 'COMPLETED'
+    )
+    phase = classify_step_phase(action, pivot_seen=pivot_seen)
     step = SagaStep(
         step_id=uuid.uuid4().hex,
         saga_id=saga.saga_id,
@@ -233,7 +260,7 @@ def begin_step(saga: Saga, *, node_id: str, action: str, trace_id: Optional[str]
         trace_id=trace_id or saga.trace_id,
         span_id=span_id,
         started_at=time.time(),
-        meta=meta or {},
+        meta={**(meta or {}), 'phase': phase, 'resource': (meta or {}).get('resource')},
     )
     saga.steps.append(step)
     _save_step_row(step)
@@ -351,11 +378,14 @@ async def compensate_saga(
             results.append({"step_id": step.step_id, "status": "SKIPPED", "outcome": CompensationOutcome.SKIPPED.value})
             continue
         if mode == "automatic" and action:
-            allowed, why = evaluate_conditions(formal or policy_for(step.action), resource)
-            if not allowed:
-                step.status = "MANUAL_REMEDIATION"
+            auth = authorize_compensation(
+                forward_action=step.action, resource=resource, user_id=user_id,
+                context={"saga_id": saga.saga_id, "plan_id": saga.plan_id, "trace_id": saga.trace_id},
+            )
+            if not auth.get("allowed"):
+                step.status = "MANUAL_REMEDIATION" if auth.get("outcome") != CompensationOutcome.SKIPPED.value else "SKIPPED"
                 _save_step_row(step)
-                results.append({"step_id": step.step_id, "status": "MANUAL_REMEDIATION", "outcome": CompensationOutcome.DENIED.value, "reason": why})
+                results.append({"step_id": step.step_id, "status": step.status, "auth": auth})
                 continue
             step.status = "COMPENSATING"
             _save_step_row(step)
