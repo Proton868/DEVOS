@@ -33,8 +33,8 @@ export default function MissionBar() {
 
   useEffect(() => {
     api.listProjects().then((r) => {
-      const list = Array.isArray(r) ? r : r?.projects || [];
-      setProjects(list.map((p) => (typeof p === "string" ? p : p.name || p.id || p.project_id)).filter(Boolean));
+      const raw = Array.isArray(r) ? r : (Array.isArray(r?.projects) ? r.projects : []);
+      setProjects(raw.map((p) => (typeof p === "string" ? p : p.name || p.id || p.project_id)).filter(Boolean));
     }).catch(() => setProjects([]));
     api.getIndexStatus()
       .then(() => setBackendUp(true))

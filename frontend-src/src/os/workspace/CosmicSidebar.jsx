@@ -28,13 +28,13 @@ export default function CosmicSidebar() {
 
   useEffect(() => {
     api.listProjects().then((r) => {
-      const list = Array.isArray(r) ? r : r?.projects || [];
-      setProjects(list.map((p) => (typeof p === "string" ? p : p.name || p.id || p.project_id)).filter(Boolean));
-    }).catch(() => {});
+      const raw = Array.isArray(r) ? r : (Array.isArray(r?.projects) ? r.projects : []);
+      setProjects(raw.map((p) => (typeof p === "string" ? p : p.name || p.id || p.project_id)).filter(Boolean));
+    }).catch(() => setProjects([]));
   }, []);
 
-  const workflowNodes = nodes.filter((n) => n.kind === "runtime");
-  const agentRows = workers.slice(0, 4);
+  const workflowNodes = Array.isArray(nodes) ? nodes.filter((n) => n.kind === "runtime") : [];
+  const agentRows = Array.isArray(workers) ? workers.slice(0, 4) : [];
 
   const railItems = [
     { key: "canvas", icon: Home, title: "Canvas", onClick: () => { setOverlay(null); setDashboardOpen(true); } },
@@ -140,39 +140,43 @@ export default function CosmicSidebar() {
             <div className="sp-omni-label" onClick={() => setCollapsed((c) => ({ ...c, agents: !c.agents }))}>
               Agent Fleet <span>{collapsed.agents ? "›" : "⌄"}</span>
             </div>
-            {!collapsed.agents && (agentRows.length ? agentRows : (
-              <div style={{ padding: "4px 8px", color: "var(--sp-text-2)", fontSize: 11.5 }}>Loading agent fleet…</div>
-            )).map((w, i) => (
-              <button
-                key={w.slug || w.id || i}
-                className="sp-omni-row"
-                onClick={() => setDashboardOpen(true)}
-                title={w.description || w.slug}
-              >
-                <Bot size={13} /> {w.name || w.slug || `Agent ${i + 1}`}
-                <span className="row-dot" style={{ background: dotColor("IDLE") }} />
-              </button>
-            ))}
+            {!collapsed.agents && (
+              agentRows.length ? agentRows.map((w, i) => (
+                <button
+                  key={w.slug || w.id || i}
+                  className="sp-omni-row"
+                  onClick={() => setDashboardOpen(true)}
+                  title={w.description || w.slug}
+                >
+                  <Bot size={13} /> {w.name || w.slug || `Agent ${i + 1}`}
+                  <span className="row-dot" style={{ background: dotColor("IDLE") }} />
+                </button>
+              )) : (
+                <div style={{ padding: "4px 8px", color: "var(--sp-text-2)", fontSize: 11.5 }}>Loading agent fleet…</div>
+              )
+            )}
           </div>
 
           <div className="sp-omni-sec">
             <div className="sp-omni-label" onClick={() => setCollapsed((c) => ({ ...c, workflows: !c.workflows }))}>
               Workflows <span>{collapsed.workflows ? "›" : "⌄"}</span>
             </div>
-            {!collapsed.workflows && (workflowNodes.length ? workflowNodes : (
-              <div style={{ padding: "4px 8px", color: "var(--sp-text-2)", fontSize: 11.5 }}>
-                No workflows — CMD+K → "create workflow"
-              </div>
-            )).map((n) => (
-              <button
-                key={n.id}
-                className="sp-omni-row"
-                onClick={() => { selectNode(n.id); openInspector(n.id); }}
-              >
-                <Workflow size={13} /> {n.title}
-                <span className="row-dot" style={{ background: dotColor(n.state) }} />
-              </button>
-            ))}
+            {!collapsed.workflows && (
+              workflowNodes.length ? workflowNodes.map((n) => (
+                <button
+                  key={n.id}
+                  className="sp-omni-row"
+                  onClick={() => { selectNode(n.id); openInspector(n.id); }}
+                >
+                  <Workflow size={13} /> {n.title}
+                  <span className="row-dot" style={{ background: dotColor(n.state) }} />
+                </button>
+              )) : (
+                <div style={{ padding: "4px 8px", color: "var(--sp-text-2)", fontSize: 11.5 }}>
+                  No workflows — CMD+K → "create workflow"
+                </div>
+              )
+            )}
           </div>
 
           <div className="sp-omni-sec">

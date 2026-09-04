@@ -33,8 +33,10 @@ export function stateFromRun(run) {
 export function buildGraph(scripts, chains) {
   const chainList = Array.isArray(chains)
     ? chains
-    : chains?.chains || chains?.items || [];
-  const scriptList = Array.isArray(scripts) ? scripts : scripts?.scripts || [];
+    : (Array.isArray(chains?.chains) ? chains.chains : (Array.isArray(chains?.items) ? chains.items : []));
+  const scriptList = Array.isArray(scripts)
+    ? scripts
+    : (Array.isArray(scripts?.scripts) ? scripts.scripts : (Array.isArray(scripts?.items) ? scripts.items : []));
 
   const byId = new Map(scriptList.map((s) => [s.id, s]));
   const parents = new Map();
