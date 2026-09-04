@@ -79,14 +79,26 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
             error="authorization drift: request no longer matches authorized operation",
         )
 
+    # Fake runtime is TEST-ONLY. Never silently fall back in production.
+    # Require both FAKE flag and explicit test allow (pytest sets PYTEST_CURRENT_TEST).
     if os.environ.get("DEVOS_ORCH_FAKE_RUNTIME") == "1":
-        return await _fake_runtime(req)
+        if os.environ.get("DEVOS_ALLOW_FAKE_RUNTIME") == "1" or os.environ.get("PYTEST_CURRENT_TEST"):
+            return await _fake_runtime(req)
+        return NodeExecutionResult(
+            success=False,
+            status="error",
+            error="AGENT_RUNTIME_UNAVAILABLE: DEVOS_ORCH_FAKE_RUNTIME set without test allow",
+        )
 
     try:
         from brain.agent_runtime import AgentRuntime, AgentContext
         from brain.agent_tools import AgentMode
     except Exception as e:
-        return NodeExecutionResult(success=False, status="error", error=f"runtime import: {e}")
+        return NodeExecutionResult(
+            success=False,
+            status="error",
+            error=f"AGENT_RUNTIME_UNAVAILABLE: {e}",
+        )
 
     runtime = AgentRuntime(
         user_id=req.user_id,
@@ -134,7 +146,15 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
         logger.exception("agent runtime node execution failed")
         result.success = False
         result.status = "error"
-        result.error = str(e)[:500]
+        err = str(e)[:500]
+        if "api key" in err.lower() or "provider" in err.lower() or "model" in err.lower():
+            result.error = f"MODEL_UNAVAILABLE: {err}"
+        else:
+            result.error = f"AGENT_RUNTIME_UNAVAILABLE: {err}" if "AGENT_RUNTIME" not in err else err
+    if not result.events_seen and result.status == "running":
+        result.success = False
+        result.status = "error"
+        result.error = result.error or "AGENT_RUNTIME_UNAVAILABLE: no events from runtime"
     return result
 
 

@@ -47,6 +47,40 @@ async def health():
     except Exception:
         isolation = {"available": False}
 
+    # Mission stack probes (no secrets)
+    mission = {
+        "agent_runtime": "unknown",
+        "fake_runtime_env": False,
+        "orchestration_store": "unknown",
+        "ucip": "unknown",
+        "workspace": "unknown",
+    }
+    try:
+        from brain.agent_runtime import AgentRuntime
+        mission["agent_runtime"] = "import_ok"
+    except Exception as e:
+        mission["agent_runtime"] = f"unavailable:{type(e).__name__}"
+    try:
+        import os as _os
+        mission["fake_runtime_env"] = _os.environ.get("DEVOS_ORCH_FAKE_RUNTIME") == "1"
+    except Exception:
+        mission["fake_runtime_env"] = False
+    try:
+        from brain.orchestration_store import persist_plan
+        mission["orchestration_store"] = "ok"
+    except Exception as e:
+        mission["orchestration_store"] = f"error:{type(e).__name__}"
+    try:
+        from governance.ucip import ALWAYS_BLOCKED_CAPS
+        mission["ucip"] = "ok" if ALWAYS_BLOCKED_CAPS is not None else "missing"
+    except Exception as e:
+        mission["ucip"] = f"error:{type(e).__name__}"
+    try:
+        from execution.files import FileService
+        mission["workspace"] = "import_ok"
+    except Exception as e:
+        mission["workspace"] = f"unavailable:{type(e).__name__}"
+
     return {
         "status": overall,
         "db": db_status,
@@ -60,4 +94,5 @@ async def health():
             "strength": isolation.get("strength"),
             "suitable_for_untrusted_code": isolation.get("suitable_for_untrusted_code"),
         },
+        "mission_runtime": mission,
     }
