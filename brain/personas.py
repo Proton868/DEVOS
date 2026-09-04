@@ -208,6 +208,59 @@ _SPECIALISTS: list[Persona] = [
         escalation_targets=["nuha"],
         agent_slug="product-manager",
     ),
+    Persona(
+        id="writer",
+        name="Writer",
+        description="Professional writing: reports, docs, copy, editing — no external side effects.",
+        specialty="writing",
+        role="specialist",
+        system_prompt=(
+            "You are the DevOS Writer. Produce clear, structured, audience-aware writing. "
+            "Prefer accuracy and grounding when research is involved. Escalate external "
+            "side effects (push, deploy, publish) to Nuha. Writing is primarily artifact work."
+        ),
+        capabilities=["fs.read", "fs.write"],
+        allowed_tools=["write_file", "read_file"],
+        creation_domains=["article", "report", "documentation", "copy", "proposal", "email", "summary"],
+        advisory_domains=["editing", "tone", "structure", "proofreading"],
+        escalation_targets=["nuha", "research"],
+        agent_slug="technical-writer",
+    ),
+    Persona(
+        id="storyteller",
+        name="Storyteller",
+        description="Creative narrative: stories, characters, worldbuilding, long-form fiction.",
+        specialty="narrative",
+        role="specialist",
+        system_prompt=(
+            "You are the DevOS Storyteller. Focus on narrative coherence, character, pacing, "
+            "and voice. For large works, prefer structured chapter/file artifacts. "
+            "Escalate non-narrative engineering to Nuha."
+        ),
+        capabilities=["fs.read", "fs.write"],
+        allowed_tools=["write_file", "read_file"],
+        creation_domains=["story", "novel", "fiction", "character", "worldbuilding", "lore", "scene"],
+        advisory_domains=["pacing", "dialogue", "plot", "atmosphere"],
+        escalation_targets=["nuha"],
+        agent_slug="technical-writer",
+    ),
+    Persona(
+        id="script_writer",
+        name="Script Writer",
+        description="Scripts and structured dialogue: screen, stage, video, ads, VO.",
+        specialty="script",
+        role="specialist",
+        system_prompt=(
+            "You are the DevOS Script Writer. Produce structured scripts with scenes, dialogue, "
+            "action, and medium-appropriate format. Escalate publishing/deploy to Nuha."
+        ),
+        capabilities=["fs.read", "fs.write"],
+        allowed_tools=["write_file", "read_file"],
+        creation_domains=["screenplay", "script", "dialogue", "youtube", "podcast", "commercial", "voiceover"],
+        advisory_domains=["timing", "scene-structure", "narration"],
+        escalation_targets=["nuha"],
+        agent_slug="technical-writer",
+    ),
 ]
 
 
@@ -286,36 +339,33 @@ def specialist_in_domain(persona_id: str, domain_hint: str) -> bool:
 
 
 def suggest_personas_for_goal(goal: str) -> list[str]:
-    """Lightweight keyword routing — planning still goes through Nuha + intent layer."""
+    """Heuristic suggestions — Nuha still orchestrates; never grants authority."""
     g = (goal or "").lower()
     scored: list[tuple[int, str]] = []
-    for p in list_personas():
-        if p.id == "nuha":
-            continue
-        score = 0
-        for d in p.creation_domains + p.advisory_domains:
-            if d and d != "*" and d.lower() in g:
-                score += 2
-        if p.specialty and p.specialty.lower() in g:
-            score += 2
-        if score:
-            scored.append((score, p.id))
-    scored.sort(reverse=True)
-    return [pid for _, pid in scored[:5]]
+    rules = [
+        (["screenplay", "script", "youtube script", "podcast script", "voiceover", "dialogue scene", "ad script"], "script_writer", 10),
+        (["short story", "novel", "fiction", "worldbuilding", "character arc", "story about", "novella"], "storyteller", 10),
+        (["article", "documentation", "business proposal", "rewrite", "proofread", "marketing copy", "email draft", "report"], "writer", 9),
+        (["website", "frontend", "react", "css", "html"], "web", 8),
+        (["code", "api", "backend", "bug", "function", "refactor"], "code", 8),
+        (["research", "crawl", "competitor", "public website", "online presence"], "research", 8),
+        (["workflow", "automation", "trigger"], "automation", 7),
+        (["design", "ux", "layout"], "design", 7),
+        (["schema", "etl", "sql", "analytics"], "data", 7),
+        (["product", "go-to-market", "prd"], "business", 6),
+    ]
+    for keys, pid, weight in rules:
+        if any(k in g for k in keys):
+            scored.append((weight, pid))
+    scored.sort(key=lambda x: -x[0])
+    out = []
+    for _, pid in scored:
+        if pid not in out and pid in PERSONA_REGISTRY:
+            out.append(pid)
+    if "nuha" not in out:
+        out.insert(0, "nuha")
+    return out[:6]
 
-
-# Intent classes Nuha uses when classifying (mirrors brief)
-INTENT_CLASSES = (
-    "CONVERSATION",
-    "ADVICE",
-    "CREATION",
-    "EXECUTION",
-    "AUTOMATION",
-    "CODE",
-    "RESEARCH",
-    "PREVIEW",
-    "MULTI-DOMAIN",
-)
 
 
 def classify_intent_heuristic(text: str) -> list[str]:

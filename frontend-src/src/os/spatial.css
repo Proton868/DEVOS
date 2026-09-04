@@ -2064,3 +2064,10 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
   opacity: 0.85;
   padding: 4px 8px;
 }
+
+.sp-mission-node.glow-WARNING .sp-mission-node-state,
+.sp-mission-status.glow-WARNING { color: #e6a23c; }
+.sp-mission-node.glow-WAITING .sp-mission-node-state,
+.sp-mission-status.glow-WAITING { color: #fc6; text-decoration: underline dotted; }
+.plan-WARNING { outline: 1px solid rgba(230,162,60,0.35); }
+.plan-WAITING { outline: 1px dashed rgba(255,200,80,0.35); }

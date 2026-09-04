@@ -84,6 +84,14 @@ async def create_crawl(body: CrawlCreate, request: Request, db=Depends(get_db)):
         "trace_id": trace.trace_id,
     })
     job_id = None
+    # Production: durable Jobs only. No silent inline crawl execution.
+    # Tests may set DEVOS_WEB_CRAWL_INLINE_TEST=1 for deterministic harness.
+    import os
+    if os.environ.get("DEVOS_WEB_CRAWL_INLINE_TEST") == "1":
+        import asyncio
+        from execution.web_intel.crawler import run_crawl
+        asyncio.create_task(asyncio.to_thread(run_crawl, crawl["crawl_id"]))
+        return {**crawl, "job_id": f"test-inline:{crawl['crawl_id']}", "execution": "test_inline"}
     try:
         from workers.job_queue import enqueue
         from governance.request_identity import get_tenant_context
@@ -99,11 +107,13 @@ async def create_crawl(body: CrawlCreate, request: Request, db=Depends(get_db)):
         )
         job_id = job.id
     except Exception as e:
-        # Fallback: run in-process background so single-node installs still work
-        import asyncio
-        from execution.web_intel.crawler import run_crawl
-        asyncio.create_task(asyncio.to_thread(run_crawl, crawl["crawl_id"]))
-        job_id = f"inline:{crawl['crawl_id']}"
+        from execution.web_intel.store import update_crawl, emit_event
+        update_crawl(crawl["crawl_id"], status="FAILED", error=f"WORKER_UNAVAILABLE:{type(e).__name__}")
+        emit_event(crawl["crawl_id"], "crawl.failed", {"reason": "WORKER_UNAVAILABLE", "error": str(e)[:200]})
+        raise HTTPException(
+            503,
+            detail={"error": "WORKER_UNAVAILABLE", "crawl_id": crawl["crawl_id"], "message": str(e)[:200]},
+        )
     return {**crawl, "job_id": job_id, "execution": "async"}
 
 

@@ -6,7 +6,7 @@ export function nodeGlowState(status) {
   const s = (status || "").toString().toLowerCase();
   if (["running", "executing", "crawling"].includes(s)) return "EXECUTING";
   if (["discovering"].includes(s)) return "THINKING";
-  if (["partial"].includes(s)) return "WAITING";
+  if (["partial"].includes(s)) return "WARNING";
   if (["waiting_for_user", "awaiting_approval", "authorization_pending"].includes(s)) return "WAITING";
   if (["verifying"].includes(s)) return "VERIFYING";
   if (["recovering", "replanning", "thinking"].includes(s)) return "THINKING";
@@ -20,7 +20,9 @@ export function nodeGlowState(status) {
 export function planGlowState(status) {
   const s = (status || "").toString().toLowerCase();
   if (["running", "delegating", "delegated", "queued", "executing"].includes(s)) return "EXECUTING";
-  if (["verifying", "recovering", "replanning", "planning", "context_gathering", "waiting_for_user"].includes(s)) return "THINKING";
+  if (["partial"].includes(s)) return "WARNING";
+  if (["verifying", "recovering", "replanning", "planning", "context_gathering"].includes(s)) return "THINKING";
+  if (["waiting_for_user"].includes(s)) return "WAITING";
   if (["plan_ready", "action_requested", "authorization_pending", "authorized"].includes(s)) return "QUEUED";
   if (["completed", "verified"].includes(s)) return "SUCCESS";
   if (["failed", "blocked", "verification_failed"].includes(s)) return "FAILED";
