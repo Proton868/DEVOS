@@ -248,3 +248,27 @@ async def delivery_run(project_id: str, body: DeliveryRunReq, request: Request, 
         user_id=user.id, project_id=project_id, goal=body.goal, provider=body.provider,
     )
     return result
+
+
+@router.get("/tracing/health")
+async def tracing_health_route(request: Request, db=Depends(get_db)):
+    await get_current_user(request, db)
+    from observability.tracing import tracing_health
+    return tracing_health()
+
+
+@router.get("/tracing/{trace_id}")
+async def tracing_get(trace_id: str, request: Request, db=Depends(get_db)):
+    await get_current_user(request, db)
+    from observability.tracing import get_trace_spans
+    return {"trace_id": trace_id, "spans": get_trace_spans(trace_id)}
+
+
+@router.get("/saga/{saga_id}")
+async def saga_get(saga_id: str, request: Request, db=Depends(get_db)):
+    await get_current_user(request, db)
+    from execution.saga import load_saga
+    s = load_saga(saga_id)
+    if not s:
+        raise HTTPException(404, "saga not found")
+    return s.to_dict()

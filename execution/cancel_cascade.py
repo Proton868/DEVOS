@@ -145,4 +145,34 @@ async def cascade_cancel_plan(plan) -> dict[str, Any]:
     except Exception:
         pass
 
+    # 6) Saga compensation (automatic only)
+    try:
+        from execution.saga import load_saga, compensate_saga
+        # find saga by plan_id
+        import sqlite3
+        from pathlib import Path as P
+        db = P("data/saga.sqlite3")
+        if db.exists():
+            c = sqlite3.connect(str(db))
+            c.row_factory = sqlite3.Row
+            row = c.execute(
+                "SELECT saga_id FROM sagas WHERE plan_id=? ORDER BY created_at DESC LIMIT 1",
+                (plan_id,),
+            ).fetchone()
+            c.close()
+            if row:
+                saga = load_saga(row["saga_id"])
+                if saga:
+                    from observability.tracing import start_span, continue_trace
+                    if saga.trace_id:
+                        continue_trace(saga.trace_id)
+                    with start_span("mission.cancel.compensation", kind="compensation",
+                                    attributes={"saga_id": saga.saga_id, "plan_id": plan_id}):
+                        comp = await compensate_saga(
+                            saga, user_id=user_id or "", project_id=project_id or "",
+                        )
+                    evidence["saga_compensation"] = comp
+    except Exception as e:
+        evidence["saga_compensation_error"] = str(e)[:200]
+
     return evidence
