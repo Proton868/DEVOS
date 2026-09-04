@@ -109,6 +109,7 @@ const useOsStore = create((set, get) => ({
   setRailCollapsed: (v) => set({ railCollapsed: !!v }),
   omniOpen: true,
   toggleOmni: () => set((s) => ({ omniOpen: !s.omniOpen })),
+  setOmniOpen: (v) => set({ omniOpen: !!v }),
   overlay: null, // null | 'files' | 'git' | 'search' | 'memory' | 'mcp' | 'research' | 'settings' | 'history' | 'system' | 'composer'
   setOverlay: (overlay) => set({ overlay }),
   dashboardOpen: true,

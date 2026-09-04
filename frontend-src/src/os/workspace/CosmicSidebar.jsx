@@ -37,7 +37,7 @@ export default function CosmicSidebar() {
   const agentRows = Array.isArray(workers) ? workers.slice(0, 4) : [];
 
   const railItems = [
-    { key: "canvas", icon: Home, title: "Canvas", onClick: () => { setOverlay(null); setDashboardOpen(true); } },
+    { key: "canvas", icon: Home, title: "Canvas / Omni", onClick: () => { setOverlay(null); useOsStore.getState().setOmniOpen(true); setDashboardOpen(true); } },
     { key: "files", icon: Folder, title: "Files", onClick: () => setOverlay("files") },
     { key: "git", icon: GitBranch, title: "Git", onClick: () => setOverlay("git") },
     { key: "search", icon: Search, title: "Search", onClick: () => setOverlay("search") },
@@ -50,25 +50,24 @@ export default function CosmicSidebar() {
 
   if (railCollapsed) {
     return (
-      <button
-        className="sp-rail-expand"
-        title="Show Cosmic Sidebar"
-        onClick={toggleRail}
-        style={{
-          position: "absolute", left: 8, top: 56, zIndex: 280,
-          width: 32, height: 32, borderRadius: 8,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: "rgba(12,12,22,0.9)", border: "1px solid var(--sp-border)",
-          color: "var(--sp-text-1)", cursor: "pointer",
-        }}
-      >
-        <ChevronRight size={16} />
-      </button>
+      <div className="sp-rail-collapsed-fab">
+        <button
+          className="sp-rail-expand"
+          title="Show Cosmic Sidebar"
+          onClick={() => {
+            toggleRail();
+            // Restore Omni when bringing the rail back so the panel is not "lost"
+            useOsStore.getState().setOmniOpen(true);
+          }}
+        >
+          <ChevronRight size={16} />
+        </button>
+      </div>
     );
   }
 
   return (
-    <>
+    <div className="sp-cosmic">
       <div className="sp-side-rail">
         <button
           className="sp-rail-btn"
@@ -78,9 +77,12 @@ export default function CosmicSidebar() {
           <ChevronLeft size={16} />
         </button>
         <button
-          className="sp-rail-btn"
-          title="DevOS"
-          onClick={() => { if (!omniOpen) toggleOmni(); setOverlay(null); }}
+          className={`sp-rail-btn ${omniOpen && !overlay ? "active" : ""}`}
+          title={omniOpen ? "Hide Omni-Panel" : "Show Omni-Panel"}
+          onClick={() => {
+            setOverlay(null);
+            toggleOmni();
+          }}
         >
           <MenorahLogo size={20} id="rail" />
         </button>
@@ -111,11 +113,22 @@ export default function CosmicSidebar() {
         </button>
       </div>
 
+      {!omniOpen && (
+        <button
+          className="sp-omni-pull"
+          title="Show Omni-Panel"
+          onClick={() => useOsStore.getState().setOmniOpen(true)}
+        >
+          <ChevronRight size={14} />
+          <span>Omni</span>
+        </button>
+      )}
+
       {omniOpen && (
         <div className="sp-omni">
           <div className="sp-omni-head">
             Omni-Panel
-            <button title="Collapse panel" onClick={toggleOmni}>
+            <button title="Hide Omni-Panel — reopen with the Omni tab or Menorah icon" onClick={toggleOmni}>
               <ChevronLeft size={15} />
             </button>
           </div>
@@ -190,6 +203,6 @@ export default function CosmicSidebar() {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

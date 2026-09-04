@@ -18,6 +18,8 @@ export default function MissionBar() {
   const terminalOpen = useOsStore((s) => s.terminal.open);
   const toggleRail = useOsStore((s) => s.toggleRail);
   const railCollapsed = useOsStore((s) => s.railCollapsed);
+  const omniOpen = useOsStore((s) => s.omniOpen);
+  const setOmniOpen = useOsStore((s) => s.setOmniOpen);
   const toggleChatMode = useOsStore((s) => s.toggleChatMode);
   const chatMode = useOsStore((s) => s.chatMode);
   const openCopilot = useOsStore((s) => s.openCopilot);
@@ -192,8 +194,11 @@ export default function MissionBar() {
           </button>
           {openPop === "more" && (
             <div className="sp-mb-pop sp-glass right0">
-              <button className="sp-mb-item" onClick={() => { setOpenPop(null); toggleRail(); }}>
+              <button className="sp-mb-item" onClick={() => { setOpenPop(null); toggleRail(); if (railCollapsed) setOmniOpen(true); }}>
                 <PanelLeft size={13} /> {railCollapsed ? "Show" : "Hide"} sidebar
+              </button>
+              <button className="sp-mb-item" onClick={() => { setOpenPop(null); setOmniOpen(!omniOpen); }}>
+                {omniOpen ? "Hide" : "Show"} Omni-Panel
               </button>
               <button className="sp-mb-item" onClick={() => { setOpenPop(null); toggleTerminal(); }}>
                 <Terminal size={13} /> {terminalOpen ? "Hide" : "Show"} terminal

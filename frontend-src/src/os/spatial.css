@@ -1426,3 +1426,80 @@
   overflow: auto;
   box-sizing: border-box;
 }
+
+
+/* Omni reopen affordances */
+.sp-omni-pull {
+  flex: 0 0 auto;
+  width: 28px;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 0;
+  border: none;
+  border-right: 1px solid var(--sp-border);
+  background: rgba(14,14,24,0.92);
+  color: var(--sp-text-2);
+  cursor: pointer;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  z-index: 200;
+}
+.sp-omni-pull:hover {
+  color: var(--sp-accent);
+  background: rgba(34,211,238,0.08);
+}
+.sp-rail-collapsed-fab {
+  position: absolute;
+  left: 8px;
+  top: 56px;
+  z-index: 280;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sp-rail-collapsed-fab .sp-rail-expand {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(12,12,22,0.9);
+  border: 1px solid var(--sp-border);
+  color: var(--sp-text-1);
+  cursor: pointer;
+}
+.sp-rail-collapsed-fab .sp-rail-expand:hover {
+  color: var(--sp-accent);
+  border-color: rgba(34,211,238,0.4);
+}
+@media (max-width: 760px) {
+  .sp-omni-pull {
+    position: fixed;
+    left: 48px;
+    top: 50%;
+    transform: translateY(-50%) rotate(180deg);
+    height: 88px;
+    width: 26px;
+    border-radius: 0 8px 8px 0;
+    border: 1px solid var(--sp-border);
+    box-shadow: 4px 0 16px rgba(0,0,0,0.35);
+  }
+}
+
+.sp-cosmic {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  flex-shrink: 0;
+  min-height: 0;
+  height: 100%;
+  z-index: 240;
+}
