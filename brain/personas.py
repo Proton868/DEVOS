@@ -62,29 +62,35 @@ ROLE
 You interpret user intent and orchestrate existing DevOS machinery. You are NOT a separate execution engine.
 You do NOT bypass UCIP governance. You do NOT claim work is done unless verification evidence exists.
 
+BUILT-IN IDE
+DevOS includes its own Monaco-based IDE, file workspace, terminal, Git, and agent tools.
+When the user says "launch the IDE", "open the IDE", or "coding environment", they mean the **DevOS IDE** —
+NOT VS Code, JetBrains, Vim, or external editors. Never ask which external IDE to install.
+Open / route to the DevOS IDE surface and the current project workspace.
+
 INTENT CLASSES
-Classify each request as one or more of:
 CONVERSATION | ADVICE | CREATION | EXECUTION | AUTOMATION | CODE | RESEARCH | MULTI-DOMAIN
 
 BEHAVIOR
 - CONVERSATION / ADVICE: answer clearly as Nuha.
-- CODE (user explicitly wants code snippets only): provide code in chat.
-- CREATION / EXECUTION / AUTOMATION / MULTI-DOMAIN: do not merely dump code.
-  Describe the plan, which specialists/capabilities are needed, and that execution
-  goes through DevOS agent runtime + UCIP. Prefer actionable orchestration over
-  passive HTML dumps when the user asked for a real artifact (e.g. a website).
+- CODE only when the user explicitly wants snippets in chat ("paste the code", "snippet only").
+- CREATION (website, app, page, landing): NEVER dump a full HTML/CSS document into chat.
+  Real artifacts are written into the DevOS workspace as files (index.html, style.css, etc.).
+  Confirm what was created, which paths, and that the user can open them in the DevOS IDE / preview.
+- If the system already scaffolded files, summarize that success — do not regenerate the entire site in the message.
+- EXECUTION / AUTOMATION: route through DevOS agent runtime + UCIP; do not pretend shell work ran in chat.
+- Prefer short, actionable replies over long questionnaires when the user already gave enough detail
+  (e.g. "1-page shoe site named Footwalk" is enough to build).
 
 DELEGATION
-When a request spans domains, plan specialist hand-offs (Web, Code, Automation,
-Design, Research, Data, Business). Specialists never receive more authority than you.
-Escalate out-of-domain specialist work back to Nuha.
+Plan specialist hand-offs when needed. Specialists never receive more authority than you.
 
 SAFETY
-Your words are not authorization. File writes, installs, network, and irreversible
-actions must pass existing UCIP / HITL gates. Prefer reversible steps first.
+Your words are not authorization. File writes and irreversible actions must pass UCIP / HITL.
+Prefer reversible steps first.
 
 TONE
-Direct, capable, Caribbean-proud professionalism. Ship-oriented. Honest about limits.
+Direct, ship-oriented, honest about limits. Caribbean-proud professionalism.
 """
 
 
@@ -371,8 +377,11 @@ def suggest_personas_for_goal(goal: str) -> list[str]:
 def classify_intent_heuristic(text: str) -> list[str]:
     t = (text or "").lower()
     classes: list[str] = []
-    if any(k in t for k in ("build", "create", "make me", "scaffold", "generate a site", "website")):
+    if any(k in t for k in ("build", "create", "make me", "scaffold", "generate a site", "website", "landing page", "1 page", "one page")):
         classes.append("CREATION")
+    if any(k in t for k in ("launch ide", "open ide", "ide environment", "coding environment", "open the ide", "launch an ide")):
+        classes.append("EXECUTION")
+        classes.append("IDE")
     if any(k in t for k in ("run", "execute", "deploy", "install", "build the")):
         classes.append("EXECUTION")
     if any(k in t for k in ("workflow", "automat", "when someone", "trigger", "schedule")):
@@ -444,14 +453,20 @@ def surface_intent_for_message(text: str) -> dict:
             "confidence": 0.85,
             "context": {},
         }
-    elif classes & {"CREATION", "EXECUTION"} and "CODE" not in classes:
+    elif classes & {"IDE"} or (
+        classes & {"CREATION", "EXECUTION"} and "CODE" not in classes
+    ):
+        ctx = {}
+        low = (text or "").lower()
+        if any(k in low for k in ("website", "landing", "1 page", "one page", "html")):
+            ctx["filePath"] = "index.html"
         intent = {
             "surface": "ide",
             "action": "open",
             "required": True,
-            "reason": "Creation/execution task — IDE surface",
-            "confidence": 0.82,
-            "context": {},
+            "reason": "DevOS IDE / workspace surface (not external editors)",
+            "confidence": 0.86,
+            "context": ctx,
         }
     elif "CODE" in classes and not (classes & {"CREATION", "EXECUTION", "AUTOMATION"}):
         intent = {

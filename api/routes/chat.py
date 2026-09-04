@@ -257,7 +257,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
         intent_note = (
             f"\n\n[Nuha orchestration hint] Classified intent: {classes}. "
             "Prefer planning + existing DevOS execution/agent/workflow paths over "
-            "chat-only code dumps when the user wants a real artifact."
+            "chat-only code dumps when the user wants a real artifact. DevOS has a built-in IDE — never ask about VS Code/JetBrains for IDE launches. For websites, files go to the workspace; do not paste full HTML documents."
         )
     messages = [{"role": "system", "content": base_system + intent_note}]
     messages += [{"role": m.role, "content": m.content} for m in history]
@@ -277,10 +277,49 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
     from brain.llm import BrainLLM
     brain = await BrainLLM.for_user(db, user.id, provider=req.provider or session.provider, model=req.model or session.model or None)
 
+    # CREATION website: write real workspace files instead of relying on chat HTML dumps
+    scaffold_result = None
+    try:
+        from brain.personas import should_orchestrate_execution, classify_intent_heuristic
+        from brain.artifact_scaffold import scaffold_website_artifacts, _is_website_goal
+        if should_orchestrate_execution(req.message) and _is_website_goal(req.message):
+            scaffold_result = await scaffold_website_artifacts(
+                user_id=user.id,
+                project_id="default",
+                goal=req.message,
+            )
+            if scaffold_result.get("ok"):
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "SYSTEM: Workspace files were already created for this request: "
+                        + ", ".join(scaffold_result.get("files") or [])
+                        + f". Brand={scaffold_result.get('brand')}. "
+                        "Do NOT paste full HTML/CSS into the chat. Confirm the files, "
+                        "tell the user to open the DevOS IDE and preview index.html, "
+                        "and offer refinements."
+                    ),
+                })
+    except Exception:
+        scaffold_result = None
+
     async def sse():
         full = ""
         try:
-            text = await brain.stream_chat(messages)
+            if scaffold_result and scaffold_result.get("ok"):
+                # Prefer concise confirmation over model inventing a second full site
+                text = scaffold_result.get("message") or (
+                    "Created workspace site files. Open the DevOS IDE to preview index.html."
+                )
+                # Still allow model to refine tone briefly if available
+                try:
+                    model_text = await brain.stream_chat(messages)
+                    if model_text and len(model_text) < 1200 and "<!DOCTYPE" not in model_text and "<html" not in model_text.lower():
+                        text = model_text.strip()
+                except Exception:
+                    pass
+            else:
+                text = await brain.stream_chat(messages)
             # Simulate streaming by chunking
             for i in range(0, len(text), 8):
                 chunk = text[i:i+8]
