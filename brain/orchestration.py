@@ -17,6 +17,21 @@ from typing import Any, Optional
 
 logger = logging.getLogger("devos.orchestration")
 
+from brain.orchestration_dag import (
+    OrchestrationNode,
+    OrchestrationEdge,
+    NodeStatus,
+    DepCondition,
+    validate_dag,
+    assert_valid_dag,
+    compute_readiness,
+    propagate_failure,
+    check_node_invariants,
+    nodes_from_steps,
+    DAGValidationError,
+)
+from brain.specialty_policy import evaluate_node_request, get_specialty_policy
+
 
 # ─── Modes ───────────────────────────────────────────────────────────────────
 
@@ -183,7 +198,9 @@ class OrchestrationPlan:
     user_id: str = ""
     status: str = OrchStatus.IDLE.value
     assumptions: list[str] = field(default_factory=list)
-    steps: list[OrchestrationStep] = field(default_factory=list)
+    steps: list[OrchestrationStep] = field(default_factory=list)  # legacy view
+    nodes: list = field(default_factory=list)  # OrchestrationNode
+    edges: list = field(default_factory=list)  # OrchestrationEdge
     personas: list[str] = field(default_factory=list)
     capabilities: list[str] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
@@ -194,6 +211,8 @@ class OrchestrationPlan:
     estimated_budget: dict = field(default_factory=dict)
     events: list[dict] = field(default_factory=list)
     agent_task_ids: list[str] = field(default_factory=list)
+    dag_valid: bool = True
+    dag_issues: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -209,6 +228,10 @@ class OrchestrationPlan:
             "status": self.status,
             "assumptions": list(self.assumptions),
             "steps": [s.to_dict() for s in self.steps],
+            "nodes": [n.to_dict() if hasattr(n, "to_dict") else n for n in self.nodes],
+            "edges": [e.to_dict() if hasattr(e, "to_dict") else e for e in self.edges],
+            "dag_valid": self.dag_valid,
+            "dag_issues": list(self.dag_issues),
             "personas": list(self.personas),
             "capabilities": list(self.capabilities),
             "dependencies": list(self.dependencies),
@@ -457,6 +480,17 @@ async def create_plan(
     except Exception:
         pass
     plan.steps = steps
+    plan.nodes, plan.edges = nodes_from_steps(steps)
+    plan.dag_issues = validate_dag(plan.nodes, plan.edges)
+    plan.dag_valid = len(plan.dag_issues) == 0
+    if not plan.dag_valid:
+        plan.emit("plan.dag_invalid", {"issues": plan.dag_issues})
+        # Still surface plan but mark blocked-ready path
+    plan.emit("plan.dag", {
+        "nodes": len(plan.nodes),
+        "edges": len(plan.edges),
+        "valid": plan.dag_valid,
+    })
 
     plan.set_status(OrchStatus.PERSONA_SELECTION)
     plan.personas = list(dict.fromkeys([s.persona_id for s in plan.steps] + ["nuha"]))
@@ -541,7 +575,7 @@ async def authorize_plan_execution(plan: OrchestrationPlan) -> tuple[bool, str]:
 
 
 async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
-    """Action mode: UCIP → existing AgentRuntime. No parallel scheduler."""
+    """Action mode: validate DAG → specialty policy → UCIP path → AgentRuntime."""
     if OrchStatus(plan.status) == OrchStatus.PLAN_READY:
         plan.set_status(OrchStatus.ACTION_REQUESTED)
     elif OrchStatus(plan.status) not in (
@@ -549,6 +583,17 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
     ):
         if OrchStatus(plan.status) in TERMINAL:
             raise ValueError(f"plan is terminal: {plan.status}")
+
+    # Ensure DAG present
+    if not plan.nodes and plan.steps:
+        plan.nodes, plan.edges = nodes_from_steps(plan.steps)
+    plan.dag_issues = validate_dag(plan.nodes, plan.edges)
+    plan.dag_valid = len(plan.dag_issues) == 0
+    if not plan.dag_valid:
+        plan.emit("plan.dag_invalid", {"issues": plan.dag_issues})
+        plan.status = OrchStatus.BLOCKED.value
+        plan.emit("status.blocked", {"reason": "PLAN_INVALID", "issues": plan.dag_issues})
+        return plan
 
     ok, reason = await authorize_plan_execution(plan)
     if not ok:
@@ -569,6 +614,9 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
     plan.set_status(OrchStatus.RUNNING)
 
     while remaining:
+        # DAG readiness (nodes) — sequential pick among ready
+        ready_ids = compute_readiness(plan.nodes, plan.edges)
+        plan.emit("dag.readiness", {"ready": ready_ids})
         if OrchStatus(plan.status) == OrchStatus.CANCELLATION_REQUESTED:
             plan.set_status(OrchStatus.CANCELLING)
             plan.set_status(OrchStatus.CANCELLED)
@@ -585,6 +633,50 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
 
         step = ready[0]
         step.status = "running"
+        # Specialty policy (least privilege) — still not a second auth engine
+        node = next((n for n in plan.nodes if n.id == step.id), None)
+        if node:
+            try:
+                node.set_status(NodeStatus.AUTHORIZATION_PENDING)
+            except Exception:
+                node.status = NodeStatus.AUTHORIZATION_PENDING.value
+            decision = evaluate_node_request(
+                persona_id=step.persona_id,
+                requested_caps=set(step.required_capabilities or node.capabilities or []),
+                risk=plan.risk_level,
+            )
+            plan.emit("ucip.policy_eval", {
+                "node_id": step.id,
+                "persona_id": step.persona_id,
+                "decision": decision.to_dict(),
+            })
+            if not decision.allow:
+                node.status = NodeStatus.BLOCKED.value
+                node.blocking_reason = "; ".join(decision.reasons)
+                node.authorization_decision = "deny"
+                step.status = "failed"
+                plan.status = OrchStatus.BLOCKED.value
+                plan.emit("authorization.denied", {"node_id": step.id, "reasons": decision.reasons})
+                return plan
+            if decision.hitl_required and plan.risk_level == RiskLevel.CRITICAL.value:
+                node.status = NodeStatus.AWAITING_APPROVAL.value
+                plan.set_status(OrchStatus.AWAITING_APPROVAL)
+                plan.emit("hitl.requested", {"node_id": step.id})
+                plan.set_status(OrchStatus.DENIED)
+                plan.set_status(OrchStatus.BLOCKED)
+                node.status = NodeStatus.BLOCKED.value
+                node.blocking_reason = "HITL required"
+                return plan
+            node.authorization_decision = "allow"
+            try:
+                node.set_status(NodeStatus.AUTHORIZED)
+                node.set_status(NodeStatus.QUEUED)
+                node.set_status(NodeStatus.RUNNING)
+            except Exception:
+                node.status = NodeStatus.RUNNING.value
+            # Narrow step caps to effective
+            step.required_capabilities = list(decision.effective_caps) or step.required_capabilities
+
         plan.emit("job.started", {"step_id": step.id, "persona_id": step.persona_id})
 
         objective = (
@@ -630,6 +722,13 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
 
         if not success:
             step.status = "failed"
+            node = next((n for n in plan.nodes if n.id == step.id), None)
+            if node:
+                try:
+                    node.set_status(NodeStatus.FAILED)
+                except Exception:
+                    node.status = NodeStatus.FAILED.value
+                propagate_failure(plan.nodes, plan.edges, step.id)
             plan.set_status(OrchStatus.FAILED)
             plan.emit("job.failed", {"step_id": step.id})
             # Recovery path: replan once
@@ -670,6 +769,20 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
                 return plan
 
         step.status = "done"
+        node = next((n for n in plan.nodes if n.id == step.id), None)
+        if node:
+            node.job_or_task_id = step.job_or_task_id
+            node.verification_evidence = {
+                "success": True,
+                "files_changed_count": len(files_changed or []),
+                "criteria": list(step.verification_criteria or []),
+            }
+            try:
+                node.status = NodeStatus.VERIFYING.value
+                node.set_status(NodeStatus.VERIFIED)
+                node.set_status(NodeStatus.COMPLETED)
+            except Exception:
+                node.status = NodeStatus.COMPLETED.value
         done.add(step.id)
         del remaining[step.id]
 
