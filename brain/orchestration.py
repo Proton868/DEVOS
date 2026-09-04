@@ -31,6 +31,8 @@ from brain.orchestration_dag import (
     DAGValidationError,
 )
 from brain.specialty_policy import evaluate_node_request, get_specialty_policy
+from brain.orchestration_store import persist_plan, load_plan as load_plan_row
+from brain.orchestration_verify import verify_workspace_artifacts
 
 
 # ─── Modes ───────────────────────────────────────────────────────────────────
@@ -270,6 +272,80 @@ _PLANS: dict[str, OrchestrationPlan] = {}
 
 def get_plan(plan_id: str) -> Optional[OrchestrationPlan]:
     return _PLANS.get(plan_id)
+
+
+async def get_plan_durable(plan_id: str) -> Optional[OrchestrationPlan]:
+    """Memory first, then durable store. Reconstructs plan object for recovery."""
+    if plan_id in _PLANS:
+        return _PLANS[plan_id]
+    data = await load_plan_row(plan_id)
+    if not data:
+        return None
+    plan = _plan_from_dict(data)
+    _PLANS[plan.id] = plan
+    return plan
+
+
+def _plan_from_dict(data: dict) -> OrchestrationPlan:
+    from brain.orchestration_dag import OrchestrationNode, OrchestrationEdge
+    plan = OrchestrationPlan(
+        id=data.get("id") or data.get("plan_id"),
+        goal=data.get("goal") or "",
+        mode=data.get("mode") or NuhaMode.PLAN.value,
+        intent=data.get("intent") or "creation",
+        workspace_id=data.get("workspace_id") or "default",
+        user_id=data.get("user_id") or "",
+        status=data.get("status") or OrchStatus.IDLE.value,
+        assumptions=list(data.get("assumptions") or []),
+        personas=list(data.get("personas") or []),
+        capabilities=list(data.get("capabilities") or []),
+        dependencies=list(data.get("dependencies") or []),
+        risk_level=data.get("risk_level") or RiskLevel.LOW.value,
+        requires_hitl=bool(data.get("requires_hitl")),
+        verification_plan=list(data.get("verification_plan") or []),
+        expected_artifacts=list(data.get("expected_artifacts") or []),
+        estimated_budget=dict(data.get("estimated_budget") or {}),
+        events=list(data.get("events") or []),
+        agent_task_ids=list(data.get("agent_task_ids") or []),
+        dag_valid=bool(data.get("dag_valid", True)),
+        dag_issues=list(data.get("dag_issues") or []),
+    )
+    for nd in data.get("nodes") or []:
+        plan.nodes.append(OrchestrationNode(
+            id=nd["id"],
+            description=nd.get("description") or "",
+            persona_id=nd.get("persona_id") or "code",
+            dependencies=list(nd.get("dependencies") or []),
+            capabilities=list(nd.get("capabilities") or []),
+            workspace_scope=nd.get("workspace_scope") or "project",
+            expected_outputs=list(nd.get("expected_outputs") or []),
+            verification_criteria=list(nd.get("verification_criteria") or []),
+            risk=nd.get("risk") or "low",
+            status=nd.get("status") or "pending",
+            job_or_task_id=nd.get("job_or_task_id"),
+            authorization_decision=nd.get("authorization_decision"),
+            blocking_reason=nd.get("blocking_reason"),
+            verification_evidence=nd.get("verification_evidence"),
+        ))
+    for ed in data.get("edges") or []:
+        plan.edges.append(OrchestrationEdge(
+            source=ed["source"], target=ed["target"],
+            condition=ed.get("condition") or "verified",
+        ))
+    # rebuild steps for sequential runner compatibility
+    for n in plan.nodes:
+        plan.steps.append(OrchestrationStep(
+            id=n.id,
+            description=n.description,
+            persona_id=n.persona_id,
+            dependencies=list(n.dependencies),
+            required_capabilities=list(n.capabilities),
+            expected_output=(n.expected_outputs or [""])[0] if n.expected_outputs else "",
+            verification_criteria=list(n.verification_criteria),
+            status=n.status,
+            job_or_task_id=n.job_or_task_id,
+        ))
+    return plan
 
 
 def list_plans_for_user(user_id: str, limit: int = 20) -> list[OrchestrationPlan]:
@@ -530,6 +606,7 @@ async def create_plan(
 
     plan.set_status(OrchStatus.PLAN_READY)
     plan.emit("plan.created", {"plan_id": plan.id, "steps": len(plan.steps)})
+    await persist_plan(plan)
     return plan
 
 
@@ -597,6 +674,7 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
 
     ok, reason = await authorize_plan_execution(plan)
     if not ok:
+        await persist_plan(plan)
         return plan
 
     plan.set_status(OrchStatus.DELEGATING)
@@ -801,31 +879,24 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
         except Exception:
             pass
 
-    # Verification
+    # Verification — execution success is not completion
     plan.set_status(OrchStatus.VERIFYING)
     plan.emit("verification.started", {"criteria": plan.verification_plan})
-    verified = True
-    try:
-        from execution.files import FileService
-        fs = FileService(plan.user_id, plan.workspace_id or "default")
-        # Soft verification: if expected website, look for common entry files
-        if any("website" in (plan.goal or "").lower() or "page" in (plan.goal or "").lower() for _ in [0]):
-            found = False
-            for name in ("index.html", "index.htm", "src/App.jsx", "src/App.tsx", "app.py"):
-                try:
-                    if hasattr(fs, "exists") and fs.exists(name):
-                        found = True
-                        break
-                    if hasattr(fs, "read"):
-                        fs.read(name)
-                        found = True
-                        break
-                except Exception:
-                    continue
-            # Not hard-fail if listing empty — agent may have written elsewhere
-            plan.emit("verification.checked", {"website_entry_found": found})
-    except Exception as e:
-        plan.emit("verification.checked", {"warning": str(e)[:200]})
+    await persist_plan(plan)
+    evidence = await verify_workspace_artifacts(
+        user_id=plan.user_id,
+        workspace_id=plan.workspace_id or "default",
+        goal=plan.goal,
+        expected_outputs=plan.expected_artifacts,
+        files_changed=None,
+    )
+    plan.emit("verification.checked", evidence)
+    verified = bool(evidence.get("passed"))
+    for n in plan.nodes:
+        if n.status in ("completed", "verified") or NodeStatus(n.status) in (
+            NodeStatus.COMPLETED, NodeStatus.VERIFIED
+        ):
+            n.verification_evidence = evidence
 
     if verified:
         plan.set_status(OrchStatus.VERIFIED)
@@ -853,10 +924,12 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
         plan.emit("xp.awarded", {"persona_id": "nuha"})
         plan.set_status(OrchStatus.COMPLETED)
         plan.emit("orchestration.completed", {"plan_id": plan.id})
+        await persist_plan(plan)
     else:
         plan.set_status(OrchStatus.VERIFICATION_FAILED)
-        plan.emit("verification.failed", {})
+        plan.emit("verification.failed", evidence)
         plan.set_status(OrchStatus.FAILED)
+        await persist_plan(plan)
 
     return plan
 

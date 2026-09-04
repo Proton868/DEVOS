@@ -228,6 +228,24 @@ class PersonaExperienceEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
+
+
+class OrchestrationPlanRecord(Base):
+    """Durable Nuha orchestration plan + DAG snapshot.
+
+    References AgentTask/Job IDs rather than duplicating execution state.
+    """
+    __tablename__ = "orchestration_plans"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    workspace_id: Mapped[str] = mapped_column(String, index=True, default="default")
+    goal: Mapped[str] = mapped_column(Text, default="")
+    mode: Mapped[str] = mapped_column(String(32), default="plan")
+    status: Mapped[str] = mapped_column(String(64), default="idle", index=True)
+    plan_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

@@ -31,8 +31,12 @@ CAP_ALIASES = {
 
 
 def _canon(cap: str) -> str:
-    c = (cap or "").strip()
-    return CAP_ALIASES.get(c, c)
+    try:
+        from brain.capability_canon import canonicalize
+        return canonicalize(cap)
+    except Exception:
+        c = (cap or "").strip()
+        return CAP_ALIASES.get(c, c)
 
 
 class ActionRisk(str):
@@ -224,8 +228,13 @@ def evaluate_node_request(
             denied.add(orig)
             reasons.append(f"not_in_specialty_allow:{orig}")
             continue
+        try:
+            from brain.capability_canon import to_ucip
+            ucip_name = to_ucip(can)
+        except Exception:
+            ucip_name = can if can.startswith("ucip:") else f"ucip:{can}"
         tier = set(TRUST_LEVEL_CAPS.get(policy.trust_ceiling, set()))
-        if "*" not in tier and can not in tier:
+        if "*" not in tier and ucip_name not in tier and can not in tier:
             denied.add(orig)
             reasons.append(f"above_trust_ceiling:{orig}")
             continue

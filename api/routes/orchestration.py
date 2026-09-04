@@ -10,11 +10,13 @@ from brain.orchestration import (
     create_plan,
     execute_plan,
     get_plan,
+    get_plan_durable,
     list_plans_for_user,
     request_cancel,
     detect_mode,
     NuhaMode,
 )
+from brain.orchestration_store import list_user_plans as durable_list_plans
 
 router = APIRouter()
 
@@ -59,7 +61,7 @@ async def orchestration_run(req: RunReq, request: Request, db=Depends(get_db)):
 
     plan = None
     if req.plan_id:
-        plan = get_plan(req.plan_id)
+        plan = await get_plan_durable(req.plan_id)
         if not plan or plan.user_id != user.id:
             raise HTTPException(404, "plan not found")
     else:
@@ -85,7 +87,7 @@ async def orchestration_run(req: RunReq, request: Request, db=Depends(get_db)):
 async def orchestration_get(plan_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    plan = get_plan(plan_id)
+    plan = await get_plan_durable(plan_id)
     if not plan or plan.user_id != user.id:
         raise HTTPException(404, "plan not found")
     return plan.to_dict()
@@ -105,7 +107,7 @@ async def orchestration_events(plan_id: str, request: Request, db=Depends(get_db
 async def orchestration_cancel(plan_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    plan = get_plan(plan_id)
+    plan = await get_plan_durable(plan_id)
     if not plan or plan.user_id != user.id:
         raise HTTPException(404, "plan not found")
     plan = request_cancel(plan_id)
@@ -116,8 +118,16 @@ async def orchestration_cancel(plan_id: str, request: Request, db=Depends(get_db
 async def orchestration_list(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    plans = list_plans_for_user(user.id)
-    return {"plans": [p.to_dict() for p in plans]}
+    mem = [p.to_dict() for p in list_plans_for_user(user.id)]
+    try:
+        durable = await durable_list_plans(user.id)
+        seen = {p.get("id") for p in mem}
+        for d in durable:
+            if d.get("id") not in seen:
+                mem.append(d)
+    except Exception:
+        pass
+    return {"plans": mem}
 
 
 @router.post("/detect-mode")
