@@ -98,6 +98,10 @@ export default function PersonaProfilePanel() {
             <span className="sp-persona-xp-next"> · {profile.xp_to_next_level} to next</span>
           </div>
           <p className="settings-hint" style={{ marginTop: 8 }}>{profile.authority_note}</p>
+          <p className="settings-hint" style={{ marginTop: 4, fontSize: 11, opacity: 0.85 }}>
+            Level is not a power level. Filesystem deletion, production deploy, and other
+            sensitive actions remain governed by UCIP — not XP.
+          </p>
         </div>
 
         <div className="sp-persona-stats">

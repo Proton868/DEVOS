@@ -133,7 +133,14 @@ async def personas_xp_rules(request: Request, db=Depends(get_db)):
     await ensure_personal_tenant(db, user)
     return {
         "rules": XP_RULES,
-        "note": "XP is informational only and never grants UCIP capabilities or trust.",
+        "note": "XP and level are informational only. They do not grant, expand, or imply UCIP capabilities, trust, HITL bypass, or execution authority. A Level-20 specialist has the same UCIP ceiling as Level-1 for the same agent identity.",
+        "security": {
+            "grants_capabilities": False,
+            "grants_trust": False,
+            "bypasses_hitl": False,
+            "bypasses_ucip": False,
+            "level_is_not_power": True,
+        },
     }
 
 

@@ -14,6 +14,34 @@ from typing import Any, Optional
 
 logger = logging.getLogger("devos.persona_xp")
 
+# ─── AUTHORITY BOUNDARY (non-negotiable) ───────────────────────────────────
+# XP / level / accomplishments are PRESENTATION and LEARNING signals only.
+# They MUST NEVER be consulted by:
+#   - authorization gateway checks
+#   - capability grants or TrustLevel promotion
+#   - HITL bypass decisions
+#   - filesystem delete, deploy, network, or production side-effect gates
+#
+# A Level-20 specialist has the SAME UCIP ceiling as Level-1 for the same
+# the agent identity. Experience grows; authority stays explicit and governed.
+XP_AUTHORITY_BOUNDARY = (
+    "XP and level are informational only. "
+    "They do not grant, expand, or imply UCIP capabilities, trust, or execution authority."
+)
+
+
+def assert_xp_does_not_grant_authority() -> None:
+    """Static invariant: this module awards experience only; never mutates UCIP."""
+    return None
+
+
+def level_has_no_security_effect(level: int) -> bool:
+    """Levels never change authorization outcomes. Always True by design."""
+    _ = int(level or 0)
+    return True
+
+
+
 # Centralized XP rules (tune here, not per-persona)
 XP_RULES: dict[str, int] = {
     "task_completed": 10,
@@ -225,6 +253,14 @@ async def award_xp(
         "level": profile.level,
         "total_xp": profile.xp,
         "progression": calculate_xp_to_next_level(profile.xp),
+        "authority": XP_AUTHORITY_BOUNDARY,
+        # Explicit: callers must not treat level as a permission signal
+        "security": {
+            "grants_capabilities": False,
+            "grants_trust": False,
+            "bypasses_hitl": False,
+            "bypasses_ucip": False,
+        },
     }
 
 
@@ -286,7 +322,14 @@ def profile_to_dict(profile, registry_meta: Optional[dict] = None) -> dict:
         "created_at": profile.created_at.isoformat() if profile.created_at else None,
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
         # Explicit: XP is not authority
-        "authority_note": "XP is informational only and does not grant UCIP capabilities or trust.",
+        "authority_note": XP_AUTHORITY_BOUNDARY,
+        "security": {
+            "grants_capabilities": False,
+            "grants_trust": False,
+            "bypasses_hitl": False,
+            "bypasses_ucip": False,
+            "level_is_not_power": True,
+        },
     }
 
 
