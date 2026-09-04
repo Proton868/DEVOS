@@ -31,4 +31,17 @@ if (missing.length) {
   console.error("deploy-frontend: MISSING asset references:", missing);
   process.exit(1);
 }
+
+// Vendor Monaco same-origin for CSP script-src 'self'
+const monacoSrc = join(here, "..", "node_modules", "monaco-editor", "min", "vs");
+const monacoDest = join(frontendDir, "static", "monaco", "vs");
+if (existsSync(monacoSrc)) {
+  mkdirSync(join(frontendDir, "static", "monaco"), { recursive: true });
+  rmSync(monacoDest, { recursive: true, force: true });
+  cpSync(monacoSrc, monacoDest, { recursive: true });
+  console.log("deploy-frontend: vendored monaco → frontend/static/monaco/vs");
+} else {
+  console.warn("deploy-frontend: monaco-editor missing — IDE may fail to start");
+}
+
 console.log(`deploy-frontend: deployed index.html + ${refs.length} asset refs to frontend/{templates,static} ✓`);

@@ -1,9 +1,7 @@
 /**
- * Monaco loader config.
- *
- * Production CSP historically used script-src 'self' only, which blocked the
- * default CDN and left @monaco-editor/react stuck on "Loading…".
- * We point at jsDelivr and rely on a matching CSP allow in public/index.html.
+ * Monaco loader — same-origin assets under /static/monaco/vs
+ * Avoids CDN/CSP/worker cross-origin failures that leave the IDE on
+ * "Starting editor…".
  */
 import { loader } from "@monaco-editor/react";
 
@@ -13,9 +11,12 @@ export function ensureMonaco() {
   if (done) return;
   done = true;
   try {
+    // Same origin as the app; matches CSP script-src 'self'
+    const base =
+      (typeof window !== "undefined" && window.location && window.location.origin) || "";
     loader.config({
       paths: {
-        vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs",
+        vs: `${base}/static/monaco/vs`,
       },
     });
   } catch (e) {

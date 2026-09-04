@@ -23,7 +23,8 @@
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build && node scripts/deploy-frontend.mjs",
-    "deploy": "node scripts/deploy-frontend.mjs"
+    "deploy": "node scripts/deploy-frontend.mjs",
+    "prebuild": "node -e \"require('fs').accessSync('node_modules/monaco-editor/min/vs/loader.js')\""
   },
   "browserslist": {
     "production": [

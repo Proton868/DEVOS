@@ -55,3 +55,4 @@ workspace/*
 
 # Live staging drill artifacts
 data/staging-results/
+frontend/static/monaco/

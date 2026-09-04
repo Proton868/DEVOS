@@ -27,6 +27,8 @@ export default function DevOSIde({ onClose }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [monacoReady, setMonacoReady] = useState(false);
+  const [monacoError, setMonacoError] = useState(null);
+  const [monacoAttempt, setMonacoAttempt] = useState(0);
   const editorRef = useRef(null);
   const loadGen = useRef(0);
 
@@ -88,6 +90,19 @@ export default function DevOSIde({ onClose }) {
   useEffect(() => {
     loadContent();
   }, [loadContent]);
+
+  // Bound Monaco init — never leave "Starting editor…" forever
+  const MONACO_TIMEOUT_MS = 15000;
+  useEffect(() => {
+    if (loading || error || monacoReady || monacoError) return;
+    const t = setTimeout(() => {
+      setMonacoError(
+        "Editor scripts did not become ready in time. Check network, CSP, or /static/monaco/vs assets."
+      );
+    }, MONACO_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [loading, error, monacoReady, monacoError, monacoAttempt]);
+
 
   const dirty = content !== null && content !== original;
 
@@ -158,13 +173,28 @@ export default function DevOSIde({ onClose }) {
             Retry
           </button>
         </div>
+      ) : monacoError ? (
+        <div className="sp-insp-body">
+          <div className="sp-logline lg-error">Editor failed to initialize: {monacoError}</div>
+          <button
+            className="sp-chip"
+            style={{ alignSelf: "flex-start" }}
+            onClick={() => {
+              setMonacoError(null);
+              setMonacoReady(false);
+              setMonacoAttempt((n) => n + 1);
+            }}
+          >
+            Retry
+          </button>
+        </div>
       ) : (
         <div className="sp-ide-body">
           {!monacoReady && (
             <div className="sp-ide-monaco-loading">Starting editor…</div>
           )}
           <Editor
-            key={title}
+            key={`${title}:${monacoAttempt}`}
             language={language}
             value={content || ""}
             theme="vs-dark"
@@ -173,6 +203,7 @@ export default function DevOSIde({ onClose }) {
             onMount={(ed) => {
               editorRef.current = ed;
               setMonacoReady(true);
+              setMonacoError(null);
             }}
             options={{
               fontSize: 13,
