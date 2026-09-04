@@ -335,6 +335,82 @@ const SelInput = ({ label, value, onChange, options }) => (
 );
 
 
+
+function PersonasSettingsPanel() {
+  const [data, setData] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    api.listPersonas?.()
+      .then(setData)
+      .catch((e) => setMsg({ type: "err", text: e.message || "Failed to load personas" }));
+  };
+  useEffect(() => { load(); }, []);
+
+  const setDefault = async (id) => {
+    setBusy(true); setMsg(null);
+    try {
+      await api.updatePersonaPrefs({ default_persona: id });
+      setMsg({ type: "ok", text: `Default persona: ${id}` });
+      load();
+    } catch (e) {
+      setMsg({ type: "err", text: e.message || "Save failed" });
+    } finally { setBusy(false); }
+  };
+
+  const toggle = async (id, enabled) => {
+    setBusy(true); setMsg(null);
+    try {
+      const enabledMap = { ...(data?.personas || []).reduce((a, p) => ({ ...a, [p.id]: p.enabled }), {}), [id]: enabled };
+      await api.updatePersonaPrefs({ enabled: enabledMap });
+      load();
+    } catch (e) {
+      setMsg({ type: "err", text: e.message || "Save failed" });
+    } finally { setBusy(false); }
+  };
+
+  if (!data) return <p className="settings-hint">Loading Nuha & personas…</p>;
+  return (
+    <div className="settings-section">
+      <h3 className="settings-section-title">Nuha & Personas</h3>
+      <p className="settings-hint">
+        Nuha is the default orchestrator. Specialists are bounded intelligence profiles over existing DevOS agents —
+        they do not form a second execution or authorization system. UCIP remains authoritative.
+      </p>
+      <p className="settings-hint">Default: <strong>{data.default_persona || "nuha"}</strong></p>
+      {(data.personas || []).map((p) => (
+        <div key={p.id} className="provider-config-card" style={{ marginBottom: 10 }}>
+          <div className="provider-config-header" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <strong>{p.name}</strong>
+            <span style={{ fontSize: 11, color: "var(--text-2)" }}>{p.role} · {p.specialty}</span>
+            <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+              <button className="btn-secondary-sm" disabled={busy || data.default_persona === p.id} onClick={() => setDefault(p.id)}>
+                {data.default_persona === p.id ? "Default" : "Make default"}
+              </button>
+              {p.id !== "nuha" && (
+                <button className="btn-secondary-sm" disabled={busy} onClick={() => toggle(p.id, !p.enabled)}>
+                  {p.enabled ? "Disable" : "Enable"}
+                </button>
+              )}
+            </span>
+          </div>
+          <p className="settings-hint" style={{ margin: "6px 0 0" }}>{p.description}</p>
+          {p.creation_domains?.length > 0 && (
+            <p className="settings-hint" style={{ margin: "4px 0 0", fontSize: 11 }}>
+              Creates: {p.creation_domains.join(", ")}
+            </p>
+          )}
+        </div>
+      ))}
+      {msg && (
+        <p className={`provider-config-test-result ${msg.type === "ok" ? "ok" : "fail"}`}>{msg.text}</p>
+      )}
+    </div>
+  );
+}
+
+
 function AccountPanel({ local, patch, onClose }) {
   const user = useStore((s) => s.user);
   const logout = useStore((s) => s.logout);
@@ -540,7 +616,7 @@ export default function SettingsModal({ embedded = false, onClose = null }) {
   if (!active) return null;
   const s = local || {};
 
-  const TABS = ["account","providers","models","ai","appearance","workspace","editor","git","notifications","privacy","marketplace","ucip"];
+  const TABS = ["account","providers","models","ai","personas","appearance","workspace","editor","git","notifications","privacy","marketplace","ucip"];
 
   const inner = (
       <div className={embedded ? "settings-modal wide embedded" : "settings-modal wide"} style={embedded ? { maxWidth: "100%", height: "100%", borderRadius: 0, boxShadow: "none" } : undefined}>
@@ -554,7 +630,7 @@ export default function SettingsModal({ embedded = false, onClose = null }) {
           <div className="settings-nav">
             {TABS.map(t => (
               <button key={t} className={`settings-nav-item ${tab===t?"active":""}`} onClick={() => setTab(t)}>
-                {t === "ucip" ? "🔬 UCIP" : t === "marketplace" ? "🧩 Marketplace" : t.charAt(0).toUpperCase() + t.slice(1)}
+                {t === "ucip" ? "🔬 UCIP" : t === "marketplace" ? "🧩 Marketplace" : t === "personas" ? "Nuha / Personas" : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>
             ))}
           </div>
@@ -666,6 +742,11 @@ export default function SettingsModal({ embedded = false, onClose = null }) {
                 <Toggle label="Format on Save" value={s.editor.formatOnSave} onChange={v=>patch("editor","formatOnSave",v)}/>
                 <Toggle label="Auto Save" value={s.editor.autoSave} onChange={v=>patch("editor","autoSave",v)}/>
               </div>
+            )}
+
+            
+            {tab === "personas" && (
+              <PersonasSettingsPanel />
             )}
 
             {tab === "ai" && (

@@ -725,6 +725,12 @@ export const api = {
       body: JSON.stringify({ password: password || "", confirm }),
     }),
   getMe: () => req("/api/auth/me"),
+  listPersonas: () => req("/api/personas"),
+  getDefaultPersona: () => req("/api/personas/default"),
+  updatePersonaPrefs: (body) =>
+    req("/api/personas/prefs", { method: "PUT", body: JSON.stringify(body || {}) }),
+  classifyIntent: (message) =>
+    req("/api/personas/classify", { method: "POST", body: JSON.stringify({ message }) }),
   // Persist user preference bag (UserSettings.settings_json merge)
   saveSettings: (settings) =>
     req("/api/settings", {

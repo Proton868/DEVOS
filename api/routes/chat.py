@@ -22,6 +22,8 @@ class ChatReq(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     system_prompt: Optional[str] = None
+    # Default persona is Nuha (orchestrator). Specialists selectable.
+    persona_id: Optional[str] = None
     # Node-scoped chat: when set, the session is pinned to this workflow node
     node_id: Optional[str] = None
     workflow_id: Optional[str] = None
@@ -241,9 +243,27 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
     # Load history
     r = await db.execute(select(Message).where(Message.session_id==session.id).order_by(Message.created_at).limit(40))
     history = r.scalars().all()
-    messages = [{"role":"system","content":req.system_prompt or session.system_prompt or "You are DevOS, a helpful AI assistant."}]
-    messages += [{"role":m.role,"content":m.content} for m in history]
-    messages.append({"role":"user","content":req.message})
+    from brain.personas import resolve_system_prompt, DEFAULT_PERSONA_ID, should_orchestrate_execution, classify_intent_heuristic
+    persona_id = req.persona_id or DEFAULT_PERSONA_ID
+    base_system = req.system_prompt or session.system_prompt or resolve_system_prompt(persona_id)
+    # Ensure Nuha (or selected persona) identity is present even when session had a legacy prompt
+    if not req.system_prompt and not session.system_prompt:
+        base_system = resolve_system_prompt(persona_id)
+    elif req.persona_id:
+        base_system = resolve_system_prompt(req.persona_id, extra=req.system_prompt or session.system_prompt)
+    intent_note = ""
+    if should_orchestrate_execution(req.message):
+        classes = ", ".join(classify_intent_heuristic(req.message))
+        intent_note = (
+            f"\n\n[Nuha orchestration hint] Classified intent: {classes}. "
+            "Prefer planning + existing DevOS execution/agent/workflow paths over "
+            "chat-only code dumps when the user wants a real artifact."
+        )
+    messages = [{"role": "system", "content": base_system + intent_note}]
+    messages += [{"role": m.role, "content": m.content} for m in history]
+    messages.append({"role": "user", "content": req.message})
+    if not session.system_prompt:
+        session.system_prompt = base_system
 
     model = await resolve_user_model(db, user.id, "chat", explicit=req.model or session.model or None)
     provider = req.provider or session.provider or "ollama"

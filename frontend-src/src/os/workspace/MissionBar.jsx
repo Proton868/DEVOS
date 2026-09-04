@@ -131,14 +131,14 @@ export default function MissionBar() {
         </button>
         <button
           className={`sp-chip desktop-only ${copilotOpen || chatMode === "docked" ? "active-chip" : ""}`}
-          title="AI chat"
+          title="Talk to Nuha — DevOS orchestrator"
           onClick={() => {
             if (copilotOpen) closeCopilot();
             else openCopilot(null, "");
             toggleChatMode();
           }}
         >
-          AI
+          Nuha
         </button>
         {aiBusy && (
           <span className="sp-chip steelpan-chip" title="AI is working">
@@ -211,7 +211,7 @@ export default function MissionBar() {
                 <Terminal size={13} /> {terminalOpen ? "Hide" : "Show"} terminal
               </button>
               <button className="sp-mb-item" onClick={() => { setOpenPop(null); openCopilot(null, ""); }}>
-                AI chat
+                Nuha
               </button>
               <button className="sp-mb-item" onClick={() => { setOpenPop(null); setOverlay("settings"); }}>
                 <Settings size={13} /> Settings
