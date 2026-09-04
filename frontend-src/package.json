@@ -38,6 +38,8 @@
   "proxy": "http://localhost:8000",
   "devDependencies": {
     "autoprefixer": "^10.5.4",
+    "eslint-config-react-app": "^7.0.1",
+    "eslint-plugin-react-hooks": "^4.6.2",
     "jsdom-global": "^3.0.2",
     "postcss": "^8.5.20",
     "tailwindcss": "^3.4.19"
@@ -45,5 +47,18 @@
   "engines": {
     "node": ">=22.0.0 <23",
     "npm": ">=10.0.0"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ],
+    "plugins": [
+      "react-hooks"
+    ],
+    "rules": {
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "warn"
+    }
   }
 }

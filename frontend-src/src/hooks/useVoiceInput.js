@@ -1,4 +1,5 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
+import { Mic, MicOff } from "lucide-react";
 
 /**
  * useVoiceInput — Web Speech API hook for voice-to-text prompting
@@ -61,8 +62,6 @@ export function useVoiceInput({ onResult, lang = "en-US" } = {}) {
 /**
  * VoiceButton — drop-in mic button component
  */
-import React from "react";
-import { Mic, MicOff } from "lucide-react";
 
 export function VoiceButton({ onResult, className = "" }) {
   const { listening, interim, error, start, stop, supported } = useVoiceInput({ onResult });

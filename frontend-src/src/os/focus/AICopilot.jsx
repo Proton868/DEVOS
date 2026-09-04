@@ -63,6 +63,11 @@ export default function AICopilot({ floating = false }) {
   const { listening, interim, start: startVoice, stop: stopVoice, supported: voiceSupported, error: voiceError } = useVoiceInput({
     onResult: (t) => { onVoiceResult(t); },
   });
+  const toggleVoice = useCallback(() => {
+    if (listening) stopVoice();
+    else startVoice();
+  }, [listening, startVoice, stopVoice]);
+
 
   const [streaming, setStreaming] = useState(false);
   const [personaMeta, setPersonaMeta] = useState({ name: "Nuha", id: "nuha" });

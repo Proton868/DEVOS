@@ -171,7 +171,7 @@ function MarketplacePanel() {
   const [usingId, setUsingId] = useState(null);
   const [usedId, setUsedId] = useState(null);
 
-  const useTemplate = async (t) => {
+  const applyTemplate = async (t) => {
     setUsingId(t.id);
     setError("");
     try {
@@ -253,7 +253,7 @@ function MarketplacePanel() {
                   <button
                     className="btn-primary-sm"
                     style={{ marginLeft: "auto" }}
-                    onClick={() => useTemplate(t)}
+                    onClick={() => applyTemplate(t)}
                     disabled={usingId === t.id}
                   >
                     {usingId === t.id ? <Loader size={12} className="spin-slow" />

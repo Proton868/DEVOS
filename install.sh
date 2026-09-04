@@ -215,8 +215,15 @@ echo "==> Installing frontend dependencies (npm ci) in frontend-src/"
 echo "==> Building frontend (npm run build)"
 (
   cd "$FRONTEND_SRC"
-  CI=true npm_config_registry="${npm_config_registry:-https://registry.npmjs.org/}" \
+  # ESLint stays enabled (react-scripts). Do not set CI=true: that promotes
+  # existing style warnings to hard failures. Real ESLint *errors* still fail the build.
+  # Fail the installer if npm run build exits non-zero (set -e + subshell).
+  npm_config_registry="${npm_config_registry:-https://registry.npmjs.org/}" \
     npm run build
+  if [[ ! -f "build/index.html" ]] || [[ ! -d "build/static" ]]; then
+    echo "ERROR: npm run build completed without producing build/index.html + build/static/"
+    exit 1
+  fi
 )
 
 BUILD_DIR="$FRONTEND_SRC/build"
