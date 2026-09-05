@@ -30,12 +30,66 @@ VERSION = "4.0.0"
 BASE_DIR = Path(__file__).resolve().parent
 
 
+
+def _resolve_bind(args):
+    """Resolve host/port from CLI args and environment."""
+    port = args.port if getattr(args, "port", None) is not None else int(os.getenv("DEVOS_PORT", "8000"))
+    host = getattr(args, "host", None) or os.getenv("DEVOS_HOST", "0.0.0.0")
+    return host, int(port)
+
+
+def port_is_in_use(host: str, port: int, timeout: float = 0.4) -> bool:
+    """Return True if something is already accepting TCP connections on host:port.
+
+    Prefer connect() over bind(): SO_REUSEADDR and TIME_WAIT make bind checks
+    unreliable. When host is 0.0.0.0/:: we probe 127.0.0.1 (and ::1 when useful).
+    """
+    import socket
+
+    candidates = []
+    h = (host or "0.0.0.0").strip().lower()
+    if h in ("0.0.0.0", "", "*", "all"):
+        candidates = [("127.0.0.1", socket.AF_INET)]
+    elif h in ("::", "[::]"):
+        candidates = [("127.0.0.1", socket.AF_INET), ("::1", socket.AF_INET6)]
+    else:
+        family = socket.AF_INET6 if ":" in h else socket.AF_INET
+        candidates = [(h.strip("[]"), family)]
+
+    for addr, family in candidates:
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as sock:
+                sock.settimeout(timeout)
+                if sock.connect_ex((addr, int(port))) == 0:
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def _print_already_running(host: str, port: int) -> None:
+    print(f"\n  DevOS is already running on http://{host}:{port}")
+    print("  Use: systemctl status devos")
+    print("  To restart: sudo systemctl restart devos")
+    print(f"  Or start on a free port: ./devos start --port {int(port) + 1}")
+    print()
+
+
+
 def cmd_start(args):
-    """Start the DevOS server."""
+    """Start the DevOS server (foreground). Production is owned by systemd."""
+    host, port = _resolve_bind(args)
+
+    # Fail closed before importing the full app / binding Uvicorn.
+    if port_is_in_use(host, port):
+        _print_already_running(host, port)
+        # Non-error exit: the service is healthy; the operator asked to start
+        # what is already running under systemd (or another owner).
+        sys.exit(0)
+
     import uvicorn
     from core.config import settings
-    port = args.port or int(os.getenv("DEVOS_PORT", "8000"))
-    host = args.host or os.getenv("DEVOS_HOST", "0.0.0.0")
+
     print(f"\n  ⚡ DevOS v{VERSION} — Micro Profile")
     print(f"  🌐 http://{host}:{port}")
     print(f"  📋 http://{host}:{port}/api/health\n")
@@ -43,9 +97,22 @@ def cmd_start(args):
     workers = settings.WEB_CONCURRENCY if not args.dev else 1
     if args.dev and settings.WEB_CONCURRENCY > 1:
         print(f"  ⚠️  Reload mode enabled — forcing workers=1 (uvicorn limitation)")
-    uvicorn.run("app:app", host=host, port=port, reload=args.dev,
-                workers=workers,
-                log_level="info" if not args.quiet else "warning")
+    try:
+        uvicorn.run(
+            "app:app",
+            host=host,
+            port=port,
+            reload=args.dev,
+            workers=workers,
+            log_level="info" if not args.quiet else "warning",
+        )
+    except OSError as exc:
+        err = str(exc).lower()
+        if getattr(exc, "errno", None) in (98, 48) or "address already in use" in err:
+            _print_already_running(host, port)
+            sys.exit(1)
+        raise
+
 
 
 def cmd_build(args):

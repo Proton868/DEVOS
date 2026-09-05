@@ -1,0 +1,21 @@
+[Unit]
+Description=DevOS v4
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/devos
+Environment=DEVOS_HOST=0.0.0.0
+Environment=DEVOS_PORT=8000
+Environment=WEB_CONCURRENCY=1
+# Prefer the venv uvicorn entrypoint (matches production).
+ExecStart=/home/ubuntu/devos/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=3
+
+# Production ownership: systemd supervises ONE Uvicorn listener.
+# Do not run `./devos start` alongside this unit on the same port.
+
+[Install]
+WantedBy=multi-user.target
