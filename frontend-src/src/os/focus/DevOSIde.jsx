@@ -8,7 +8,7 @@
  */
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import Editor from "@monaco-editor/react";
-import { ChevronLeft, Save, X, FileCode2, RefreshCw } from "lucide-react";
+import { ChevronLeft, Save, X, FileCode2, RefreshCw, PanelLeft, Eye, Minimize2 } from "lucide-react";
 import useOsStore from "../store/osStore";
 import useStore from "../../store/useStore";
 import { api, getLanguageFromPath } from "../../services/api";
@@ -16,7 +16,7 @@ import { loadMonaco, probeMonacoAssets } from "../../monacoSetup";
 
 const LOAD_TIMEOUT_MS = 12000;
 
-export default function DevOSIde({ onClose }) {
+export default function DevOSIde({ onClose, onCollapse }) {
   const { editor, closeEditor } = useOsStore();
   const setStatus = useStore((s) => s.setStatus);
   const [content, setContent] = useState(null);
@@ -27,6 +27,11 @@ export default function DevOSIde({ onClose }) {
   const [monacoReady, setMonacoReady] = useState(false);
   const [monacoError, setMonacoError] = useState(null);
   const [monacoAttempt, setMonacoAttempt] = useState(0);
+  const [files, setFiles] = useState([]);
+  const filesDrawerOpen = useOsStore((s) => s.layout?.filesDrawerOpen !== false);
+  const setFilesDrawerOpen = useOsStore((s) => s.setFilesDrawerOpen);
+  const openPreview = useOsStore((s) => s.openPreview);
+  const openEditor = useOsStore((s) => s.openEditor);
   const editorRef = useRef(null);
   const loadGen = useRef(0);
 
@@ -88,6 +93,21 @@ export default function DevOSIde({ onClose }) {
   useEffect(() => {
     loadContent();
   }, [loadContent]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.listDir("");
+        const items = Array.isArray(r) ? r : (r?.entries || r?.items || []);
+        if (!cancelled) setFiles(items);
+      } catch {
+        if (!cancelled) setFiles([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [target?.path]);
+
 
   // Deterministic Monaco AMD load (singleton) — real errors, not a blind timeout
   useEffect(() => {
@@ -173,9 +193,28 @@ export default function DevOSIde({ onClose }) {
             <RefreshCw size={14} />
           </button>
         )}
+        <button
+          className="sp-iconbtn"
+          title={filesDrawerOpen ? "Hide files" : "Show files"}
+          onClick={() => setFilesDrawerOpen(!filesDrawerOpen)}
+        >
+          <PanelLeft size={15} />
+        </button>
+        <button
+          className="sp-iconbtn"
+          title="Preview project"
+          onClick={() => openPreview({ path: target.type === "file" ? target.path : "index.html", title: "Preview" })}
+        >
+          <Eye size={15} />
+        </button>
         <button className="sp-iconbtn" title={dirty ? "Save (unsaved changes)" : "Save"} disabled={!dirty || saving} onClick={save}>
           <Save size={15} />
         </button>
+        {onCollapse && (
+          <button className="sp-iconbtn" title="Collapse IDE (recover from edge dock)" onClick={() => onCollapse()}>
+            <Minimize2 size={15} />
+          </button>
+        )}
         <button className="sp-iconbtn" title="Close editor" onClick={() => { closeEditor(); onClose && onClose(); }}>
           <X size={15} />
         </button>
@@ -213,7 +252,36 @@ export default function DevOSIde({ onClose }) {
           <span style={{ color: "var(--sp-text-2)" }}>Starting editor…</span>
         </div>
       ) : (
-        <div className="sp-ide-body">
+        <div className="sp-ide-main">
+          {filesDrawerOpen && (
+            <div className="sp-ide-files" aria-label="Project files">
+              <div className="sp-ide-files-head">Files</div>
+              <div className="sp-ide-files-list">
+                {(files || []).length === 0 && (
+                  <div className="sp-ide-files-empty">No files yet</div>
+                )}
+                {(files || []).map((f) => {
+                  const name = f.name || f.path || f;
+                  const path = f.path || f.name || f;
+                  const isDir = f.type === "dir" || f.is_dir;
+                  return (
+                    <button
+                      key={path}
+                      type="button"
+                      className={"sp-ide-file" + (target?.path === path ? " active" : "")}
+                      onClick={() => {
+                        if (!isDir) openEditor({ file: path });
+                      }}
+                      title={path}
+                    >
+                      {name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <div className="sp-ide-body">
           <Editor
             key={`${title}:${monacoAttempt}`}
             language={language}
@@ -239,6 +307,7 @@ export default function DevOSIde({ onClose }) {
               automaticLayout: true,
             }}
           />
+        </div>
         </div>
       )}
       <div className="sp-ide-status">

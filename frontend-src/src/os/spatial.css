@@ -2093,3 +2093,180 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
 .sp-mission-status.glow-WAITING { color: #fc6; text-decoration: underline dotted; }
 .plan-WARNING { outline: 1px solid rgba(230,162,60,0.35); }
 .plan-WAITING { outline: 1px dashed rgba(255,200,80,0.35); }
+
+/* ── Workspace priority / collapse / edge dock ───────────── */
+.sp-work--ide .sp-canvas-region--secondary {
+  min-width: 120px;
+  flex: 1 1 20%;
+}
+.sp-focus-col--primary {
+  box-shadow: none;
+  border-left: 1px solid rgba(128, 130, 190, 0.08);
+  padding: 0;
+  gap: 0;
+  background: var(--sp-panel-solid, #0e1016);
+}
+.sp-focus-resizer {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 120;
+}
+.sp-focus-resizer:hover,
+.sp-focus-resizer:active {
+  background: rgba(34, 211, 238, 0.25);
+}
+.sp-edge-dock {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 200;
+}
+.sp-edge-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px 0 0 8px;
+  border: 1px solid rgba(128, 130, 190, 0.14);
+  border-right: none;
+  background: rgba(14, 16, 22, 0.92);
+  color: var(--sp-text-1);
+  font-size: 11px;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+}
+.sp-edge-tab:hover {
+  color: var(--sp-text-0);
+  border-color: rgba(34, 211, 238, 0.35);
+}
+.sp-mobile-switcher {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, rgba(7,7,13,0.94));
+  z-index: 400;
+}
+.sp-mobile-switcher .sp-edge-tab {
+  border-radius: 999px;
+  border-right: 1px solid rgba(128, 130, 190, 0.14);
+}
+.sp-work--mobile-focus .sp-canvas-region {
+  display: none;
+}
+.sp-fleet-chip {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(128, 130, 190, 0.14);
+  background: rgba(14, 16, 22, 0.88);
+  color: var(--sp-text-1);
+  font-size: 12px;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+}
+.sp-fleet-chip:hover { color: var(--sp-text-0); }
+.sp-fleet-chip-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgba(140,145,160,0.5);
+}
+.sp-fleet-chip-dot.active {
+  background: #22d3ee;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.7);
+}
+.sp-fleet-chip-count { color: #22d3ee; font-size: 11px; }
+.sp-fleet-wrap {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 80;
+  max-width: min(320px, 42vw);
+  max-height: min(42vh, 360px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(128, 130, 190, 0.1);
+  border-radius: 10px;
+  background: rgba(14, 16, 22, 0.9);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+.sp-fleet-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--sp-text-2);
+  border-bottom: 1px solid rgba(128, 130, 190, 0.08);
+}
+.sp-fleet-wrap .sp-dashboard,
+.sp-fleet-wrap > div:last-child {
+  overflow: auto;
+  max-height: min(36vh, 320px);
+}
+.sp-ide-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+.sp-ide-files {
+  width: 148px;
+  flex: 0 0 148px;
+  border-right: 1px solid rgba(128, 130, 190, 0.08);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: rgba(0,0,0,0.2);
+}
+.sp-ide-files-head {
+  padding: 6px 10px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sp-text-2);
+  border-bottom: 1px solid rgba(128, 130, 190, 0.06);
+}
+.sp-ide-files-list {
+  flex: 1;
+  overflow: auto;
+  padding: 4px;
+}
+.sp-ide-file {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--sp-text-1);
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sp-ide-file:hover { background: rgba(255,255,255,0.05); color: var(--sp-text-0); }
+.sp-ide-file.active { color: #22d3ee; background: rgba(34, 211, 238, 0.08); }
+.sp-ide-files-empty { padding: 10px; font-size: 11px; color: var(--sp-text-2); }
+@media (max-width: 720px) {
+  .sp-fleet-wrap { max-width: 92vw; left: 8px; right: 8px; }
+  .sp-ide-files { width: 112px; flex-basis: 112px; }
+}

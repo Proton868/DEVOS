@@ -48,7 +48,19 @@ const useOsStore = create((set, get) => ({
   // ── Editor (DevOS IDE focus surface) ─────────────────────
   editor: { open: false, file: null, scriptId: null, language: null },
   openEditor: ({ file = null, scriptId = null, language = null } = {}) =>
-    set({ editor: { open: true, file, scriptId, language } }),
+    set((s) => {
+      const layout = {
+        ...s.layout,
+        focusCollapsed: false,
+        activeWorkspace: "ide",
+        filesDrawerOpen: s.layout?.filesDrawerOpen !== false,
+      };
+      try { localStorage.setItem("devos_sp_layout", JSON.stringify(layout)); } catch (_) {}
+      return {
+        editor: { open: true, file, scriptId, language },
+        layout,
+      };
+    }),
   closeEditor: () => set({ editor: { open: false, file: null, scriptId: null, language: null } }),
 
   webIntel: { open: false, crawlId: null },
@@ -66,15 +78,20 @@ const useOsStore = create((set, get) => ({
     title: "Preview",
   },
   openPreview: ({ projectId = null, path = "index.html", title = "Preview" } = {}) =>
-    set({
-      preview: {
-        open: true,
-        minimized: false,
-        projectId: projectId || null,
-        path: path || "index.html",
-        error: null,
-        title: title || "Preview",
-      },
+    set((s) => {
+      const layout = { ...s.layout, activeWorkspace: "preview" };
+      try { localStorage.setItem("devos_sp_layout", JSON.stringify(layout)); } catch (_) {}
+      return {
+        preview: {
+          open: true,
+          minimized: false,
+          projectId: projectId || null,
+          path: path || "index.html",
+          error: null,
+          title: title || "Preview",
+        },
+        layout,
+      };
     }),
   closePreview: () =>
     set((s) => ({
@@ -135,14 +152,19 @@ const useOsStore = create((set, get) => ({
   closePersonaProfile: () => set({ personaProfileOpen: null, overlay: null }),
   copilot: { open: false, nodeId: null, seed: null, personaId: "nuha" },
   openCopilot: (nodeId = null, seed = null, personaId = null) =>
-    set((s) => ({
-      copilot: {
-        open: true,
-        nodeId,
-        seed,
-        personaId: (personaId || s.activePersonaId || "nuha").toLowerCase(),
-      },
-    })),
+    set((s) => {
+      const layout = { ...s.layout, focusCollapsed: false, activeWorkspace: "chat" };
+      try { localStorage.setItem("devos_sp_layout", JSON.stringify(layout)); } catch (_) {}
+      return {
+        copilot: {
+          open: true,
+          nodeId,
+          seed,
+          personaId: (personaId || s.activePersonaId || "nuha").toLowerCase(),
+        },
+        layout,
+      };
+    }),
   closeCopilot: () => set((s) => ({ copilot: { ...s.copilot, open: false, seed: null } })),
 
   // ── Inspector ────────────────────────────────────────────
@@ -200,6 +222,65 @@ const useOsStore = create((set, get) => ({
   setOmniOpen: (v) => set({ omniOpen: !!v }),
   overlay: null, // null | 'files' | 'git' | 'search' | 'memory' | 'mcp' | 'research' | 'settings' | 'history' | 'system' | 'composer'
   setOverlay: (overlay) => set({ overlay }),
+
+  // ── Workspace layout (spatial window behavior — not a second shell) ──
+  layout: {
+    fleetCollapsed: true,
+    focusCollapsed: false,
+    focusWidthPct: 62,
+    filesDrawerOpen: true,
+    activeWorkspace: "canvas", // canvas | ide | chat | fleet | preview
+  },
+  setLayout: (patch) =>
+    set((s) => {
+      const layout = { ...s.layout, ...patch };
+      try {
+        localStorage.setItem("devos_sp_layout", JSON.stringify(layout));
+      } catch (_) { /* ignore */ }
+      return { layout };
+    }),
+  hydrateLayout: () => {
+    try {
+      const raw = localStorage.getItem("devos_sp_layout");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        set((s) => ({ layout: { ...s.layout, ...parsed } }));
+      }
+    } catch (_) { /* ignore */ }
+  },
+  setFleetCollapsed: (v) =>
+    set((s) => {
+      const layout = { ...s.layout, fleetCollapsed: !!v };
+      try { localStorage.setItem("devos_sp_layout", JSON.stringify(layout)); } catch (_) {}
+      return { layout };
+    }),
+  setFocusCollapsed: (v) =>
+    set((s) => {
+      const layout = { ...s.layout, focusCollapsed: !!v };
+      try { localStorage.setItem("devos_sp_layout", JSON.stringify(layout)); } catch (_) {}
+      return { layout };
+    }),
+  setFocusWidthPct: (pct) =>
+    set((s) => {
+      const n = Math.min(85, Math.max(28, Number(pct) || 62));
+      const layout = { ...s.layout, focusWidthPct: n };
+      try { localStorage.setItem("devos_sp_layout", JSON.stringify(layout)); } catch (_) {}
+      return { layout };
+    }),
+  setFilesDrawerOpen: (v) =>
+    set((s) => {
+      const layout = { ...s.layout, filesDrawerOpen: !!v };
+      try { localStorage.setItem("devos_sp_layout", JSON.stringify(layout)); } catch (_) {}
+      return { layout };
+    }),
+  setActiveWorkspace: (name) =>
+    set((s) => {
+      const layout = { ...s.layout, activeWorkspace: name || "canvas" };
+      try { localStorage.setItem("devos_sp_layout", JSON.stringify(layout)); } catch (_) {}
+      return { layout };
+    }),
+
   dashboardOpen: true,
   setDashboardOpen: (v) => set({ dashboardOpen: v }),
 

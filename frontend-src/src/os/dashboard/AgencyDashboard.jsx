@@ -67,7 +67,7 @@ function barWidth(st) {
   }
 }
 
-export default function AgencyDashboard() {
+function AgencyDashboardInner() {
   const { dashboardOpen, setDashboardOpen, workers, setWorkers, agentTasks, setAgentTasks, openInspector, orchestrationMission, openPersonaProfile } = useOsStore();
 
   useEffect(() => {
@@ -187,6 +187,42 @@ export default function AgencyDashboard() {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+export default function AgencyDashboard() {
+  const collapsed = useOsStore((s) => s.layout?.fleetCollapsed !== false);
+  const setFleetCollapsed = useOsStore((s) => s.setFleetCollapsed);
+  const mission = useOsStore((s) => s.orchestrationMission);
+  const activeCount = (mission?.nodes || []).filter(
+    (n) => n && ["running", "executing", "active", "in_progress"].includes(String(n.status || "").toLowerCase())
+  ).length;
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className="sp-fleet-chip"
+        onClick={() => { setFleetCollapsed(false); useOsStore.getState().setDashboardOpen?.(true); }}
+        title="Expand Agent Fleet"
+      >
+        <span className={activeCount ? "sp-fleet-chip-dot active" : "sp-fleet-chip-dot"} />
+        <span>Fleet</span>
+        {activeCount > 0 ? <span className="sp-fleet-chip-count">{activeCount} active</span> : null}
+      </button>
+    );
+  }
+
+  return (
+    <div className="sp-fleet-wrap">
+      <div className="sp-fleet-toolbar">
+        <span>Agent Fleet</span>
+        <button type="button" className="sp-iconbtn" title="Collapse Fleet" onClick={() => setFleetCollapsed(true)}>
+          ▾
+        </button>
+      </div>
+      <AgencyDashboardInner />
     </div>
   );
 }

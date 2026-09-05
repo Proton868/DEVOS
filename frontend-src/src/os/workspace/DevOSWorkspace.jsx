@@ -87,6 +87,10 @@ export default function DevOSWorkspace() {
   }, [setCommandBar]);
 
   useEffect(() => {
+    try { useOsStore.getState().hydrateLayout?.(); } catch (_) {}
+  }, []);
+
+  useEffect(() => {
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [handleKey]);
