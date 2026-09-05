@@ -14,6 +14,52 @@ import useStore from "../../store/useStore";
 import { api, getLanguageFromPath } from "../../services/api";
 import { loadMonaco, probeMonacoAssets } from "../../monacoSetup";
 
+
+const LANG_COLORS = {
+  JavaScript: "#f1e05a",
+  TypeScript: "#3178c6",
+  Python: "#3572A5",
+  HTML: "#e34c26",
+  CSS: "#563d7c",
+  SCSS: "#c6538c",
+  JSON: "#292929",
+  Markdown: "#083fa1",
+  Shell: "#89e051",
+  YAML: "#cb171e",
+  Other: "#8b949e",
+};
+
+function langFromName(name) {
+  const n = String(name || "").toLowerCase();
+  if (n.endsWith(".js") || n.endsWith(".jsx") || n.endsWith(".mjs") || n.endsWith(".cjs")) return "JavaScript";
+  if (n.endsWith(".ts") || n.endsWith(".tsx")) return "TypeScript";
+  if (n.endsWith(".py")) return "Python";
+  if (n.endsWith(".html") || n.endsWith(".htm")) return "HTML";
+  if (n.endsWith(".css")) return "CSS";
+  if (n.endsWith(".scss") || n.endsWith(".sass")) return "SCSS";
+  if (n.endsWith(".json")) return "JSON";
+  if (n.endsWith(".md") || n.endsWith(".mdx")) return "Markdown";
+  if (n.endsWith(".sh") || n.endsWith(".bash")) return "Shell";
+  if (n.endsWith(".yml") || n.endsWith(".yaml")) return "YAML";
+  return "Other";
+}
+
+function languageBreakdown(fileList) {
+  const counts = {};
+  let total = 0;
+  for (const f of fileList || []) {
+    const name = f.name || f.path || f;
+    if (f.type === "dir" || f.is_dir) continue;
+    const lang = langFromName(name);
+    counts[lang] = (counts[lang] || 0) + 1;
+    total += 1;
+  }
+  if (!total) return [];
+  return Object.entries(counts)
+    .map(([lang, n]) => ({ lang, n, pct: (n / total) * 100, color: LANG_COLORS[lang] || LANG_COLORS.Other }))
+    .sort((a, b) => b.n - a.n);
+}
+
 const LOAD_TIMEOUT_MS = 12000;
 
 export default function DevOSIde({ onClose, onCollapse }) {
@@ -219,6 +265,24 @@ export default function DevOSIde({ onClose, onCollapse }) {
           <X size={15} />
         </button>
       </div>
+      {(() => {
+        const parts = languageBreakdown(files);
+        if (!parts.length) return null;
+        return (
+          <>
+            <div className="sp-lang-meter" title="Project language mix (by file count)">
+              {parts.map((p) => (
+                <i key={p.lang} style={{ width: `${p.pct}%`, background: p.color }} />
+              ))}
+            </div>
+            <div className="sp-lang-meter-legend">
+              {parts.slice(0, 6).map((p) => (
+                <span key={p.lang}><em style={{ background: p.color }} />{p.lang} {Math.round(p.pct)}%</span>
+              ))}
+            </div>
+          </>
+        );
+      })()}
       {loading ? (
         <div className="sp-insp-body" style={{ alignItems: "center", justifyContent: "center" }}>
           <FileCode2 size={22} style={{ color: "var(--sp-text-2)" }} />

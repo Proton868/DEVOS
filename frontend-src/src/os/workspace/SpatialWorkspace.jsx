@@ -60,13 +60,15 @@ export default function SpatialWorkspace({ isMobile }) {
     [isMobile, layout?.focusWidthPct, setFocusWidthPct]
   );
 
+  const focusPct = layout?.focusWidthPct || 62;
   const focusStyle =
     !isMobile && focusOpen
       ? {
-          width: `${layout?.focusWidthPct || 62}%`,
+          width: `${focusPct}%`,
           minWidth: 280,
           maxWidth: "82%",
           flex: "0 0 auto",
+          ["--sp-focus-width"]: `${focusPct}%`,
         }
       : undefined;
 
@@ -79,6 +81,11 @@ export default function SpatialWorkspace({ isMobile }) {
       ]
         .filter(Boolean)
         .join(" ")}
+      style={
+        !isMobile && focusOpen
+          ? { ["--sp-focus-width"]: `${focusPct}%` }
+          : undefined
+      }
     >
       <div
         className={[

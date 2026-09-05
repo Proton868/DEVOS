@@ -58,6 +58,37 @@ class TerminalService:
         self.root = (PROJECTS_DIR / user_id / project_id).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
+
+    def _env(self) -> dict:
+        """PATH suitable for IDE terminal under restricted service environments."""
+        import os
+        env = os.environ.copy()
+        extras = [
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+            str(Path.home() / ".local" / "bin"),
+            "/home/ubuntu/.nvm/versions/node/current/bin",
+        ]
+        # Prefer existing PATH entries first, then extras
+        cur = env.get("PATH", "")
+        parts = [p for p in cur.split(":") if p] + [p for p in extras if p]
+        # de-dupe preserve order
+        seen = set()
+        ordered = []
+        for p in parts:
+            if p not in seen:
+                seen.add(p)
+                ordered.append(p)
+        env["PATH"] = ":".join(ordered)
+        env.setdefault("TERM", "xterm-256color")
+        env.setdefault("HOME", str(Path.home()))
+        env.setdefault("LANG", env.get("LANG") or "C.UTF-8")
+        return env
+
     def _check_denylist(self, command: str):
         for pattern in DENYLIST_PATTERNS:
             if re.search(pattern, command, re.IGNORECASE):
@@ -66,10 +97,19 @@ class TerminalService:
     async def run(self, command: str, timeout: int = DEFAULT_TIMEOUT_S) -> dict:
         """Run one command to completion, buffered. Used by the plain HTTP route."""
         self._check_denylist(command)
+        # Prefer bash -lc when available so login-style PATH applies
+        import shlex
+        shell_cmd = command
+        if Path("/bin/bash").is_file():
+            shell_cmd = f"/bin/bash -lc {shlex.quote(command)}"
+
         proc = await asyncio.create_subprocess_shell(
-            command, cwd=str(self.root),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            shell_cmd,
+            cwd=str(self.root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            env=self._env(),
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -79,10 +119,21 @@ class TerminalService:
             await proc.communicate()
             return {"status": "timeout", "stdout": "", "stderr": f"Command timed out after {timeout}s",
                     "exit_code": -1}
+        out = stdout[:MAX_OUTPUT_BYTES].decode(errors="replace")
+        err = stderr[:MAX_OUTPUT_BYTES // 2].decode(errors="replace")
+        if proc.returncode == 127 or "not found" in err.lower():
+            # Helpful diagnostic for missing tools in the service environment
+            hint = (
+                "\n[devos] Command not found in terminal PATH. "
+                "Install the tool on the host or use a full path "
+                f"(cwd={self.root}, PATH prefix={self._env().get('PATH','')[:120]}…)."
+            )
+            if hint.strip() not in err:
+                err = (err or "") + hint
         return {
             "status": status,
-            "stdout": stdout[:MAX_OUTPUT_BYTES].decode(errors="replace"),
-            "stderr": stderr[:MAX_OUTPUT_BYTES // 2].decode(errors="replace"),
+            "stdout": out,
+            "stderr": err,
             "exit_code": proc.returncode,
         }
 
@@ -90,10 +141,17 @@ class TerminalService:
         """Run one command, calling on_chunk(stream_name, bytes) as output arrives.
         Used by the WebSocket route so the IDE terminal feels live."""
         self._check_denylist(command)
+        import shlex
+        shell_cmd = command
+        if Path("/bin/bash").is_file():
+            shell_cmd = f"/bin/bash -lc {shlex.quote(command)}"
         proc = await asyncio.create_subprocess_shell(
-            command, cwd=str(self.root),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            shell_cmd,
+            cwd=str(self.root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            env=self._env(),
         )
 
         async def pump(stream, name):

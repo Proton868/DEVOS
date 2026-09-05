@@ -92,14 +92,18 @@ export default function GhostTerminal() {
     setBusy(true);
     push(`$ ${cmd}`, "lg-cmd");
     try {
-      const r = await api.runCommand(cmd, 60);
+      const r = await (api.runCommand || api.runTerminalCommand)(cmd, 60);
       const out = r?.output ?? r?.stdout ?? r?.result ?? "";
       const err = r?.error ?? r?.stderr ?? "";
-      String(out).split("\n").filter(Boolean).forEach((l) => push(l));
-      if (err) String(err).split("\n").filter(Boolean).forEach((l) => push(l, "lg-error"));
+      const code = r?.exit_code ?? r?.exitCode;
+      String(out).split("\n").forEach((l) => { if (l !== undefined && l !== null) push(String(l)); });
+      if (err) String(err).split("\n").filter((l) => l.length).forEach((l) => push(l, "lg-error"));
       if (!out && !err) push("[INFO] (no output)", "lg-info");
+      if (typeof code === "number" && code !== 0) {
+        push(`[exit ${code}]`, "lg-error");
+      }
     } catch (e) {
-      push(`[ERROR] ${e.message}`, "lg-error");
+      push(`[ERROR] ${e.message || e}`, "lg-error");
     } finally {
       setBusy(false);
     }
