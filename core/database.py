@@ -12,7 +12,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy import String, Text, Boolean, Integer, DateTime, JSON, ForeignKey
 from core.config import settings
 
-engine = create_async_engine(settings.DATABASE_URL, echo=settings.DEBUG)
+engine = create_async_engine(settings.DATABASE_URL, echo=bool(getattr(settings, "SQL_ECHO", False)))
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 def gen_id(): return str(uuid.uuid4())

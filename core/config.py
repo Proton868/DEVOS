@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     APP_NAME: str = "DevOS"
     SECRET_KEY: str = ""  # unused; kept for backward-compat
     DEBUG: bool = False
+    # SQLAlchemy statement logging (engine.echo). Independent of DEBUG so
+    # production can run with DEBUG tools without flooding journald with SQL.
+    # Set SQL_ECHO=true in .env only when intentionally tracing queries.
+    SQL_ECHO: bool = False
     ALLOWED_ORIGINS: List[str] = ["http://localhost:8000"]
 
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/devos.db"

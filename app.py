@@ -53,6 +53,13 @@ def _configure_logging():
     root.setLevel(logging.INFO)
     root.handlers = [handler]
 
+    # Quiet SQLAlchemy in production. echo=True (SQL_ECHO) raises engine to INFO;
+    # without this, a mis-set DEBUG or uvicorn defaults can still spam journald.
+    sql_level = logging.INFO if getattr(settings, "SQL_ECHO", False) else logging.WARNING
+    logging.getLogger("sqlalchemy.engine").setLevel(sql_level)
+    logging.getLogger("sqlalchemy.engine.Engine").setLevel(sql_level)
+    logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
+
 
 _configure_logging()
 logger = logging.getLogger("devos")
