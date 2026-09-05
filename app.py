@@ -398,6 +398,40 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+
+class StaticCacheMiddleware(BaseHTTPMiddleware):
+    """HTML shell: no-cache. Hashed /static assets: long-cache immutable."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path or ""
+        # SPA shell and template index must revalidate (prevents stale chunk maps)
+        if path in ("/", "") or path.endswith("/index.html") or path == "/index.html":
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            return response
+        # Hashed build assets + monaco vendor tree
+        if path.startswith("/static/"):
+            name = path.rsplit("/", 1)[-1]
+            # content-hashed CRA files: main.HASH.js, N.HASH.chunk.js, main.HASH.css
+            if any(
+                tok in name
+                for tok in (
+                    ".chunk.js",
+                    ".chunk.css",
+                )
+            ) or (
+                name.startswith("main.") and (name.endswith(".js") or name.endswith(".css"))
+            ):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            elif path.startswith("/static/monaco/"):
+                # versioned with deploy; allow short cache
+                response.headers["Cache-Control"] = "public, max-age=86400"
+            else:
+                response.headers.setdefault("Cache-Control", "public, max-age=3600")
+        return response
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.url.path.startswith("/static") or request.url.path == "/api/health":
@@ -451,6 +485,7 @@ app = FastAPI(
 # for ErrorBoundaryMiddleware's own error responses and for every other
 # middleware/handler that wants to log/correlate by request id.
 app.add_middleware(ErrorBoundaryMiddleware)
+app.add_middleware(StaticCacheMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 # CSRF (security-audit P3a): must run before CORS/route handlers so a
@@ -546,6 +581,12 @@ async def spa(request: Request, full_path: str):
     import os
     index_path = os.path.join(os.path.dirname(__file__), "frontend", "templates", "index.html")
     if os.path.exists(index_path):
-        return FileResponse(index_path)
+        return FileResponse(
+            index_path,
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+            },
+        )
     return HTMLResponse(content="<html><body><h1>DevOS</h1><p>Frontend not found.</p></body></html>")
 
