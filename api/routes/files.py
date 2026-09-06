@@ -272,7 +272,7 @@ def _preview_csp(request: Request = None) -> str:
         "child-src 'none'; "
         "frame-src 'none'; "
         "object-src 'none'; "
-        "base-uri 'none'; "
+        "base-uri 'self'; "
         "form-action 'none'; "
         "frame-ancestors 'self'"
     )
@@ -485,9 +485,13 @@ async def preview_workspace_file(
         if parent:
             base_path = f"/api/files/{project_id}/preview/{parent}/"
         if embed_token:
-            def _rewrite(match):
+            # Opaque-origin iframe does not send session Authorization on
+            # subresource loads — relative assets must carry the preview token.
+            def _rewrite_html_attr(match):
                 attr, url = match.group(1), match.group(2)
-                if url.startswith(("http://", "https://", "//", "data:", "blob:", "#")):
+                if url.startswith(("http://", "https://", "//", "data:", "blob:", "#", "mailto:")):
+                    return match.group(0)
+                if url.startswith("/api/files/") and "token=" in url:
                     return match.group(0)
                 if url.startswith("/api/"):
                     return match.group(0)
@@ -500,9 +504,68 @@ async def preview_workspace_file(
                     f'{attr}="/api/files/{project_id}/preview/{joined}'
                     f'?token={embed_token}"'
                 )
-            pat = "\\b(href|src)=[\"']([^\"']+)[\"']"
-            text = re.sub(pat, _rewrite, text, flags=re.I)
-        text = _inject_html_base(text, base_path)
+            text = re.sub(
+                r"\b(href|src)=[\"\']([^\"\']+)[\"\']",
+                _rewrite_html_attr,
+                text,
+                flags=re.I,
+            )
+
+            def _rewrite_style_url(match):
+                prefix, url, suffix = match.group(1), match.group(2), match.group(3)
+                if url.startswith(("http://", "https://", "//", "data:", "blob:", "#")):
+                    return match.group(0)
+                clean = url.strip().lstrip("./")
+                if parent and not url.startswith("/"):
+                    joined = f"{parent}/{clean}".replace("//", "/")
+                else:
+                    joined = clean.lstrip("/")
+                return (
+                    f"{prefix}/api/files/{project_id}/preview/{joined}"
+                    f"?token={embed_token}{suffix}"
+                )
+            text = re.sub(
+                r"(url\([\"\']?)([^\"\')]+)([\"\']?\))",
+                _rewrite_style_url,
+                text,
+                flags=re.I,
+            )
+            tokenized_base = base_path + f"?token={embed_token}"
+            text = _inject_html_base(text, tokenized_base)
+        else:
+            text = _inject_html_base(text, base_path)
         return HTMLResponse(content=text, headers=headers)
+
+    # CSS: rewrite relative url(...) so fonts/images keep the preview token
+    if mime.startswith("text/css") and embed_token:
+        text = raw.decode("utf-8", errors="replace")
+        parent = "/".join(rel.split("/")[:-1])
+
+        def _rewrite_css_url(match):
+            prefix, url, suffix = match.group(1), match.group(2), match.group(3)
+            u = url.strip()
+            if u.startswith(("http://", "https://", "//", "data:", "blob:", "#")):
+                return match.group(0)
+            if u.startswith("/api/files/"):
+                return match.group(0)
+            clean = u.lstrip("./")
+            if parent and not u.startswith("/"):
+                joined = f"{parent}/{clean}".replace("//", "/")
+            else:
+                joined = clean.lstrip("/")
+            return (
+                f"{prefix}/api/files/{project_id}/preview/{joined}"
+                f"?token={embed_token}{suffix}"
+            )
+
+        text = re.sub(
+            r"(url\([\"\']?)([^\"\')]+)([\"\']?\))",
+            _rewrite_css_url,
+            text,
+            flags=re.I,
+        )
+        return Response(content=text.encode("utf-8"), media_type=mime, headers=headers)
+
     return Response(content=raw, media_type=mime, headers=headers)
+
 

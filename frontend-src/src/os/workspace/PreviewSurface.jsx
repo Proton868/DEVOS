@@ -132,7 +132,7 @@ export default function PreviewSurface() {
       try {
         if (navigator?.clipboard?.writeText) await navigator.clipboard.writeText(abs);
       } catch { /* ignore */ }
-      setPreviewError("Popup blocked — preview URL copied if clipboard allowed.");
+      setPreviewError("Popup blocked on this device. Preview URL was copied — paste it in a new tab. In-app preview should still show styles after refresh.");
     }
   }, [previewToken, projectId, path, mintSession, setPreviewError]);
 
