@@ -96,7 +96,8 @@ async def selective_memory_save(
 
 
 
-async def mirror_durable_task(
+async def mirror_durable_task(  # DEPRECATED: executable path owns durability via AgentProtocol
+    
     *,
     user_id: str,
     goal: str,
@@ -105,10 +106,13 @@ async def mirror_durable_task(
     status: str = "running",
     result_payload: Optional[dict] = None,
 ) -> Optional[str]:
-    """Best-effort: record TaskRequest/Result + protocol events for live Nuha plans.
+    """DEPRECATED — do not use for executable missions.
 
-    Does not replace create_plan/execute_plan — only mirrors durable state.
+    Canonical durability is owned by AgentProtocol.dispatch / mission node protocol path.
+    Kept as no-op to avoid breaking imports.
     """
+    logger.info("[nuha] mirror_durable_task skipped (canonical protocol owns durability)")
+    return None
     try:
         from core.task_contract import TaskRequest, TaskResult, TaskStatus
         from core.task_registry import TaskRegistry

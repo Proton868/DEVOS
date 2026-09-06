@@ -144,73 +144,83 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
             error="AGENT_RUNTIME_UNAVAILABLE: DEVOS_ORCH_FAKE_RUNTIME set without test allow",
         )
 
+
+    # --- Canonical path: TaskRequest → AgentProtocol → WorkerRuntime → Loop ---
+    return await _run_node_via_agent_protocol(req)
+
+
+async def _run_node_via_agent_protocol(req: NodeExecutionRequest) -> NodeExecutionResult:
+    """Executable mission nodes use the single delegation contract."""
+    import uuid
+    from core.task_contract import TaskRequest, TaskStatus
+    from core.agent_protocol import AgentProtocol, AgentRegistry
+    from governance.ucip import AgentIdentity, TrustLevel
+
+    worker_slug = (req.persona_id or "fullstack-engineer").strip() or "fullstack-engineer"
+    task_req = TaskRequest(
+        objective=(
+            f"[orch plan={req.plan_id} node={req.node_id} persona={req.persona_id}]\n"
+            f"Workspace: {req.workspace_id}\n"
+            f"Authorized caps (canonical): {', '.join(req.effective_caps) or 'none'}\n"
+            f"{req.objective}"
+        ),
+        worker_slug=worker_slug,
+        required_capabilities=list(req.effective_caps or []),
+        metadata={
+            "plan_id": req.plan_id,
+            "node_id": req.node_id,
+            "user_id": req.user_id,
+            "workspace_id": req.workspace_id,
+            "source": "mission_node",
+            # Prefer user_id as tenant fallback for mission trust resolution
+            "tenant_id": req.user_id,
+        },
+    )
+    # Stable correlation with mission node (same task across retries via attempt)
+    task_req.task_id = f"node:{req.plan_id}:{req.node_id}"
+    task_req.execution_id = f"node:{req.plan_id}:{req.node_id}:{task_req.attempt}"
+    task_req.root_loop_id = f"plan:{req.plan_id}"
+
+    session_id = str(uuid.uuid4())
+    identity = AgentIdentity.create(req.user_id, session_id, TrustLevel.OPERATOR)
+
+    protocol = AgentProtocol(agent_registry=AgentRegistry())
     try:
-        from brain.agent_runtime import AgentRuntime, AgentContext
-        from brain.agent_tools import AgentMode
+        protocol.agents.bootstrap_from_library()
+    except Exception:
+        pass
+
+    try:
+        task_result = await protocol.dispatch(task_req, identity)
     except Exception as e:
+        logger.exception("mission node protocol dispatch failed")
         return NodeExecutionResult(
             success=False,
             status="error",
-            error=f"AGENT_RUNTIME_UNAVAILABLE: {e}",
+            task_id=task_req.task_id,
+            error=f"protocol_dispatch:{type(e).__name__}:{e}",
+            events_seen=["task.failed"],
         )
 
-    runtime = AgentRuntime(
-        user_id=req.user_id,
-        project_id=req.workspace_id or "default",
-        tenant_id=None,
-        mode=AgentMode.AGENT,
-    )
-    context = AgentContext(
-        project_id=req.workspace_id or "default",
-        user_request=req.objective,
-    )
-    objective = (
-        f"[orch plan={req.plan_id} node={req.node_id} persona={req.persona_id}]\n"
-        f"Workspace: {req.workspace_id}\n"
-        f"Authorized caps (canonical): {', '.join(req.effective_caps) or 'none'}\n"
-        f"{req.objective}"
+    status = task_result.status.value if hasattr(task_result.status, "value") else str(task_result.status)
+    success = status == "succeeded"
+    if status == "cancelled":
+        mapped = "cancelled"
+    elif success:
+        mapped = "succeeded"
+    else:
+        mapped = "failed"
+
+    return NodeExecutionResult(
+        success=success,
+        task_id=task_result.task_id,
+        status=mapped,
+        summary=str(task_result.output or "")[:2000],
+        error=(task_result.errors[0] if task_result.errors else task_result.failure_reason),
+        events_seen=[f"task.{status}"],
+        raw_terminal=task_result.to_dict() if hasattr(task_result, "to_dict") else None,
     )
 
-    result = NodeExecutionResult(success=False, status="running")
-    try:
-        async for event in runtime.run(objective, context):
-            et = (event or {}).get("type") or ""
-            data = (event or {}).get("data") or {}
-            tid = (event or {}).get("task_id")
-            if tid:
-                result.task_id = str(tid)
-            if et:
-                result.events_seen.append(et)
-            if et == "agent.completed":
-                result.success = data.get("success") is not False
-                result.status = "succeeded" if result.success else "failed"
-                result.summary = str(data.get("summary") or "")[:2000]
-                result.files_changed = list(data.get("files_changed") or [])
-                result.raw_terminal = event
-            elif et == "agent.cancelled":
-                result.success = False
-                result.status = "cancelled"
-                result.raw_terminal = event
-            elif et in ("agent.error", "agent.agent_failed", "agent.agent_blocked"):
-                result.success = False
-                result.status = "blocked" if "blocked" in et else "failed"
-                result.error = str(data.get("message") or data.get("summary") or et)[:500]
-                result.raw_terminal = event
-    except Exception as e:
-        logger.exception("agent runtime node execution failed")
-        result.success = False
-        result.status = "error"
-        err = str(e)[:500]
-        if "api key" in err.lower() or "provider" in err.lower() or "model" in err.lower():
-            result.error = f"MODEL_UNAVAILABLE: {err}"
-        else:
-            result.error = f"AGENT_RUNTIME_UNAVAILABLE: {err}" if "AGENT_RUNTIME" not in err else err
-    if not result.events_seen and result.status == "running":
-        result.success = False
-        result.status = "error"
-        result.error = result.error or "AGENT_RUNTIME_UNAVAILABLE: no events from runtime"
-        _finalize_node_task(task_req, result)
-    return result
 
 
 async def _fake_runtime(req: NodeExecutionRequest) -> NodeExecutionResult:

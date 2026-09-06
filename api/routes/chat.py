@@ -310,16 +310,6 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
             )
         except Exception as e:
             orch_result = {"ok": False, "orchestrated": True, "error": str(e)[:400]}
-        try:
-            from brain.nuha_bridge import mirror_durable_task
-            await mirror_durable_task(
-                user_id=user.id,
-                goal=req.message,
-                plan_id=(orch_result or {}).get("plan_id"),
-                result_payload=orch_result,
-            )
-        except Exception:
-            pass
 
         # Deterministic website fast-path still available as artifact assist when goal matches
         try:
