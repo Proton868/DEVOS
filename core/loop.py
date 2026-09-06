@@ -204,7 +204,35 @@ class BrainExecutionLoop:
         # pure waste on every run() call, most of it from a BrainLLM
         # instance that decompose_first=False (the common case) never
         # even used.
-        brain = BrainLLM(self.provider, self.model, user_id=self.user_id)
+        # Worker execution must use the same encrypted per-user provider
+        # credential path as normal chat. Never pass credentials through the
+        # TaskRequest, TaskResult, event store, job payload, or agent metadata.
+        brain = None
+        try:
+            from core.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as db:
+                brain = await BrainLLM.for_user(
+                    db,
+                    self.user_id,
+                    provider=self.provider,
+                    model=self.model,
+                    purpose="worker",
+                )
+        except Exception as e:
+            # Credential loading failure must never become a secret-handling
+            # workaround. Fall back to system-provider resolution only.
+            logger.warning(
+                "[loop] user provider credential resolution failed; "
+                "falling back to system provider credentials: %s",
+                e,
+            )
+
+        if brain is None:
+            brain = BrainLLM(
+                self.provider,
+                self.model,
+                user_id=self.user_id,
+            )
 
         if decompose_first:
             from cognitive.decomposer import GoalDecomposer
