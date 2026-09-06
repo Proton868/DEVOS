@@ -435,6 +435,7 @@ app.add_middleware(RateLimitMiddleware)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 from api.routes import auth, chat, loop, scripts, memory, search, models, health, governance, extras, files, vcs, terminal, comms, workers, secrets as secrets_routes, user_settings, nodes
 from api.routes import capabilities, evidence, research, ponytail, workflow, enterprise, mcp as mcp_routes, marketplace, composer
+from api.routes import recovery as recovery_routes
 app.include_router(auth.router,       prefix="/api/auth",       tags=["auth"])
 app.include_router(chat.router,       prefix="/api/chat",       tags=["chat"])
 app.include_router(loop.router,       prefix="/api/loop",       tags=["loop"])
@@ -450,6 +451,7 @@ app.include_router(vcs.router,        prefix="/api/vcs",        tags=["vcs"])
 app.include_router(terminal.router,   prefix="/api/terminal",   tags=["terminal"])
 app.include_router(comms.router,      prefix="/api/comms",      tags=["comms"])
 app.include_router(workers.router,    prefix="/api/workers",    tags=["workers"])
+app.include_router(recovery_routes.router, prefix="/api/tasks",     tags=["tasks"])
 app.include_router(secrets_routes.router, prefix="/api/secrets", tags=["secrets"])
 app.include_router(capabilities.router, tags=["capabilities"])
 app.include_router(evidence.router,     tags=["evidence"])
