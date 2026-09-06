@@ -10,8 +10,8 @@
   --sp-bg-2: #10101c;
   --sp-panel: rgba(18, 18, 30, 0.72);
   --sp-panel-solid: #12121e;
-  --sp-border: rgba(128, 130, 190, 0.08);
-  --sp-border-bright: rgba(140, 145, 220, 0.18);
+  --sp-border: rgba(128, 130, 190, 0.16);
+  --sp-border-bright: rgba(140, 145, 220, 0.32);
   --sp-text-0: #eef0f8;
   --sp-text-1: #b8bccf;
   --sp-text-2: #7c819c;
@@ -21,8 +21,8 @@
   --sp-warn: #fbbf24;
   --sp-bad: #f87171;
   --sp-pink: #f472b6;
-  --sp-radius: 6px;
-  --sp-radius-sm: 4px;
+  --sp-radius: 12px;
+  --sp-radius-sm: 8px;
   --sp-font: "Inter", "SF Pro Display", system-ui, -apple-system, sans-serif;
   --sp-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
 }
@@ -190,28 +190,6 @@
   background: var(--sp-panel); border: 1px solid var(--sp-border);
   border-radius: var(--sp-radius); overflow: hidden;
 }
-/* Edge-to-edge focus surfaces — less "card in a card" */
-.sp-surface--seamless {
-  border: none;
-  border-radius: 0;
-  background: var(--sp-panel-solid, #12121e);
-  box-shadow: none;
-}
-.sp-focus-col .sp-surface {
-  border-left: none;
-  border-right: none;
-  border-radius: 0;
-}
-.sp-chat-float .sp-surface {
-  border-radius: var(--sp-radius-sm);
-  border-color: rgba(128, 130, 190, 0.1);
-}
-.sp-ide-monaco-loading {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  color: var(--sp-text-2); font-size: 12px; pointer-events: none; z-index: 1;
-}
-.sp-ide-body .monaco-editor { border-radius: 0 !important; }
-
 .sp-surface-head {
   flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
   padding: 8px 12px; border-bottom: 1px solid var(--sp-border);
@@ -347,29 +325,12 @@
 
 /* ── Ghost terminal ─────────────────────────────────────── */
 .sp-terminal {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 8px;
-  height: min(28vh, 200px);
-  max-height: 42vh;
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  background: rgba(8,8,15,0.96);
-  border: 1px solid rgba(128, 130, 190, 0.12);
-  border-radius: 8px;
-  overflow: hidden;
-  z-index: 160;
-  box-shadow: 0 -8px 28px rgba(0,0,0,0.35);
+  flex: 0 0 auto; height: 220px; display: flex; flex-direction: column;
+  margin: 0 8px 8px; background: rgba(8,8,15,0.94);
+  border: 1px solid var(--sp-border-bright); border-radius: var(--sp-radius);
+  overflow: hidden; z-index: 140;
 }
-.sp-terminal.tall { height: min(42vh, 320px); }
-.sp-work--ide .sp-terminal {
-  /* Prefer sitting under the IDE focus column when present */
-  left: auto;
-  width: min(var(--sp-focus-width, 62%), 82%);
-  right: 0;
-}
+.sp-terminal.tall { height: 340px; }
 .sp-terminal-body {
   flex: 1; overflow-y: auto; padding: 10px 14px; font-family: var(--sp-mono);
   font-size: 11.8px; line-height: 1.7; background: #06060c;
@@ -494,7 +455,7 @@
   border-radius: 14px; backdrop-filter: blur(20px); overflow: hidden;
   box-shadow: 0 24px 70px rgba(0,0,0,0.6);
 }
-.sp-overlay.mobile { position: fixed; top: 46px; left: 0; right: 0; bottom: 0; border-radius: 0; z-index: 360; }
+.sp-overlay.mobile { position: fixed; left: 0; right: 0; bottom: 0; top: auto; height: min(62vh, 560px); max-height: min(62vh, 560px); border-radius: 14px 14px 0 0; z-index: 360; box-shadow: 0 -8px 32px rgba(0,0,0,0.45); padding-bottom: env(safe-area-inset-bottom, 0px); }
 .sp-overlay-body { flex: 1; min-height: 0; overflow: auto; display: flex; }
 
 /* ── Generic buttons ────────────────────────────────────── */
@@ -1309,10 +1270,23 @@
   }
   .sp-canvas-brand { top: 8px; right: 8px; padding: 5px 8px; font-size: 11px; }
   .sp-carai-logo { height: 18px; }
+  /* Secondary tool sheet — must not bury Nuha for the full viewport */
   .sp-overlay.mobile {
-    top: 46px;
+    top: auto;
+    left: 0;
+    right: 0;
     bottom: 0;
+    height: min(62vh, 560px);
+    max-height: min(62vh, 560px);
+    border-radius: 14px 14px 0 0;
     padding-bottom: env(safe-area-inset-bottom, 0px);
+    box-shadow: 0 -8px 32px rgba(0,0,0,0.45);
+    z-index: 360;
+  }
+  .sp-overlay.mobile .sp-overlay-body {
+    max-height: calc(min(62vh, 560px) - 44px);
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
   }
 }
 
@@ -1969,360 +1943,4 @@ html[data-sp-glow="off"] .sp-canvas-mission-node,
 html[data-sp-glow="off"] .sp-mission-node { box-shadow: none !important; }
 html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
   box-shadow: 0 0 22px rgba(34,211,238,0.55);
-}
-
-/* ── Workspace Preview surface ─────────────────────────────── */
-.sp-preview-window {
-  position: absolute;
-  right: 24px;
-  top: 72px;
-  width: min(520px, calc(100% - 48px));
-  height: min(420px, calc(100% - 120px));
-  display: flex;
-  flex-direction: column;
-  border-radius: 12px;
-  border: 1px solid var(--sp-border, rgba(255,255,255,0.12));
-  background: var(--sp-surface, #0f1218);
-  box-shadow: 0 18px 48px rgba(0,0,0,0.45);
-  z-index: 40;
-  overflow: hidden;
-}
-.sp-preview-chrome {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--sp-border, rgba(255,255,255,0.08));
-  background: rgba(255,255,255,0.03);
-}
-.sp-preview-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--sp-text-1, #e8ecf4);
-  min-width: 0;
-}
-.sp-preview-path {
-  color: var(--sp-text-2, #9aa3b5);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.sp-preview-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #3ddc97;
-  box-shadow: 0 0 8px #3ddc97;
-  flex-shrink: 0;
-}
-.sp-preview-actions {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
-.sp-preview-actions .sp-btn {
-  font-size: 11px;
-  padding: 4px 8px;
-}
-.sp-preview-frame-wrap {
-  flex: 1;
-  min-height: 0;
-  background: #fff;
-}
-.sp-preview-frame {
-  width: 100%;
-  height: 100%;
-  border: 0;
-  background: #fff;
-}
-.sp-preview-error {
-  padding: 8px 12px;
-  font-size: 12px;
-  color: #ffb4b4;
-  background: rgba(180, 40, 40, 0.2);
-}
-.sp-preview-chip {
-  position: absolute;
-  right: 24px;
-  bottom: 24px;
-  z-index: 40;
-  border: 1px solid var(--sp-border, rgba(255,255,255,0.12));
-  background: var(--sp-surface, #0f1218);
-  color: var(--sp-text-1, #e8ecf4);
-  border-radius: 999px;
-  padding: 8px 14px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.sp-preview-status {
-  margin-left: 8px;
-  font-size: 11px;
-  color: var(--sp-text-2, #9aa3b5);
-}
-
-/* Mission glow status chips — extend existing language, no redesign */
-.sp-mission-glow { padding: 8px 10px; max-width: 420px; }
-.sp-mission-glow-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
-.sp-mission-goal { font-size: 12px; opacity: 0.9; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sp-mission-status { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
-.sp-mission-nodes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.sp-mission-node-btn { width: 100%; display: grid; grid-template-columns: 72px 1fr auto; gap: 6px; align-items: center; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 4px 6px; color: inherit; cursor: pointer; }
-.sp-mission-node-btn:hover, .sp-mission-node-btn:focus-visible { border-color: var(--sp-border, rgba(255,255,255,0.12)); outline: none; }
-.sp-mission-node-persona { font-size: 10px; opacity: 0.7; }
-.sp-mission-node-desc { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sp-mission-node-state { font-size: 10px; opacity: 0.85; }
-.sp-mission-node.glow-EXECUTING .sp-mission-node-state { color: var(--sp-accent, #6cf); }
-.sp-mission-node.glow-WAITING .sp-mission-node-state { color: var(--sp-warn, #fc6); }
-.sp-mission-node.glow-VERIFYING .sp-mission-node-state { color: var(--sp-accent, #6cf); }
-.sp-mission-node.glow-SUCCESS .sp-mission-node-state { color: var(--sp-ok, #6c6); }
-.sp-mission-node.glow-FAILED .sp-mission-node-state { color: var(--sp-danger, #f66); }
-.sp-mission-node.glow-CANCELLED .sp-mission-node-state { opacity: 0.5; }
-.sp-mission-hitl, .sp-mission-pivot { font-size: 11px; padding: 6px 8px; margin: 4px 0; border-radius: 8px; background: rgba(255,200,80,0.08); border: 1px solid rgba(255,200,80,0.2); }
-.sp-mission-pivot { background: rgba(255,120,80,0.08); border-color: rgba(255,120,80,0.25); }
-.sp-mission-controls { display: flex; gap: 4px; align-items: center; }
-.sp-mission-empty { font-size: 11px; opacity: 0.6; letter-spacing: 0.06em; }
-.sp-voice-btn {
-  border: 1px solid var(--sp-border, rgba(255,255,255,0.12));
-  background: transparent;
-  color: var(--sp-text-1, #e8ecf4);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.sp-voice-btn.active {
-  border-color: var(--sp-accent, #6cf);
-  color: var(--sp-accent, #6cf);
-}
-.sp-copilot-voice {
-  font-size: 12px;
-  opacity: 0.85;
-  padding: 4px 8px;
-}
-
-.sp-mission-node.glow-WARNING .sp-mission-node-state,
-.sp-mission-status.glow-WARNING { color: #e6a23c; }
-.sp-mission-node.glow-WAITING .sp-mission-node-state,
-.sp-mission-status.glow-WAITING { color: #fc6; text-decoration: underline dotted; }
-.plan-WARNING { outline: 1px solid rgba(230,162,60,0.35); }
-.plan-WAITING { outline: 1px dashed rgba(255,200,80,0.35); }
-
-/* ── Workspace priority / collapse / edge dock ───────────── */
-.sp-work--ide .sp-canvas-region--secondary {
-  min-width: 120px;
-  flex: 1 1 20%;
-}
-.sp-focus-col--primary {
-  box-shadow: none;
-  border-left: 1px solid rgba(128, 130, 190, 0.08);
-  padding: 0;
-  gap: 0;
-  background: var(--sp-panel-solid, #0e1016);
-}
-.sp-focus-resizer {
-  flex: 0 0 5px;
-  cursor: col-resize;
-  background: transparent;
-  position: relative;
-  z-index: 120;
-}
-.sp-focus-resizer:hover,
-.sp-focus-resizer:active {
-  background: rgba(34, 211, 238, 0.25);
-}
-.sp-edge-dock {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  z-index: 200;
-}
-.sp-edge-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 8px 0 0 8px;
-  border: 1px solid rgba(128, 130, 190, 0.14);
-  border-right: none;
-  background: rgba(14, 16, 22, 0.92);
-  color: var(--sp-text-1);
-  font-size: 11px;
-  cursor: pointer;
-  backdrop-filter: blur(10px);
-}
-.sp-edge-tab:hover {
-  color: var(--sp-text-0);
-  border-color: rgba(34, 211, 238, 0.35);
-}
-.sp-mobile-switcher {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  gap: 6px;
-  justify-content: center;
-  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
-  background: linear-gradient(transparent, rgba(7,7,13,0.94));
-  z-index: 400;
-}
-.sp-mobile-switcher .sp-edge-tab {
-  border-radius: 999px;
-  border-right: 1px solid rgba(128, 130, 190, 0.14);
-}
-.sp-work--mobile-focus .sp-canvas-region {
-  display: none;
-}
-.sp-fleet-chip {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 80;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(128, 130, 190, 0.14);
-  background: rgba(14, 16, 22, 0.88);
-  color: var(--sp-text-1);
-  font-size: 12px;
-  cursor: pointer;
-  backdrop-filter: blur(10px);
-}
-.sp-fleet-chip:hover { color: var(--sp-text-0); }
-.sp-fleet-chip-dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: rgba(140,145,160,0.5);
-}
-.sp-fleet-chip-dot.active {
-  background: #22d3ee;
-  box-shadow: 0 0 10px rgba(34, 211, 238, 0.7);
-}
-.sp-fleet-chip-count { color: #22d3ee; font-size: 11px; }
-.sp-fleet-wrap {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 80;
-  max-width: min(320px, 42vw);
-  max-height: min(42vh, 360px);
-  display: flex;
-  flex-direction: column;
-  border: 1px solid rgba(128, 130, 190, 0.1);
-  border-radius: 10px;
-  background: rgba(14, 16, 22, 0.9);
-  backdrop-filter: blur(12px);
-  overflow: hidden;
-}
-.sp-fleet-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 10px;
-  font-size: 11px;
-  color: var(--sp-text-2);
-  border-bottom: 1px solid rgba(128, 130, 190, 0.08);
-}
-.sp-fleet-wrap .sp-dashboard,
-.sp-fleet-wrap > div:last-child {
-  overflow: auto;
-  max-height: min(36vh, 320px);
-}
-.sp-ide-main {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: row;
-}
-.sp-ide-files {
-  width: 148px;
-  flex: 0 0 148px;
-  border-right: 1px solid rgba(128, 130, 190, 0.08);
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  background: rgba(0,0,0,0.2);
-}
-.sp-ide-files-head {
-  padding: 6px 10px;
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--sp-text-2);
-  border-bottom: 1px solid rgba(128, 130, 190, 0.06);
-}
-.sp-ide-files-list {
-  flex: 1;
-  overflow: auto;
-  padding: 4px;
-}
-.sp-ide-file {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  color: var(--sp-text-1);
-  font-size: 12px;
-  padding: 5px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sp-ide-file:hover { background: rgba(255,255,255,0.05); color: var(--sp-text-0); }
-.sp-ide-file.active { color: #22d3ee; background: rgba(34, 211, 238, 0.08); }
-.sp-ide-files-empty { padding: 10px; font-size: 11px; color: var(--sp-text-2); }
-@media (max-width: 720px) {
-  .sp-fleet-wrap { max-width: 92vw; left: 8px; right: 8px; }
-  .sp-ide-files { width: 112px; flex-basis: 112px; }
-}
-
-/* GitHub-style language meter (IDE) */
-.sp-lang-meter {
-  flex: 0 0 4px;
-  display: flex;
-  width: 100%;
-  height: 4px;
-  overflow: hidden;
-  background: rgba(255,255,255,0.04);
-}
-.sp-lang-meter i {
-  display: block;
-  height: 100%;
-  min-width: 0;
-}
-.sp-lang-meter-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  padding: 3px 10px 4px;
-  font-size: 10px;
-  color: var(--sp-text-2);
-  border-bottom: 1px solid rgba(128, 130, 190, 0.06);
-}
-.sp-lang-meter-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.sp-lang-meter-legend em {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  display: inline-block;
-}
-.sp-chat-float .sp-copilot-body,
-.sp-focus-col .sp-copilot-body {
-  max-height: min(40vh, 360px);
 }

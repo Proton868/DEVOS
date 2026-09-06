@@ -65,16 +65,37 @@ export default function CosmicSidebar() {
 
   const workflowNodes = Array.isArray(nodes) ? nodes.filter((n) => n.kind === "runtime") : [];
   // Fleet: real workers + live mission persona activity (not decorative)
+  // Active work first (missions/tasks); catalog is not "RUNNING"
   const agentRows = (() => {
-    const fromWorkers = Array.isArray(workers) ? workers : [];
-    if (fromWorkers.length) return fromWorkers;
     const nodes = orchestrationMission?.nodes || [];
-    if (!nodes.length) return [];
-    return nodes.map((n) => ({
-      slug: n.persona_id || n.id,
-      name: n.persona_id || n.id,
-      status: n.status,
-      _mission: true,
+    if (nodes.length) {
+      return nodes.map((n) => ({
+        slug: n.persona_id || n.id,
+        name: n.persona_id || n.id,
+        status: n.status,
+        _mission: true,
+      }));
+    }
+    const active = Array.isArray(workers?.active) ? workers.active
+      : Array.isArray(workers?.fleet?.active_work) ? workers.fleet.active_work
+      : [];
+    if (active.length) {
+      return active.map((a, i) => ({
+        slug: a.id || `active-${i}`,
+        name: a.goal || a.id || "task",
+        status: a.status || "RUNNING",
+        _mission: true,
+      }));
+    }
+    // Fall back to catalog only as idle specialists (not running)
+    const catalog = Array.isArray(workers) ? workers
+      : Array.isArray(workers?.catalog) ? workers.catalog
+      : Array.isArray(workers?.workers) ? workers.workers
+      : [];
+    return catalog.slice(0, 6).map((w) => ({
+      ...w,
+      status: "IDLE",
+      name: w.name || w.slug,
     }));
   })();
 

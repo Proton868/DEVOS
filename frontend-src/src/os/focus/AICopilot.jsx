@@ -2,7 +2,7 @@
  * AICopilot — Nuha / persona chat surface (spatial focus layer).
  * Real backend: /api/chat/send (SSE via api.streamChat) with persona_id.
  */
-import React, { useCallback, useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Send, X, Move, PanelRight, UserRound } from "lucide-react";
@@ -10,7 +10,6 @@ import useOsStore from "../store/osStore";
 import useStore from "../../store/useStore";
 import { api } from "../../services/api";
 import { applySurfaceIntent } from "../surfaceIntent";
-import { useVoiceInput } from "../../hooks/useVoiceInput";
 
 function buildContextNote({ node, editorFile, editorContent, personaName }) {
   const proj = useStore.getState().currentProject;
@@ -39,42 +38,13 @@ export default function AICopilot({ floating = false }) {
   const { selectedProvider, selectedModel } = useStore();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
-  const personaId = (copilot.personaId || activePersonaId || "nuha").toLowerCase();
-  const [voiceStatus, setVoiceStatus] = useState(null); // LISTENING | THINKING | SPEAKING | null
-  const [voiceSessionId, setVoiceSessionId] = useState(null);
-  const onVoiceResult = useCallback(async (text) => {
-    if (!text || !text.trim()) return;
-    setInput(text.trim());
-    setVoiceStatus("THINKING");
-    try {
-      if (voiceSessionId) {
-        await api.caraiTranscript?.({
-          session_id: voiceSessionId,
-          persona_id: personaId,
-          channel: "voice",
-          speaker: "user",
-          text: text.trim(),
-        });
-        await api.caraiSessionStatus?.(voiceSessionId, "THINKING");
-      }
-    } catch { /* offline */ }
-    // hand to existing send path by setting input — user can send, or auto-send
-  }, [voiceSessionId, personaId]);
-  const { listening, interim, start: startVoice, stop: stopVoice, supported: voiceSupported, error: voiceError } = useVoiceInput({
-    onResult: (t) => { onVoiceResult(t); },
-  });
-  const toggleVoice = useCallback(() => {
-    if (listening) stopVoice();
-    else startVoice();
-  }, [listening, startVoice, stopVoice]);
-
-
   const [streaming, setStreaming] = useState(false);
   const [personaMeta, setPersonaMeta] = useState({ name: "Nuha", id: "nuha" });
   const [error, setError] = useState(null);
   const bodyRef = useRef(null);
   const sessionIdRef = useRef(undefined);
 
+  const personaId = (copilot.personaId || activePersonaId || "nuha").toLowerCase();
 
   useEffect(() => {
     let cancelled = false;
@@ -215,6 +185,17 @@ export default function AICopilot({ floating = false }) {
           break;
         }
         if (evt.surface_intent) surfaceIntent = evt.surface_intent;
+        if (evt.orchestration?.plan_id) {
+          try {
+            applyOrchestrationPlan({
+              id: evt.orchestration.plan_id,
+              status: evt.orchestration.status,
+              goal: text,
+            });
+            setActivePlanId(evt.orchestration.plan_id);
+            setOrchestrationStatus(evt.orchestration.status || null);
+          } catch (_) { /* store optional */ }
+        }
         if (evt.delta || evt.text) {
           const chunk = evt.delta || evt.text || "";
           setMessages((ms) => {
@@ -336,12 +317,6 @@ export default function AICopilot({ floating = false }) {
             {personaMeta.name} is thinking…
           </div>
         )}
-        {(listening || voiceStatus === "LISTENING") && (
-          <div className="sp-copilot-voice" data-voice-status="LISTENING" aria-live="polite">
-            Listening… {interim || ""}
-          </div>
-        )}
-        {voiceError && <div className="sp-copilot-error">Voice: {voiceError}</div>}
       </div>
       <div className="sp-copilot-input">
         <textarea
@@ -356,16 +331,6 @@ export default function AICopilot({ floating = false }) {
             }
           }}
         />
-        <button
-          type="button"
-          className={`sp-voice-btn ${listening ? "active" : ""}`}
-          onClick={toggleVoice}
-          disabled={!voiceSupported}
-          title={voiceSupported ? (listening ? "Stop voice" : "Talk — Carai voice session") : "Voice not supported in this browser"}
-          aria-pressed={listening}
-        >
-          {listening ? "Stop" : "Voice"}
-        </button>
         <button className="sp-send-btn" onClick={send} disabled={streaming || !input.trim()}>
           <Send size={15} />
         </button>

@@ -27,9 +27,81 @@ router = APIRouter()
 
 @router.get("")
 async def list_workers(request: Request, db=Depends(get_db)):
+    """Return specialist catalog + active orchestration/task activity separately.
+
+    `workers` remains the static agent library (catalog).
+    `active` is live mission/task state — never mark catalog rows as RUNNING.
+    """
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    return {"workers": [p.to_dict() for p in AGENT_LIBRARY.values()]}
+    catalog = [p.to_dict() for p in AGENT_LIBRARY.values()]
+    active = []
+    # Terminal statuses must NOT appear as current Fleet activity
+    _TERMINAL = {
+        "completed", "complete", "succeeded", "success", "failed", "error",
+        "cancelled", "canceled", "blocked", "idle", "plan_ready",
+    }
+    _ACTIVE = {
+        "running", "executing", "queued", "delegating", "delegated",
+        "authorized", "action_requested", "waiting", "waiting_for_user",
+        "verifying", "recovering", "planning", "context_gathering",
+        "cancel_requested", "cancelling",
+    }
+
+    def _is_active_status(st: str) -> bool:
+        s = (st or "").lower().strip()
+        if not s:
+            return False
+        if s in _TERMINAL:
+            return False
+        if s in _ACTIVE:
+            return True
+        # Unknown non-terminal → treat as active only if clearly in-progress keywords
+        return any(k in s for k in ("run", "queue", "wait", "delegat", "execut", "plan"))
+
+    try:
+        from brain.orchestration_store import list_user_plans as durable_list_plans
+        plans = await durable_list_plans(user.id, limit=30)
+        for pl in plans or []:
+            d = pl if isinstance(pl, dict) else (pl.to_dict() if hasattr(pl, "to_dict") else {})
+            st = d.get("status") or ""
+            if not _is_active_status(st):
+                continue
+            active.append({
+                "kind": "mission",
+                "id": d.get("id") or d.get("plan_id"),
+                "status": st,
+                "goal": (d.get("goal") or "")[:120],
+                "personas": d.get("personas") or [],
+            })
+    except Exception:
+        pass
+    try:
+        from brain.agent_task_store import list_user_tasks
+        tasks = await list_user_tasks(user.id, limit=20)
+        for task in tasks or []:
+            td = task if isinstance(task, dict) else {}
+            st = td.get("status") or ""
+            if not _is_active_status(st):
+                continue
+            active.append({
+                "kind": "agent_task",
+                "id": td.get("id") or td.get("task_id"),
+                "status": st,
+                "goal": (td.get("objective") or td.get("goal") or td.get("summary") or "")[:120],
+            })
+    except Exception:
+        pass
+
+    return {
+        "workers": catalog,
+        "catalog": catalog,
+        "active": active,
+        "fleet": {
+            "available_specialists": catalog,
+            "active_work": active,
+        },
+    }
 
 
 @router.get("/{slug}")

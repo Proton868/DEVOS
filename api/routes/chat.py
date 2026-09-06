@@ -262,6 +262,16 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
     messages = [{"role": "system", "content": base_system + intent_note}]
     messages += [{"role": m.role, "content": m.content} for m in history]
     messages.append({"role": "user", "content": req.message})
+    # Selective durable memory into context (bounded)
+    try:
+        from brain.nuha_bridge import recall_for_prompt, format_memory_context, is_trivial_chat
+        if not is_trivial_chat(req.message):
+            mems = await recall_for_prompt(user.id, req.message, limit=5)
+            ctx = format_memory_context(mems)
+            if ctx:
+                messages.insert(1, {"role": "system", "content": ctx})
+    except Exception:
+        pass
     if not session.system_prompt:
         session.system_prompt = base_system
 
@@ -277,66 +287,122 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
     from brain.llm import BrainLLM
     brain = await BrainLLM.for_user(db, user.id, provider=req.provider or session.provider, model=req.model or session.model or None)
 
-    # CREATION website: write real workspace files instead of relying on chat HTML dumps
+    from brain.nuha_bridge import (
+        should_auto_orchestrate,
+        run_chat_orchestration,
+        synthesize_orchestration_reply,
+        selective_memory_save,
+        is_trivial_chat,
+    )
+    from brain.artifact_scaffold import scaffold_website_artifacts, _is_website_goal
+
+    # Promote executable chat → existing Mission/orchestration (not a second runtime)
+    orch_result = None
     scaffold_result = None
-    try:
-        from brain.personas import should_orchestrate_execution, classify_intent_heuristic
-        from brain.artifact_scaffold import scaffold_website_artifacts, _is_website_goal
-        if should_orchestrate_execution(req.message) and _is_website_goal(req.message):
-            scaffold_result = await scaffold_website_artifacts(
+    if should_auto_orchestrate(req.message):
+        try:
+            orch_result = await run_chat_orchestration(
                 user_id=user.id,
-                project_id="default",
                 goal=req.message,
+                workspace_id="default",
+                persona_id=persona_id,
+                execute=True,
             )
-            if scaffold_result.get("ok"):
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "SYSTEM: Workspace files were already created for this request: "
-                        + ", ".join(scaffold_result.get("files") or [])
-                        + f". Brand={scaffold_result.get('brand')}. "
-                        "Do NOT paste full HTML/CSS into the chat. Confirm the files, "
-                        "tell the user to open the DevOS IDE and preview index.html, "
-                        "and offer refinements."
-                    ),
-                })
-    except Exception:
-        scaffold_result = None
+        except Exception as e:
+            orch_result = {"ok": False, "orchestrated": True, "error": str(e)[:400]}
+
+        # Deterministic website fast-path still available as artifact assist when goal matches
+        try:
+            if _is_website_goal(req.message):
+                scaffold_result = await scaffold_website_artifacts(
+                    user_id=user.id,
+                    project_id="default",
+                    goal=req.message,
+                )
+        except Exception:
+            scaffold_result = None
 
     async def sse():
         full = ""
         try:
+            parts = []
+            if orch_result and orch_result.get("orchestrated"):
+                parts.append(synthesize_orchestration_reply(orch_result))
             if scaffold_result and scaffold_result.get("ok"):
-                # Prefer concise confirmation over model inventing a second full site
-                text = scaffold_result.get("message") or (
-                    "Created workspace site files. Open the DevOS IDE to preview index.html."
+                files = ", ".join(scaffold_result.get("files") or [])
+                parts.append(
+                    scaffold_result.get("message")
+                    or f"Workspace files ready: {files}. Open IDE / Preview for index.html."
                 )
-                # Still allow model to refine tone briefly if available
+            if parts:
+                text = "\n\n".join(parts)
+                # Optional short LLM polish (no full HTML dumps)
                 try:
-                    model_text = await brain.stream_chat(messages)
-                    if model_text and len(model_text) < 1200 and "<!DOCTYPE" not in model_text and "<html" not in model_text.lower():
-                        text = model_text.strip()
+                    model_text = await brain.stream_chat(
+                        messages
+                        + [{"role": "system", "content": "Summarize the orchestration outcome briefly for the user. Do not paste full HTML."}]
+                    )
+                    if (
+                        model_text
+                        and len(model_text) < 900
+                        and "<!DOCTYPE" not in model_text
+                        and "<html" not in model_text.lower()
+                    ):
+                        text = model_text.strip() + "\n\n" + text
                 except Exception:
                     pass
             else:
                 text = await brain.stream_chat(messages)
-            # Simulate streaming by chunking
             for i in range(0, len(text), 8):
-                chunk = text[i:i+8]
+                chunk = text[i : i + 8]
                 full += chunk
-                yield f"data: {json.dumps({'delta':chunk,'session_id':session.id})}\n\n"
+                yield f"data: {json.dumps({'delta': chunk, 'session_id': session.id})}\n\n"
                 await asyncio.sleep(0.04)
         except Exception as e:
             full = f"Error: {e}"
-            yield f"data: {json.dumps({'delta':full,'session_id':session.id})}\n\n"
+            yield f"data: {json.dumps({'delta': full, 'session_id': session.id})}\n\n"
         async with db:
             db.add(Message(session_id=session.id, role="assistant", content=full))
             await db.commit()
+        # Selective memory after meaningful orchestration
+        if orch_result and orch_result.get("ok") and not is_trivial_chat(req.message):
+            goal = (req.message or "")[:180]
+            st = orch_result.get("status")
+            personas = orch_result.get("personas") or []
+            fact = (
+                f"User requested: {goal}. "
+                f"Nuha orchestration status={st}; "
+                f"specialists={', '.join(personas) if personas else 'n/a'}; "
+                f"plan_id={orch_result.get('plan_id')}."
+            )
+            await selective_memory_save(
+                user.id,
+                content=fact,
+                role="system",
+                session_id=session.id,
+                metadata={"plan_id": orch_result.get("plan_id"), "source": "nuha_orchestration"},
+            )
         si = surface_intent_for_message(req.message)
-        yield f"data: {json.dumps({'done':True,'session_id':session.id,'surface_intent':si})}\n\n"
+        done = {
+            "done": True,
+            "session_id": session.id,
+            "surface_intent": si,
+        }
+        if orch_result:
+            done["orchestration"] = {
+                "plan_id": orch_result.get("plan_id"),
+                "status": orch_result.get("status"),
+                "orchestrated": True,
+                "ok": orch_result.get("ok"),
+            }
+        yield f"data: {json.dumps(done)}\n\n"
 
-    return StreamingResponse(sse(), media_type="text/event-stream",
-                              headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+    return StreamingResponse(
+        sse(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
 
 
 def _build_node_context_prompt(workflow_id: str, node_id: str) -> str:

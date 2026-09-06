@@ -62,35 +62,29 @@ ROLE
 You interpret user intent and orchestrate existing DevOS machinery. You are NOT a separate execution engine.
 You do NOT bypass UCIP governance. You do NOT claim work is done unless verification evidence exists.
 
-BUILT-IN IDE
-DevOS includes its own Monaco-based IDE, file workspace, terminal, Git, and agent tools.
-When the user says "launch the IDE", "open the IDE", or "coding environment", they mean the **DevOS IDE** —
-NOT VS Code, JetBrains, Vim, or external editors. Never ask which external IDE to install.
-Open / route to the DevOS IDE surface and the current project workspace.
-
 INTENT CLASSES
+Classify each request as one or more of:
 CONVERSATION | ADVICE | CREATION | EXECUTION | AUTOMATION | CODE | RESEARCH | MULTI-DOMAIN
 
 BEHAVIOR
 - CONVERSATION / ADVICE: answer clearly as Nuha.
-- CODE only when the user explicitly wants snippets in chat ("paste the code", "snippet only").
-- CREATION (website, app, page, landing): NEVER dump a full HTML/CSS document into chat.
-  Real artifacts are written into the DevOS workspace as files (index.html, style.css, etc.).
-  Confirm what was created, which paths, and that the user can open them in the DevOS IDE / preview.
-- If the system already scaffolded files, summarize that success — do not regenerate the entire site in the message.
-- EXECUTION / AUTOMATION: route through DevOS agent runtime + UCIP; do not pretend shell work ran in chat.
-- Prefer short, actionable replies over long questionnaires when the user already gave enough detail
-  (e.g. "1-page shoe site named Footwalk" is enough to build).
+- CODE (user explicitly wants code snippets only): provide code in chat.
+- CREATION / EXECUTION / AUTOMATION / MULTI-DOMAIN: do not merely dump code.
+  Describe the plan, which specialists/capabilities are needed, and that execution
+  goes through DevOS agent runtime + UCIP. Prefer actionable orchestration over
+  passive HTML dumps when the user asked for a real artifact (e.g. a website).
 
 DELEGATION
-Plan specialist hand-offs when needed. Specialists never receive more authority than you.
+When a request spans domains, plan specialist hand-offs (Web, Code, Automation,
+Design, Research, Data, Business). Specialists never receive more authority than you.
+Escalate out-of-domain specialist work back to Nuha.
 
 SAFETY
-Your words are not authorization. File writes and irreversible actions must pass UCIP / HITL.
-Prefer reversible steps first.
+Your words are not authorization. File writes, installs, network, and irreversible
+actions must pass existing UCIP / HITL gates. Prefer reversible steps first.
 
 TONE
-Direct, ship-oriented, honest about limits. Caribbean-proud professionalism.
+Direct, capable, Caribbean-proud professionalism. Ship-oriented. Honest about limits.
 """
 
 
@@ -214,59 +208,6 @@ _SPECIALISTS: list[Persona] = [
         escalation_targets=["nuha"],
         agent_slug="product-manager",
     ),
-    Persona(
-        id="writer",
-        name="Writer",
-        description="Professional writing: reports, docs, copy, editing — no external side effects.",
-        specialty="writing",
-        role="specialist",
-        system_prompt=(
-            "You are the DevOS Writer. Produce clear, structured, audience-aware writing. "
-            "Prefer accuracy and grounding when research is involved. Escalate external "
-            "side effects (push, deploy, publish) to Nuha. Writing is primarily artifact work."
-        ),
-        capabilities=["fs.read", "fs.write"],
-        allowed_tools=["write_file", "read_file"],
-        creation_domains=["article", "report", "documentation", "copy", "proposal", "email", "summary"],
-        advisory_domains=["editing", "tone", "structure", "proofreading"],
-        escalation_targets=["nuha", "research"],
-        agent_slug="technical-writer",
-    ),
-    Persona(
-        id="storyteller",
-        name="Storyteller",
-        description="Creative narrative: stories, characters, worldbuilding, long-form fiction.",
-        specialty="narrative",
-        role="specialist",
-        system_prompt=(
-            "You are the DevOS Storyteller. Focus on narrative coherence, character, pacing, "
-            "and voice. For large works, prefer structured chapter/file artifacts. "
-            "Escalate non-narrative engineering to Nuha."
-        ),
-        capabilities=["fs.read", "fs.write"],
-        allowed_tools=["write_file", "read_file"],
-        creation_domains=["story", "novel", "fiction", "character", "worldbuilding", "lore", "scene"],
-        advisory_domains=["pacing", "dialogue", "plot", "atmosphere"],
-        escalation_targets=["nuha"],
-        agent_slug="technical-writer",
-    ),
-    Persona(
-        id="script_writer",
-        name="Script Writer",
-        description="Scripts and structured dialogue: screen, stage, video, ads, VO.",
-        specialty="script",
-        role="specialist",
-        system_prompt=(
-            "You are the DevOS Script Writer. Produce structured scripts with scenes, dialogue, "
-            "action, and medium-appropriate format. Escalate publishing/deploy to Nuha."
-        ),
-        capabilities=["fs.read", "fs.write"],
-        allowed_tools=["write_file", "read_file"],
-        creation_domains=["screenplay", "script", "dialogue", "youtube", "podcast", "commercial", "voiceover"],
-        advisory_domains=["timing", "scene-structure", "narration"],
-        escalation_targets=["nuha"],
-        agent_slug="technical-writer",
-    ),
 ]
 
 
@@ -278,17 +219,7 @@ NUHA = Persona(
     role="orchestrator",
     can_delegate=True,
     system_prompt=NUHA_SYSTEM_PROMPT,
-    capabilities=[
-        "fs.read", "fs.write", "shell.exec", "web.search", "workflow.write",
-        "package.install", "vcs.write", "vcs.push",
-        "deployment.production", "external.publish",
-        "runtime.execute", "preview.serve",
-        "inspect_workspace", "build", "verify", "preview",
-        "github.commit", "github.push", "github.branch", "github.pull_request",
-        "deploy.vercel", "deploy.netlify", "deploy.cloudflare",
-        "share.create", "publish",
-        "web.intelligence", "voice.session",
-    ],
+    capabilities=["fs.read", "fs.write", "shell.exec", "web.search", "workflow.write"],
     allowed_tools=["*"],
     creation_domains=["*"],
     advisory_domains=["*"],
@@ -345,57 +276,50 @@ def specialist_in_domain(persona_id: str, domain_hint: str) -> bool:
 
 
 def suggest_personas_for_goal(goal: str) -> list[str]:
-    """Heuristic suggestions — Nuha still orchestrates; never grants authority."""
+    """Lightweight keyword routing — planning still goes through Nuha + intent layer."""
     g = (goal or "").lower()
     scored: list[tuple[int, str]] = []
-    rules = [
-        (["screenplay", "script", "youtube script", "podcast script", "voiceover", "dialogue scene", "ad script"], "script_writer", 10),
-        (["short story", "novel", "fiction", "worldbuilding", "character arc", "story about", "novella"], "storyteller", 10),
-        (["article", "documentation", "business proposal", "rewrite", "proofread", "marketing copy", "email draft", "report"], "writer", 9),
-        (["website", "frontend", "react", "css", "html"], "web", 8),
-        (["code", "api", "backend", "bug", "function", "refactor"], "code", 8),
-        (["research", "crawl", "competitor", "public website", "online presence"], "research", 8),
-        (["workflow", "automation", "trigger"], "automation", 7),
-        (["design", "ux", "layout"], "design", 7),
-        (["schema", "etl", "sql", "analytics"], "data", 7),
-        (["product", "go-to-market", "prd"], "business", 6),
-    ]
-    for keys, pid, weight in rules:
-        if any(k in g for k in keys):
-            scored.append((weight, pid))
-    scored.sort(key=lambda x: -x[0])
-    out = []
-    for _, pid in scored:
-        if pid not in out and pid in PERSONA_REGISTRY:
-            out.append(pid)
-    if "nuha" not in out:
-        out.insert(0, "nuha")
-    return out[:6]
+    for p in list_personas():
+        if p.id == "nuha":
+            continue
+        score = 0
+        for d in p.creation_domains + p.advisory_domains:
+            if d and d != "*" and d.lower() in g:
+                score += 2
+        if p.specialty and p.specialty.lower() in g:
+            score += 2
+        if score:
+            scored.append((score, p.id))
+    scored.sort(reverse=True)
+    return [pid for _, pid in scored[:5]]
 
+
+# Intent classes Nuha uses when classifying (mirrors brief)
+INTENT_CLASSES = (
+    "CONVERSATION",
+    "ADVICE",
+    "CREATION",
+    "EXECUTION",
+    "AUTOMATION",
+    "CODE",
+    "RESEARCH",
+    "MULTI-DOMAIN",
+)
 
 
 def classify_intent_heuristic(text: str) -> list[str]:
     t = (text or "").lower()
     classes: list[str] = []
-    if any(k in t for k in ("build", "create", "make me", "scaffold", "generate a site", "website", "landing page", "1 page", "one page")):
+    if any(k in t for k in ("build", "create", "make me", "scaffold", "generate a site", "website")):
         classes.append("CREATION")
-    if any(k in t for k in ("launch ide", "open ide", "ide environment", "coding environment", "open the ide", "launch an ide")):
-        classes.append("EXECUTION")
-        classes.append("IDE")
     if any(k in t for k in ("run", "execute", "deploy", "install", "build the")):
         classes.append("EXECUTION")
     if any(k in t for k in ("workflow", "automat", "when someone", "trigger", "schedule")):
         classes.append("AUTOMATION")
     if any(k in t for k in ("research", "look up", "find sources", "summarize the web")):
         classes.append("RESEARCH")
-    if any(k in t for k in ("only code", "snippet", "paste code")):
+    if any(k in t for k in ("only code", "snippet", "show me the html", "paste code")):
         classes.append("CODE")
-    if any(k in t for k in (
-        "preview", "show me the result", "show me what it looks like",
-        "open the preview", "open the site", "view the page", "show the website",
-        "show me the page", "open current project preview",
-    )):
-        classes.append("PREVIEW")
     if any(k in t for k in ("should i", "advise", "recommend", "what do you think")):
         classes.append("ADVICE")
     if not classes:
@@ -415,7 +339,12 @@ def classify_intent_heuristic(text: str) -> list[str]:
 def should_orchestrate_execution(text: str) -> bool:
     """True when Nuha should prefer agent/workflow machinery over chat-only answers."""
     classes = set(classify_intent_heuristic(text))
-    return bool(classes & {"CREATION", "EXECUTION", "AUTOMATION", "MULTI-DOMAIN"})
+    # RESEARCH included when the user asks for substantive investigation (not a one-liner).
+    if classes & {"CREATION", "EXECUTION", "AUTOMATION", "MULTI-DOMAIN"}:
+        return True
+    if "RESEARCH" in classes and len((text or "").split()) >= 6:
+        return True
+    return False
 
 
 def surface_intent_for_message(text: str) -> dict:
@@ -435,16 +364,7 @@ def surface_intent_for_message(text: str) -> dict:
         "confidence": 0.55,
         "context": {},
     }
-    if classes & {"PREVIEW"} and not (classes & {"CREATION", "EXECUTION", "AUTOMATION"}):
-        intent = {
-            "surface": "preview",
-            "action": "open",
-            "required": True,
-            "reason": "User requested workspace artifact preview",
-            "confidence": 0.88,
-            "context": {"filePath": "index.html"},
-        }
-    elif classes & {"AUTOMATION"}:
+    if classes & {"AUTOMATION"}:
         intent = {
             "surface": "flow",
             "action": "open",
@@ -453,20 +373,14 @@ def surface_intent_for_message(text: str) -> dict:
             "confidence": 0.85,
             "context": {},
         }
-    elif classes & {"IDE"} or (
-        classes & {"CREATION", "EXECUTION"} and "CODE" not in classes
-    ):
-        ctx = {}
-        low = (text or "").lower()
-        if any(k in low for k in ("website", "landing", "1 page", "one page", "html")):
-            ctx["filePath"] = "index.html"
+    elif classes & {"CREATION", "EXECUTION"} and "CODE" not in classes:
         intent = {
             "surface": "ide",
             "action": "open",
             "required": True,
-            "reason": "DevOS IDE / workspace surface (not external editors)",
-            "confidence": 0.86,
-            "context": ctx,
+            "reason": "Creation/execution task — IDE surface",
+            "confidence": 0.82,
+            "context": {},
         }
     elif "CODE" in classes and not (classes & {"CREATION", "EXECUTION", "AUTOMATION"}):
         intent = {
