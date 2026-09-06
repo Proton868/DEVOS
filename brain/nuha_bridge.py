@@ -94,6 +94,70 @@ async def selective_memory_save(
         return None
 
 
+
+
+async def mirror_durable_task(
+    *,
+    user_id: str,
+    goal: str,
+    plan_id: Optional[str] = None,
+    worker_slug: str = "nuha",
+    status: str = "running",
+    result_payload: Optional[dict] = None,
+) -> Optional[str]:
+    """Best-effort: record TaskRequest/Result + protocol events for live Nuha plans.
+
+    Does not replace create_plan/execute_plan — only mirrors durable state.
+    """
+    try:
+        from core.task_contract import TaskRequest, TaskResult, TaskStatus
+        from core.task_registry import TaskRegistry
+        from core.event_store import EventStore, ProtocolEvent, ProtocolEventType
+        reg = TaskRegistry()
+        store = EventStore()
+        req = TaskRequest(
+            objective=goal,
+            worker_slug=worker_slug or "nuha",
+            metadata={"user_id": user_id, "plan_id": plan_id, "source": "nuha_bridge"},
+        )
+        if plan_id:
+            # Stable-ish id from plan for correlation
+            req.task_id = f"plan:{plan_id}"
+            req.execution_id = f"plan:{plan_id}"
+        reg.save_request(req)
+        store.emit(ProtocolEvent(
+            ProtocolEventType.TASK_DISPATCHED, req.task_id, req.execution_id,
+            agent_id=f"agent:{req.worker_slug}", root_task_id=req.task_id,
+            payload={"plan_id": plan_id, "user_id": user_id},
+        ))
+        store.emit(ProtocolEvent(
+            ProtocolEventType.TASK_STARTED, req.task_id, req.execution_id,
+            agent_id=f"agent:{req.worker_slug}", root_task_id=req.task_id,
+        ))
+        if result_payload is not None:
+            ok = bool(result_payload.get("ok", result_payload.get("orchestrated")))
+            st = TaskStatus.SUCCEEDED if ok and not result_payload.get("error") else TaskStatus.FAILED
+            if result_payload.get("cancelled"):
+                st = TaskStatus.CANCELLED
+            tr = TaskResult(
+                task_id=req.task_id, execution_id=req.execution_id,
+                worker_slug=req.worker_slug, status=st,
+                output=result_payload.get("reply") or result_payload.get("summary"),
+                errors=[result_payload["error"]] if result_payload.get("error") else [],
+                metadata={"plan_id": plan_id},
+            )
+            reg.save_result(tr)
+            et = ProtocolEventType.TASK_SUCCEEDED if st == TaskStatus.SUCCEEDED else (
+                ProtocolEventType.TASK_CANCELLED if st == TaskStatus.CANCELLED else ProtocolEventType.TASK_FAILED)
+            store.emit(ProtocolEvent(et, req.task_id, req.execution_id,
+                agent_id=f"agent:{req.worker_slug}", root_task_id=req.task_id,
+                payload={"plan_id": plan_id, "status": st.value}))
+        return req.task_id
+    except Exception as e:
+        logger.info("[nuha] mirror_durable_task failed: %s", type(e).__name__)
+        return None
+
+
 async def run_chat_orchestration(
     *,
     user_id: str,

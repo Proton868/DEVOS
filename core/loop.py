@@ -36,6 +36,7 @@ class LoopDecision(str, Enum):
     ESCALATE  = "escalate"
     COMPLETE  = "complete"
     ABORT     = "abort"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -124,6 +125,24 @@ Respond ONLY in this JSON format (no markdown):
 class BrainExecutionLoop:
     """Production Brain-Execution loop with all governance layers."""
 
+    _live = {}
+
+    def cancel(self, reason: str = "cancelled by caller") -> bool:
+        st = getattr(self, "_active_state", None)
+        if st is None:
+            return False
+        st.cancel_requested = True
+        if not getattr(st, "failure_reason", None):
+            st.failure_reason = reason
+        return True
+
+    @classmethod
+    def cancel_loop(cls, loop_id: str, reason: str = "cancelled by caller") -> bool:
+        inst = cls._live.get(loop_id)
+        if not inst:
+            return False
+        return inst.cancel(reason)
+
     def __init__(self, user_id, session_id, provider=None, model=None,
                  trust_level_str="OPERATOR", on_step=None, budget_override=None,
                  agent_identity=None, persona_prompt=None, tenant_id=None):
@@ -199,6 +218,10 @@ class BrainExecutionLoop:
 
         state.use_reflection = use_reflection  # read by _loop's mark_complete handling
         rl.register_loop(state.id)
+        self._active_state = state
+        if not hasattr(state, "cancel_requested"):
+            state.cancel_requested = False
+        BrainExecutionLoop._live[state.id] = self
         self.obs.start_trace(state.id, self.agent.agent_id, self.session_id, goal,
                              self.provider or "ollama", self.model or "default")
         try:
@@ -209,7 +232,11 @@ class BrainExecutionLoop:
             state.decision = LoopDecision.ABORT
         finally:
             rl.unregister_loop(state.id)
-            self.ckpt.delete(state.id)
+            self._active_state = None
+            BrainExecutionLoop._live.pop(state.id, None)
+            if getattr(state, "succeeded", False) or str(getattr(state, "decision", "")) in ("complete", "LoopDecision.COMPLETE"):
+                self.ckpt.delete(state.id)
+            # retain checkpoint on failure/cancel
             self.obs.finish_trace(
                 state.id,
                 status="complete" if state.succeeded else str(state.decision),
@@ -246,6 +273,11 @@ class BrainExecutionLoop:
                 f"This goal has been broken into subtasks. Work through them in dependency order:\n{plan_text}"})
 
         while True:
+            if getattr(state, "cancel_requested", False):
+                from core.loop import LoopDecision as _LD
+                state.decision = getattr(_LD, "CANCELLED", _LD.ABORT)
+                state.final_answer = getattr(state, "failure_reason", None) or "cancelled"
+                break
             # Budget check
             budget_err = self.gateway.tick_iteration()
             if budget_err:
