@@ -84,6 +84,43 @@ class TaskResult:
     def succeeded(self): return self.status == TaskStatus.SUCCEEDED
     @property
     def is_terminal(self): return self.status in TERMINAL
+
+    @classmethod
+    def from_loop_state(cls, req, state, agent_id=None):
+        from enum import Enum
+        decision = getattr(state, "decision", None)
+        if isinstance(decision, Enum):
+            decision_s = decision.value
+        elif hasattr(decision, "value"):
+            decision_s = str(decision.value)
+        else:
+            decision_s = str(decision or "")
+        status_attr = getattr(state, "status", None)
+        if isinstance(status_attr, Enum):
+            status_s = status_attr.value
+        elif hasattr(status_attr, "value"):
+            status_s = str(status_attr.value)
+        else:
+            status_s = str(status_attr or "")
+        if status_s == "cancelled" or decision_s == "cancelled" or getattr(state, "cancel_requested", False):
+            status = TaskStatus.CANCELLED
+        elif status_s == "succeeded" or decision_s == "complete":
+            status = TaskStatus.SUCCEEDED
+        elif decision_s == "abort" or status_s == "failed":
+            status = TaskStatus.FAILED
+        else:
+            status = TaskStatus.SUCCEEDED if getattr(state, "succeeded", False) else TaskStatus.FAILED
+        return cls(
+            task_id=req.task_id, execution_id=req.execution_id, worker_slug=req.worker_slug,
+            status=status, agent_id=agent_id or req.agent_id,
+            output=getattr(state, "final_answer", None),
+            parent_task_id=req.parent_task_id, parent_loop_id=req.parent_loop_id,
+            root_loop_id=req.root_loop_id or getattr(state, "root_loop_id", None),
+            attempt=req.attempt, loop_id=getattr(state, "id", None),
+            decision=decision_s,
+            failure_reason=getattr(state, "failure_reason", None) or None,
+        )
+
     def to_dict(self):
         d={k:getattr(self,k) for k in (
             "task_id","execution_id","agent_id","worker_slug","output","artifacts","errors","evidence",

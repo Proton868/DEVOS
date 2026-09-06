@@ -86,6 +86,41 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
         )
 
 
+
+    # --- Canonical durable task identity (AgentProtocol correlation) ---
+    task_req = None
+    try:
+        from core.task_contract import TaskRequest, TaskResult, TaskStatus
+        from core.task_registry import TaskRegistry
+        from core.event_store import EventStore, ProtocolEvent, ProtocolEventType
+        task_req = TaskRequest(
+            objective=req.objective,
+            worker_slug=req.persona_id or "agent",
+            required_capabilities=list(req.effective_caps or []),
+            metadata={
+                "plan_id": req.plan_id,
+                "node_id": req.node_id,
+                "user_id": req.user_id,
+                "workspace_id": req.workspace_id,
+                "source": "mission_node",
+            },
+        )
+        # Stable correlation with mission node
+        task_req.task_id = f"node:{req.plan_id}:{req.node_id}"
+        task_req.execution_id = f"node:{req.plan_id}:{req.node_id}:{task_req.attempt}"
+        task_req.root_loop_id = f"plan:{req.plan_id}"
+        TaskRegistry().save_request(task_req)
+        store = EventStore()
+        for et in (ProtocolEventType.TASK_DISPATCHED, ProtocolEventType.TASK_ACKNOWLEDGED, ProtocolEventType.TASK_STARTED):
+            store.emit(ProtocolEvent(
+                et, task_req.task_id, task_req.execution_id,
+                agent_id=f"agent:{task_req.worker_slug}",
+                root_task_id=task_req.root_loop_id,
+                payload={"plan_id": req.plan_id, "node_id": req.node_id},
+            ))
+    except Exception as e:
+        logger.debug("durable task mirror at node start failed: %s", e)
+
     # --- Web Intelligence path: existing Jobs + crawler (not Agent Runtime tools) ---
     caps = {c.lower() for c in (req.effective_caps or [])}
     kind = (req.node_kind or "").lower()
@@ -174,6 +209,7 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
         result.success = False
         result.status = "error"
         result.error = result.error or "AGENT_RUNTIME_UNAVAILABLE: no events from runtime"
+        _finalize_node_task(task_req, result)
     return result
 
 
@@ -314,3 +350,44 @@ async def _run_web_crawl_node(req: NodeExecutionRequest) -> NodeExecutionResult:
         raw_terminal={"crawl": crawl, "job_result": result},
         events_seen=["web_crawl.started", f"web_crawl.{st.lower()}"],
     )
+
+
+def _finalize_node_task(task_req, result: "NodeExecutionResult") -> None:
+    """Persist TaskResult + terminal event for a mission node execution."""
+    if task_req is None:
+        return
+    try:
+        from core.task_contract import TaskResult, TaskStatus
+        from core.task_registry import TaskRegistry
+        from core.event_store import EventStore, ProtocolEvent, ProtocolEventType
+        if result.status == "cancelled":
+            st = TaskStatus.CANCELLED
+            et = ProtocolEventType.TASK_CANCELLED
+        elif result.success:
+            st = TaskStatus.SUCCEEDED
+            et = ProtocolEventType.TASK_SUCCEEDED
+        else:
+            st = TaskStatus.FAILED
+            et = ProtocolEventType.TASK_FAILED
+        tr = TaskResult(
+            task_id=task_req.task_id,
+            execution_id=task_req.execution_id,
+            worker_slug=task_req.worker_slug,
+            status=st,
+            output=result.summary,
+            errors=[result.error] if result.error else [],
+            metadata={"plan_id": task_req.metadata.get("plan_id"), "node_id": task_req.metadata.get("node_id"),
+                      "agent_task_id": result.task_id},
+            parent_task_id=task_req.parent_task_id,
+            root_loop_id=task_req.root_loop_id,
+            attempt=task_req.attempt,
+        )
+        TaskRegistry().save_result(tr)
+        EventStore().emit(ProtocolEvent(
+            et, task_req.task_id, task_req.execution_id,
+            agent_id=f"agent:{task_req.worker_slug}",
+            root_task_id=task_req.root_loop_id,
+            payload={"status": st.value, "node_status": result.status},
+        ))
+    except Exception as e:
+        logger.debug("durable task finalize failed: %s", e)

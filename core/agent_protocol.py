@@ -81,79 +81,84 @@ class AgentProtocol:
         return self.orch.cancel_tree(task_id, reason)
     def resume_request(self, task_id):
         return self.orch.resume_request(task_id)
+
     async def dispatch(self, request, requester_identity, provider=None, model=None, on_step=None, agent=None):
+        """Canonical delegation: TaskRequest → registry → WorkerRuntime(task=) → TaskResult."""
         if not isinstance(request, TaskRequest):
             request = TaskRequest.from_dict(request)
         required = list(request.required_capabilities or [])
         if agent is None:
             if request.worker_slug:
                 candidates = [a for a in self.agents.list() if a.worker_slug == request.worker_slug]
-                if required: candidates = [a for a in candidates if a.satisfies(required)]
-                agent = candidates[0] if candidates else AgentDescriptor(
-                    f"agent:{request.worker_slug}", request.worker_slug, request.worker_slug)
+                if required:
+                    candidates = [a for a in candidates if a.satisfies(required)]
+                agent = candidates[0] if candidates else None
+                if agent is None:
+                    from core.agent_protocol import AgentDescriptor
+                    agent = AgentDescriptor(
+                        agent_id=f"agent:{request.worker_slug}",
+                        worker_slug=request.worker_slug,
+                        name=request.worker_slug,
+                        capabilities=list(required) if required else ["general"],
+                    )
+                    self.agents.register(agent)
             else:
                 agent = self.agents.select(required)
             if agent is None:
-                err = f"No agent for {required}/{request.worker_slug}"
-                return TaskResult(task_id=request.task_id, execution_id=request.execution_id,
-                    worker_slug=request.worker_slug or "unknown", status=TaskStatus.FAILED, errors=[err], failure_reason=err)
-        request.worker_slug = agent.worker_slug; request.agent_id = agent.agent_id
-        if not request.root_loop_id: request.root_loop_id = request.parent_task_id or request.task_id
+                err = f"No agent for capabilities={required} slug={request.worker_slug}"
+                result = TaskResult(
+                    task_id=request.task_id, execution_id=request.execution_id,
+                    worker_slug=request.worker_slug or "unknown", status=TaskStatus.FAILED,
+                    errors=[err], failure_reason=err, attempt=request.attempt,
+                    parent_task_id=request.parent_task_id, root_loop_id=request.root_loop_id,
+                )
+                self.tasks.save_result(result)
+                return result
+
+        request.worker_slug = agent.worker_slug
+        request.agent_id = agent.agent_id
+        if not request.root_loop_id:
+            request.root_loop_id = request.parent_task_id or request.task_id
+
         self.tasks.save_request(request)
-        if request.parent_task_id: self.tasks.link_child(request.parent_task_id, request.task_id)
+        if request.parent_task_id:
+            self.tasks.link_child(request.parent_task_id, request.task_id)
+
         for et in (ProtocolEventType.TASK_DISPATCHED, ProtocolEventType.TASK_ACKNOWLEDGED, ProtocolEventType.TASK_STARTED):
-            self.events.emit(ProtocolEvent(et, request.task_id, request.execution_id,
-                agent_id=agent.agent_id, parent_task_id=request.parent_task_id, root_task_id=request.root_loop_id))
+            self.events.emit(ProtocolEvent(
+                et, request.task_id, request.execution_id,
+                agent_id=agent.agent_id, parent_task_id=request.parent_task_id,
+                root_task_id=request.root_loop_id,
+                payload={"worker_slug": agent.worker_slug},
+            ))
+
         try:
-            from workers.runtime import WorkerRuntime, UnknownWorkerError
-            # Main WorkerRuntime requires tenant_id; pass through metadata when present
+            from workers.runtime import WorkerRuntime, UnknownWorkerError, WorkerTrustUnavailable
             tenant_id = (request.metadata or {}).get("tenant_id") or getattr(requester_identity, "tenant_id", None)
-            kwargs = dict(
-                slug=request.worker_slug,
-                goal=request.objective,
+            state, identity, result = await WorkerRuntime().run(
                 requester_identity=requester_identity,
                 provider=provider,
                 model=model,
                 on_step=on_step,
+                tenant_id=tenant_id,
+                owner_id=getattr(requester_identity, "user_id", None),
+                task=request,
             )
-            # Optional kwargs if signature supports them
-            import inspect
-            sig = inspect.signature(WorkerRuntime.run)
-            if "tenant_id" in sig.parameters and tenant_id:
-                kwargs["tenant_id"] = tenant_id
-            if "task" in sig.parameters:
-                kwargs["task"] = request
-            out = await WorkerRuntime().run(**{k: v for k, v in kwargs.items() if k != "task" or "task" in sig.parameters})
-            if isinstance(out, tuple) and len(out) == 3:
-                state, identity, result = out
-            elif isinstance(out, tuple) and len(out) == 2:
-                state, identity = out
-                decision = str(getattr(state, "decision", ""))
-                status = TaskStatus.SUCCEEDED if "complete" in decision else (
-                    TaskStatus.CANCELLED if "cancel" in decision.lower() else TaskStatus.FAILED
-                )
-                result = TaskResult(
-                    task_id=request.task_id, execution_id=request.execution_id,
-                    worker_slug=request.worker_slug, status=status,
-                    output=getattr(state, "final_answer", None), agent_id=agent.agent_id,
-                    attempt=request.attempt, parent_task_id=request.parent_task_id,
-                    root_loop_id=request.root_loop_id, loop_id=getattr(state, "id", None),
-                )
-            else:
-                raise RuntimeError(f"unexpected WorkerRuntime return: {type(out)}")
         except Exception as e:
             logger.exception("dispatch failed")
             result = TaskResult(
                 task_id=request.task_id, execution_id=request.execution_id,
                 worker_slug=request.worker_slug, status=TaskStatus.FAILED,
-                errors=[str(e)], failure_reason=str(e), agent_id=agent.agent_id,
+                agent_id=agent.agent_id, errors=[str(e)], failure_reason=str(e),
                 attempt=request.attempt, parent_task_id=request.parent_task_id,
                 root_loop_id=request.root_loop_id,
             )
         self.tasks.save_result(result)
         et = ProtocolEventType.TASK_SUCCEEDED if result.succeeded else (
             ProtocolEventType.TASK_CANCELLED if result.status == TaskStatus.CANCELLED else ProtocolEventType.TASK_FAILED)
-        self.events.emit(ProtocolEvent(et, request.task_id, request.execution_id, agent_id=agent.agent_id,
+        self.events.emit(ProtocolEvent(
+            et, request.task_id, request.execution_id, agent_id=agent.agent_id,
             parent_task_id=request.parent_task_id, root_task_id=request.root_loop_id,
-            payload={"status": result.status.value}))
+            payload={"status": result.status.value},
+        ))
         return result

@@ -378,21 +378,44 @@ class BrainExecutionLoop:
 
                 state.add_step(StepType.THINK, f"Delegating to '{worker_slug}': {sub_goal[:80]}")
                 await self._emit(state.steps[-1])
-                from workers.runtime import WorkerRuntime, UnknownWorkerError, WorkerTrustUnavailable
+                # Nested delegation through AgentProtocol (canonical path)
                 try:
-                    if not self.tenant_id:
+                    from core.task_contract import TaskRequest
+                    from core.agent_protocol import AgentProtocol, AgentRegistry
+                    from workers.runtime import WorkerTrustUnavailable
+                    if not getattr(self, "tenant_id", None):
                         raise WorkerTrustUnavailable(
                             "BrainExecutionLoop.tenant_id required for spawn_agent (fail-closed)"
                         )
-                    sub_state, sub_identity = await WorkerRuntime().run(
-                        worker_slug, sub_goal, self.agent,
-                        provider=self.provider, model=self.model,
-                        tenant_id=self.tenant_id,
-                        owner_id=self.user_id,
+                    parent_task_id = getattr(state, "task_id", None) or getattr(self, "task_id", None)
+                    root_loop_id = getattr(state, "root_loop_id", None) or state.id
+                    child_req = TaskRequest(
+                        objective=sub_goal,
+                        worker_slug=worker_slug,
+                        parent_task_id=parent_task_id,
+                        parent_loop_id=state.id,
+                        root_loop_id=root_loop_id,
+                        metadata={"tenant_id": self.tenant_id, "source": "spawn_agent"},
                     )
-                    sub_success = sub_state.decision == "complete"
-                    obs_text = f"Worker '{worker_slug}' {'completed' if sub_success else 'did not complete'}: {sub_state.final_answer[:400]}"
-                except (UnknownWorkerError, WorkerTrustUnavailable) as e:
+                    protocol = AgentProtocol(agent_registry=AgentRegistry())
+                    try:
+                        protocol.agents.bootstrap_from_library()
+                    except Exception:
+                        pass
+                    child_result = await protocol.dispatch(
+                        child_req,
+                        self.agent,
+                        provider=self.provider,
+                        model=self.model,
+                    )
+                    sub_success = bool(getattr(child_result, "succeeded", False))
+                    out = (getattr(child_result, "output", None) or "")[:400]
+                    obs_text = (
+                        f"Worker '{worker_slug}' via AgentProtocol "
+                        f"{'completed' if sub_success else 'did not complete'} "
+                        f"(task={child_result.task_id}): {out}"
+                    )
+                except Exception as e:
                     obs_text = f"spawn_agent failed: {e}"
                     sub_success = False
                 state.add_step(StepType.OBSERVE, obs_text[:400])

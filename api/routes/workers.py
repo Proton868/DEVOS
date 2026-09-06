@@ -194,7 +194,7 @@ async def run_coordinated_plan(req: PlanRunRequest, request: Request, db=Depends
 async def _run_and_learn(slug: str, goal: str, user, tenant, session_id: str,
                          provider=None, model=None, on_step=None):
     requester_identity, human_ctx = await _build_human_identity(user, session_id, tenant.id)
-    state, delegated_identity = await WorkerRuntime().run(
+    state, delegated_identity, _task_result = await WorkerRuntime().run(
         slug, goal, requester_identity,
         provider=provider, model=model, on_step=on_step,
         tenant_id=tenant.id, db=None, owner_id=user.id,

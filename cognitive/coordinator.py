@@ -83,7 +83,7 @@ class Coordinator:
                     if persona:
                         if not tenant_id:
                             raise RuntimeError("coordinator requires tenant_id for WorkerRuntime (fail-closed)")
-                        state, delegated = await WorkerRuntime().run(
+                        state, delegated, _task_result = await WorkerRuntime().run(
                             persona.slug, subtask.description, requester_identity,
                             provider=provider, model=model,
                             tenant_id=tenant_id, owner_id=owner_id or requester_identity.user_id,
