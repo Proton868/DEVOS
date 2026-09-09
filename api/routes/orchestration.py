@@ -237,13 +237,52 @@ async def hitl_decide(approval_id: str, req: HitlDecisionReq, request: Request, 
         out = decide_approval(approval_id, decision=req.decision, decided_by=user.id)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    # Resume same plan when approved
+    # Resume same plan when approved — never restart a new mission
     if out and (out.get("status") == "APPROVED"):
+        plan_id = out.get("execution_id") or out.get("mission_id")
+        node_id = out.get("node_id")
+        if plan_id:
+            try:
+                from brain.orchestration import get_plan, get_plan_durable
+                plan = get_plan(plan_id) or await get_plan_durable(plan_id)
+                if plan and plan.user_id == user.id:
+                    if (plan.status or "").lower() in ("waiting_for_user", "awaiting_approval"):
+                        plan.status = "authorized"
+                        plan.emit("hitl.approved", {
+                            "approval_id": approval_id,
+                            "node_id": node_id,
+                        })
+                    for n in getattr(plan, "nodes", None) or []:
+                        if node_id and getattr(n, "id", None) == node_id:
+                            if (getattr(n, "status", "") or "").lower() in (
+                                "awaiting_approval", "waiting_for_user"
+                            ):
+                                n.status = "authorized"
+                    try:
+                        from brain.orchestration_store import persist_plan
+                        await persist_plan(plan)
+                    except Exception:
+                        pass
+                from execution.durable_resume import resume_plan
+                await resume_plan(plan_id)
+            except Exception:
+                pass
+    elif out and (out.get("status") == "DENIED"):
         plan_id = out.get("execution_id") or out.get("mission_id")
         if plan_id:
             try:
-                from execution.durable_resume import resume_plan
-                await resume_plan(plan_id)
+                from brain.orchestration import get_plan, get_plan_durable
+                plan = get_plan(plan_id) or await get_plan_durable(plan_id)
+                if plan and plan.user_id == user.id:
+                    plan.emit("hitl.denied", {"approval_id": approval_id})
+                    # Do not force-complete; leave blocked/waiting semantics to mission_truth
+                    if (plan.status or "").lower() in ("waiting_for_user", "awaiting_approval"):
+                        plan.status = "blocked"
+                    try:
+                        from brain.orchestration_store import persist_plan
+                        await persist_plan(plan)
+                    except Exception:
+                        pass
             except Exception:
                 pass
     return out or {}

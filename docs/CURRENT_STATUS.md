@@ -65,6 +65,8 @@ Authoritative spine (see [NUHA_RUNTIME.md](NUHA_RUNTIME.md)):
 | Agent-only `files_changed` without on-disk proof | does **not** pass verification |
 | Live SSE / cancel / HITL on production host | **UNPROVEN** |
 
+Production gates: [PRODUCTION_GATES.md](PRODUCTION_GATES.md) · Runtime: [NUHA_RUNTIME.md](NUHA_RUNTIME.md)
+
 ## Honest limits
 
 
