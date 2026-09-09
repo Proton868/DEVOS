@@ -1,6 +1,7 @@
 """Chat route — plain streaming chat (no autonomous loop)"""
 import asyncio
 import json
+import hashlib
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import StreamingResponse
@@ -355,11 +356,16 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                 yield f"data: {json.dumps({'status': 'planning', 'session_id': session.id})}\n\n"
                 try:
                     # Fast durable plan first (no full execute)
+                    # Idempotent: same user+session+goal reuses non-terminal plan
+                    _idem = hashlib.sha256(
+                        f"{user.id}:{session.id}:{req.message.strip()}".encode()
+                    ).hexdigest()[:24]
                     plan = await create_plan(
                         user_id=user.id,
                         goal=req.message,
                         workspace_id="default",
                         persona_id=persona_id,
+                        idempotency_key=f"chat:{_idem}",
                     )
                     yield f"data: {json.dumps({'status': 'plan_created', 'session_id': session.id, 'plan_id': plan.id, 'execution_id': plan.id, 'plan_status': plan.status})}\n\n"
                     yield f"data: {json.dumps({'status': 'delegating', 'session_id': session.id, 'plan_id': plan.id, 'execution_id': plan.id})}\n\n"

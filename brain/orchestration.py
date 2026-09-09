@@ -692,6 +692,19 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
         plan.emit("run.idempotent_skip", {"status": plan.status})
         await persist_plan(plan)
         return plan
+    # Honour cancel requested before any further work
+    st0 = (plan.status or "").lower()
+    if st0 in ("cancellation_requested", "cancelling"):
+        try:
+            from execution.cancel_cascade import cascade_cancel_plan
+            evidence = await cascade_cancel_plan(plan)
+            plan.emit("orchestration.cancelled", evidence)
+        except Exception as e:
+            plan.emit("orchestration.cancelled", {"error": str(e)[:200]})
+        plan.status = OrchStatus.CANCELLED.value
+        plan.emit("status.cancelled", {"reason": "cancel_before_execute"})
+        await persist_plan(plan)
+        return plan
     if OrchStatus(plan.status) == OrchStatus.PLAN_READY:
         plan.set_status(OrchStatus.ACTION_REQUESTED)
     elif OrchStatus(plan.status) not in (
