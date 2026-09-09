@@ -155,3 +155,15 @@ Chat SSE (`POST /api/chat/send`) still streams progressive status for conversati
 | Background `/run` | IMPLEMENTED |
 | Chat fully detached from mission lifetime | PARTIAL |
 | Live no-504 on production proxies | UNPROVEN |
+
+## Chat SSE event drain (IMPLEMENTED)
+
+During auto-orchestrated chat, after `plan_created` Nuha chat:
+
+1. Persists the plan
+2. Starts `execute_plan` as a shielded background task
+3. Streams `status=event` frames with `sequence` / `type` / `payload` as plan events grow
+4. Emits `executing` heartbeats every ~2s
+5. Terminal `done` uses `mission_truth(plan.status)` — not LLM narrative
+
+Clients may also poll `GET /api/orchestration/{plan_id}/events?after=N` if the SSE connection drops.

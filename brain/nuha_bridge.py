@@ -32,6 +32,7 @@ def is_trivial_chat(text: str) -> bool:
 _FAILURE_STATUSES = frozenset({
     "failed", "error", "cancelled", "canceled", "denied", "blocked",
     "verification_failed", "timeout", "timed_out",
+    "cancellation_requested", "cancelling", "canceled",
 })
 _SUCCESS_STATUSES = frozenset({
     "completed", "succeeded", "success", "verified", "plan_ready", "idle",

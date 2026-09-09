@@ -361,18 +361,40 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                         workspace_id="default",
                         persona_id=persona_id,
                     )
-                    yield f"data: {json.dumps({'status': 'plan_created', 'session_id': session.id, 'plan_id': plan.id, 'plan_status': plan.status})}\n\n"
-                    yield f"data: {json.dumps({'status': 'delegating', 'session_id': session.id, 'plan_id': plan.id})}\n\n"
+                    yield f"data: {json.dumps({'status': 'plan_created', 'session_id': session.id, 'plan_id': plan.id, 'execution_id': plan.id, 'plan_status': plan.status})}\n\n"
+                    yield f"data: {json.dumps({'status': 'delegating', 'session_id': session.id, 'plan_id': plan.id, 'execution_id': plan.id})}\n\n"
 
-                    # Long-running execute with keep-alive heartbeats so intermediaries stay open
+                    # Persist + background execute. Stream sequenced plan events + heartbeats.
+                    # Mission continues even if the client later disconnects (task is not cancelled on generator exit).
+                    try:
+                        from brain.orchestration_store import persist_plan
+                        await persist_plan(plan)
+                    except Exception:
+                        pass
+                    plan.emit("execution.started", {"source": "chat"})
+                    last_seq = 0
                     exec_task = asyncio.create_task(execute_plan(plan))
                     while not exec_task.done():
-                        yield f"data: {json.dumps({'status': 'executing', 'session_id': session.id, 'plan_id': plan.id})}\n\n"
+                        # Drain new sequenced events from the plan
+                        for ev in list(getattr(plan, "events", None) or []):
+                            seq = int(ev.get("sequence") or 0)
+                            if seq <= last_seq:
+                                continue
+                            last_seq = seq
+                            yield f"data: {json.dumps({'status': 'event', 'session_id': session.id, 'plan_id': plan.id, 'execution_id': plan.id, 'sequence': seq, 'type': ev.get('type'), 'payload': ev.get('payload') or ev.get('data') or {}})}\n\n"
+                        yield f"data: {json.dumps({'status': 'executing', 'session_id': session.id, 'plan_id': plan.id, 'execution_id': plan.id, 'last_seq': last_seq})}\n\n"
                         try:
                             await asyncio.wait_for(asyncio.shield(exec_task), timeout=2.0)
                         except asyncio.TimeoutError:
                             continue
                     plan = exec_task.result()
+                    # Final event drain
+                    for ev in list(getattr(plan, "events", None) or []):
+                        seq = int(ev.get("sequence") or 0)
+                        if seq <= last_seq:
+                            continue
+                        last_seq = seq
+                        yield f"data: {json.dumps({'status': 'event', 'session_id': session.id, 'plan_id': plan.id, 'execution_id': plan.id, 'sequence': seq, 'type': ev.get('type'), 'payload': ev.get('payload') or ev.get('data') or {}})}\n\n"
                     from brain.nuha_bridge import mission_truth
                     _truth = mission_truth(getattr(plan, "status", None))
                     orch_result = {
