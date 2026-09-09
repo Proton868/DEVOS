@@ -267,11 +267,19 @@ class OrchestrationPlan:
         self.emit(f"status.{self.status}", {"from": cur.value, "to": self.status})
 
     def emit(self, event_type: str, data: Optional[dict] = None) -> None:
-        self.events.append({
+        seq = len(self.events) + 1
+        evt = {
+            "event_id": f"{self.id}:{seq}",
+            "sequence": seq,
+            "execution_id": self.id,
+            "mission_id": self.id,
             "type": event_type,
-            "data": data or {},
+            "payload": data or {},
+            "data": data or {},  # backward compatible
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "at": datetime.now(timezone.utc).isoformat(),
-        })
+        }
+        self.events.append(evt)
 
 
 # In-memory store (per process). Durable extension can persist later.

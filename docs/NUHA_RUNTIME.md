@@ -129,3 +129,29 @@ Synthesis **must not** claim success when `ok` is false.
 - Installing A2A as the internal kernel
 - Replacing Mission Engine or UCIP
 - Claiming production readiness without live gates on the real host
+
+## Async execution handoff (IMPLEMENTED)
+
+`POST /api/orchestration/run` with `"background": true` (or `?background=1`):
+
+1. Creates/loads plan
+2. Persists plan
+3. Emits `execution.created` / `execution.started`
+4. Returns `{ execution_id, plan_id, stream }` immediately
+5. Runs `execute_plan` in a background task
+
+Observe progress:
+
+`GET /api/orchestration/{plan_id}/events?after=N`
+
+Events include monotonic `sequence`, `event_id`, `type`, `payload`.
+
+Chat SSE (`POST /api/chat/send`) still streams progressive status for conversational missions; long work should prefer orchestration `background` + event polling/stream to avoid proxy 504s.
+
+| Async path | Status |
+|------------|--------|
+| Sequenced plan events | IMPLEMENTED + TESTED |
+| Event replay `?after=N` | IMPLEMENTED |
+| Background `/run` | IMPLEMENTED |
+| Chat fully detached from mission lifetime | PARTIAL |
+| Live no-504 on production proxies | UNPROVEN |
