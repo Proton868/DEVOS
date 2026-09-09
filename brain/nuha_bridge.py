@@ -27,6 +27,39 @@ def is_trivial_chat(text: str) -> bool:
     return False
 
 
+
+# Terminal mission statuses that must never be reported as successful orchestration
+_FAILURE_STATUSES = frozenset({
+    "failed", "error", "cancelled", "canceled", "denied", "blocked",
+    "verification_failed", "timeout", "timed_out",
+})
+_SUCCESS_STATUSES = frozenset({
+    "completed", "succeeded", "success", "verified", "plan_ready", "idle",
+})
+_WAITING_STATUSES = frozenset({
+    "waiting_for_user", "awaiting_approval", "waiting_for_tool", "hitl",
+})
+
+
+def mission_truth(status: str | None, *, explicit_ok: bool | None = None) -> dict:
+    """Machine-readable mission truth for synthesis and SSE.
+
+    Status failure/waiting always wins over a bad ok=True.
+    Never treat failed/cancelled/blocked as success.
+    """
+    st = (status or "unknown").lower().strip()
+    if st in _FAILURE_STATUSES:
+        return {"ok": False, "status": st, "synthesis_mode": "failure"}
+    if st in _WAITING_STATUSES:
+        return {"ok": False, "status": st, "synthesis_mode": "waiting"}
+    if explicit_ok is False:
+        return {"ok": False, "status": st, "synthesis_mode": "failure"}
+    if st in _SUCCESS_STATUSES or explicit_ok is True:
+        return {"ok": True, "status": st, "synthesis_mode": "success"}
+    # Unknown / running / intermediate: not a claimed success
+    return {"ok": False, "status": st or "unknown", "synthesis_mode": "incomplete"}
+
+
 def should_auto_orchestrate(text: str) -> bool:
     """Executable work only — not greetings or short Q&A."""
     if is_trivial_chat(text):
@@ -143,16 +176,19 @@ async def run_chat_orchestration(
         plan.status,
         len(steps),
     )
+    truth = mission_truth(getattr(plan, "status", None))
     return {
-        "ok": True,
+        "ok": truth["ok"],
         "orchestrated": True,
         "plan_id": plan.id,
         "status": plan.status,
+        "synthesis_mode": truth["synthesis_mode"],
         "intent_classes": classes,
         "plan": pdata,
         "personas": personas,
         "steps": steps,
         "agent_task_ids": pdata.get("agent_task_ids") or [],
+        "execution_path": "MISSION_EXECUTION",
     }
 
 
@@ -160,18 +196,30 @@ def synthesize_orchestration_reply(orch: dict) -> str:
     """User-facing summary without claiming false success."""
     if not orch:
         return ""
-    if not orch.get("ok"):
+    status = orch.get("status") or (orch.get("plan") or {}).get("status") or "unknown"
+    truth = mission_truth(status, explicit_ok=orch.get("ok") if "ok" in orch else None)
+    if truth["synthesis_mode"] == "failure" or not truth["ok"]:
+        if truth["synthesis_mode"] == "waiting":
+            return (
+                f"Mission `{orch.get('plan_id')}` is **waiting for you** "
+                f"(status `{status}`). Approve or answer in the UI, then continue."
+            )
+        if truth["synthesis_mode"] == "incomplete" and not orch.get("error"):
+            return (
+                f"Mission `{orch.get('plan_id')}` ended in status `{status}` — "
+                "not treated as completed. Check Fleet / mission details for node results."
+            )
         return (
             f"I tried to run this through DevOS orchestration (plan `{orch.get('plan_id')}`), "
-            f"but execution hit: {orch.get('error') or orch.get('status')}. "
+            f"but execution hit: {orch.get('error') or status}. "
             "You can retry in Action mode or open the mission from Fleet."
         )
     plan = orch.get("plan") or {}
     steps = orch.get("steps") or plan.get("steps") or []
-    status = orch.get("status") or plan.get("status") or "unknown"
     lines = [
         f"**Nuha orchestration** — `{status}`",
         f"Plan: `{orch.get('plan_id')}`",
+        f"Path: `{orch.get('execution_path') or 'MISSION_EXECUTION'}`",
     ]
     if orch.get("intent_classes"):
         lines.append(f"Intent: {', '.join(orch['intent_classes'])}")

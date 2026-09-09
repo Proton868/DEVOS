@@ -39,10 +39,48 @@ async def list_sessions(request: Request, db=Depends(get_db)):
         .limit(50)
     )
     sessions = r.scalars().all()
-    return [{"id": s.id, "title": s.title, "provider": s.provider,
-             "model": s.model, "mode": s.mode, "node_id": s.node_id,
-             "workflow_id": s.workflow_id, "updated_at": s.updated_at}
-            for s in sessions]
+    out = []
+    for s in sessions:
+        mc = await db.execute(
+            select(Message).where(Message.session_id == s.id)
+        )
+        count = len(mc.scalars().all())
+        out.append({
+            "id": s.id,
+            "title": s.title,
+            "provider": s.provider,
+            "model": s.model,
+            "mode": s.mode,
+            "node_id": s.node_id,
+            "workflow_id": s.workflow_id,
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+            "created_at": s.created_at.isoformat() if getattr(s, "created_at", None) else None,
+            "message_count": count,
+        })
+    return out
+
+
+@router.post("/sessions")
+async def create_session(request: Request, db=Depends(get_db)):
+    """Explicit New Chat — durable conversation, does not overwrite prior sessions."""
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    session = ChatSession(
+        user_id=user.id,
+        title="New Chat",
+        provider="ollama",
+        model="",
+        mode="chat",
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+    return {
+        "id": session.id,
+        "title": session.title,
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+        "message_count": 0,
+    }
 
 @router.delete("/sessions/{sid}")
 async def del_session(sid: str, request: Request, db=Depends(get_db)):
@@ -293,50 +331,97 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
         synthesize_orchestration_reply,
         selective_memory_save,
         is_trivial_chat,
+        recall_for_prompt,
+        format_memory_context,
     )
     from brain.artifact_scaffold import scaffold_website_artifacts, _is_website_goal
+    from brain.orchestration import create_plan, execute_plan
 
-    # Promote executable chat → existing Mission/orchestration (not a second runtime)
-    orch_result = None
-    scaffold_result = None
-    if should_auto_orchestrate(req.message):
-        try:
-            orch_result = await run_chat_orchestration(
-                user_id=user.id,
-                goal=req.message,
-                workspace_id="default",
-                persona_id=persona_id,
-                execute=True,
-            )
-        except Exception as e:
-            orch_result = {"ok": False, "orchestrated": True, "error": str(e)[:400]}
-
-        # Deterministic website fast-path still available as artifact assist when goal matches
-        try:
-            if _is_website_goal(req.message):
-                scaffold_result = await scaffold_website_artifacts(
-                    user_id=user.id,
-                    project_id="default",
-                    goal=req.message,
-                )
-        except Exception:
-            scaffold_result = None
+    # IMPORTANT: do NOT run execute_plan before SSE starts (root cause of HTTP 504).
+    # Classification + durable plan creation happen inside the generator with early events.
 
     async def sse():
         full = ""
+        orch_result = None
+        scaffold_result = None
         try:
+            # First byte immediately — keeps proxies/clients from 504'ing
+            yield f"data: {json.dumps({'status': 'received', 'session_id': session.id})}\n\n"
+            await asyncio.sleep(0)
+
+            yield f"data: {json.dumps({'status': 'classifying', 'session_id': session.id})}\n\n"
+
+            if should_auto_orchestrate(req.message):
+                yield f"data: {json.dumps({'status': 'planning', 'session_id': session.id})}\n\n"
+                try:
+                    # Fast durable plan first (no full execute)
+                    plan = await create_plan(
+                        user_id=user.id,
+                        goal=req.message,
+                        workspace_id="default",
+                        persona_id=persona_id,
+                    )
+                    yield f"data: {json.dumps({'status': 'plan_created', 'session_id': session.id, 'plan_id': plan.id, 'plan_status': plan.status})}\n\n"
+                    yield f"data: {json.dumps({'status': 'delegating', 'session_id': session.id, 'plan_id': plan.id})}\n\n"
+
+                    # Long-running execute with keep-alive heartbeats so intermediaries stay open
+                    exec_task = asyncio.create_task(execute_plan(plan))
+                    while not exec_task.done():
+                        yield f"data: {json.dumps({'status': 'executing', 'session_id': session.id, 'plan_id': plan.id})}\n\n"
+                        try:
+                            await asyncio.wait_for(asyncio.shield(exec_task), timeout=2.0)
+                        except asyncio.TimeoutError:
+                            continue
+                    plan = exec_task.result()
+                    from brain.nuha_bridge import mission_truth
+                    _truth = mission_truth(getattr(plan, "status", None))
+                    orch_result = {
+                        "ok": _truth["ok"],
+                        "orchestrated": True,
+                        "plan_id": plan.id,
+                        "status": plan.status,
+                        "synthesis_mode": _truth["synthesis_mode"],
+                        "execution_path": "MISSION_EXECUTION",
+                        "intent_classes": [],
+                        "plan": plan.to_dict() if hasattr(plan, "to_dict") else {},
+                        "personas": getattr(plan, "personas", None) or (plan.to_dict().get("personas") if hasattr(plan, "to_dict") else []),
+                        "steps": (plan.to_dict().get("steps") if hasattr(plan, "to_dict") else []) or [],
+                        "agent_task_ids": getattr(plan, "agent_task_ids", None) or [],
+                    }
+                    yield f"data: {json.dumps({'status': 'worker_completed' if _truth['ok'] else 'failed', 'session_id': session.id, 'plan_id': plan.id, 'plan_status': plan.status, 'ok': _truth['ok'], 'execution_path': 'MISSION_EXECUTION'})}\n\n"
+                except Exception as e:
+                    orch_result = {
+                        "ok": False,
+                        "orchestrated": True,
+                        "error": str(e)[:400],
+                        "plan_id": orch_result.get("plan_id") if orch_result else None,
+                    }
+                    yield f"data: {json.dumps({'status': 'failed', 'session_id': session.id, 'error': str(e)[:200]})}\n\n"
+
+                try:
+                    if _is_website_goal(req.message):
+                        scaffold_result = await scaffold_website_artifacts(
+                            user_id=user.id,
+                            project_id="default",
+                            goal=req.message,
+                        )
+                except Exception:
+                    scaffold_result = None
+            else:
+                yield f"data: {json.dumps({'status': 'responding', 'session_id': session.id})}\n\n"
+
             parts = []
             if orch_result and orch_result.get("orchestrated"):
                 parts.append(synthesize_orchestration_reply(orch_result))
             if scaffold_result and scaffold_result.get("ok"):
                 files = ", ".join(scaffold_result.get("files") or [])
+                msg = scaffold_result.get("message") or f"Workspace files ready: {files}. Open IDE / Preview for index.html."
+                # Explicitly not specialist delegation
                 parts.append(
-                    scaffold_result.get("message")
-                    or f"Workspace files ready: {files}. Open IDE / Preview for index.html."
+                    f"**Path: DIRECT_SCAFFOLD** (not specialist Mission execution)\n{msg}"
                 )
             if parts:
                 text = "\n\n".join(parts)
-                # Optional short LLM polish (no full HTML dumps)
                 try:
                     model_text = await brain.stream_chat(
                         messages
@@ -353,18 +438,26 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                     pass
             else:
                 text = await brain.stream_chat(messages)
+
             for i in range(0, len(text), 8):
                 chunk = text[i : i + 8]
                 full += chunk
                 yield f"data: {json.dumps({'delta': chunk, 'session_id': session.id})}\n\n"
-                await asyncio.sleep(0.04)
+                await asyncio.sleep(0.02)
         except Exception as e:
-            full = f"Error: {e}"
-            yield f"data: {json.dumps({'delta': full, 'session_id': session.id})}\n\n"
-        async with db:
-            db.add(Message(session_id=session.id, role="assistant", content=full))
-            await db.commit()
-        # Selective memory after meaningful orchestration
+            full = f"Nuha couldn't complete the operation. {str(e)[:180]}"
+            yield f"data: {json.dumps({'delta': full, 'session_id': session.id, 'status': 'failed'})}\n\n"
+
+        # Persist assistant message after stream body is known
+        try:
+            async with db:
+                db.add(Message(session_id=session.id, role="assistant", content=full or ""))
+                session.updated_at = datetime.now(timezone.utc)
+                db.add(session)
+                await db.commit()
+        except Exception:
+            pass
+
         if orch_result and orch_result.get("ok") and not is_trivial_chat(req.message):
             goal = (req.message or "")[:180]
             st = orch_result.get("status")
@@ -372,7 +465,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
             fact = (
                 f"User requested: {goal}. "
                 f"Nuha orchestration status={st}; "
-                f"specialists={', '.join(personas) if personas else 'n/a'}; "
+                f"specialists={', '.join(personas) if isinstance(personas, list) else personas}; "
                 f"plan_id={orch_result.get('plan_id')}."
             )
             await selective_memory_save(
@@ -382,11 +475,19 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                 session_id=session.id,
                 metadata={"plan_id": orch_result.get("plan_id"), "source": "nuha_orchestration"},
             )
+
         si = surface_intent_for_message(req.message)
+        final_status = "completed"
+        if orch_result is not None:
+            if orch_result.get("ok") is False:
+                final_status = "failed" if orch_result.get("synthesis_mode") != "waiting" else "waiting_for_user"
+            elif orch_result.get("orchestrated") and orch_result.get("ok"):
+                final_status = "completed"
         done = {
             "done": True,
             "session_id": session.id,
             "surface_intent": si,
+            "status": final_status,
         }
         if orch_result:
             done["orchestration"] = {
@@ -394,14 +495,27 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                 "status": orch_result.get("status"),
                 "orchestrated": True,
                 "ok": orch_result.get("ok"),
+                "synthesis_mode": orch_result.get("synthesis_mode"),
+                "execution_path": orch_result.get("execution_path") or "MISSION_EXECUTION",
+            }
+        if scaffold_result and scaffold_result.get("ok"):
+            done["scaffold"] = {
+                "ok": True,
+                "execution_path": "DIRECT_SCAFFOLD",
+                "files": scaffold_result.get("files") or [],
             }
         yield f"data: {json.dumps(done)}\n\n"
 
     return StreamingResponse(
         sse(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
+
 
 
 

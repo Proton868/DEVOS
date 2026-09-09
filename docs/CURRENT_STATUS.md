@@ -51,7 +51,22 @@ Aligned with **Governance v1 + Reliability v1** freeze (`main` tip including cha
 | Files / Git / Search / Memory / MCP / Research / Composer / Settings overlays | ✓ |
 | Supabase + local login | ✓ |
 
+## Nuha runtime (canonical)
+
+Authoritative spine (see [NUHA_RUNTIME.md](NUHA_RUNTIME.md)):
+
+`Nuha → Mission → DAG → UCIP → AgentRuntime → Tools → Artifacts → Verification → Mission Truth → SSE`
+
+| Item | Status |
+|------|--------|
+| `mission_truth()` status → ok / synthesis_mode | IMPLEMENTED + TESTED |
+| `MISSION_EXECUTION` vs `DIRECT_SCAFFOLD` labels | IMPLEMENTED |
+| Node COMPLETED requires verification pass | IMPLEMENTED |
+| Agent-only `files_changed` without on-disk proof | does **not** pass verification |
+| Live SSE / cancel / HITL on production host | **UNPROVEN** |
+
 ## Honest limits
+
 
 - LLM quality depends on Ollama or cloud keys (not exercised in CI without keys).
 - Pure-logic chaos drills **do not** replace live Postgres/Redis/process-kill staging.

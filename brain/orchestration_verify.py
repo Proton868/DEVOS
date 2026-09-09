@@ -38,12 +38,25 @@ async def verify_workspace_artifacts(
         fs = FileService(user_id, workspace_id or "default")
     except Exception as e:
         evidence["errors"].append(f"fileservice:{e}")
-        # Soft: if files_changed reported by agent, treat as weak evidence only
+        # Agent-reported files_changed alone is WEAK — not authoritative success.
+        # Without FileService we cannot confirm artifacts on disk.
         if files_changed:
-            evidence["checks"].append({"name": "agent_files_changed", "ok": True, "count": len(files_changed)})
-            evidence["passed"] = True
+            evidence["checks"].append({
+                "name": "agent_files_changed",
+                "ok": True,
+                "count": len(files_changed),
+                "note": "unconfirmed without FileService",
+            })
             evidence["weak"] = True
-        return evidence
+            evidence["passed"] = False  # unknown, not success
+            evidence["errors"].append("verification_incomplete: FileService unavailable")
+        evidence["verified"] = bool(evidence.get("passed"))
+    evidence["criteria"] = [c.get("name") for c in evidence.get("checks") or []]
+    evidence["failed_criteria"] = [
+        c.get("name") for c in (evidence.get("checks") or []) if not c.get("ok")
+    ]
+    evidence["verifier"] = "orchestration_verify.verify_workspace_artifacts"
+    return evidence
 
     candidates = [
         "index.html", "index.htm", "public/index.html",
@@ -81,15 +94,34 @@ async def verify_workspace_artifacts(
             "count": len(files_changed),
         })
 
-    # Website-like goals need at least one entry file or package.json
+    # Website-like goals need at least one entry file or package.json ON DISK
     needs_site = any(k in goal_l for k in ("website", "page", "landing", "site", "shoe"))
     if needs_site:
         ok = any(p.endswith((".html", ".htm", ".jsx", ".tsx")) for p in found) or "package.json" in found
         evidence["checks"].append({"name": "site_structure", "ok": ok})
-        evidence["passed"] = ok or (bool(files_changed) and len(files_changed) > 0)
+        # Agent-reported changes without found files are not sufficient
+        evidence["passed"] = bool(ok)
+        if not ok and files_changed:
+            evidence["weak"] = True
+            evidence["checks"].append({
+                "name": "agent_files_changed_unconfirmed",
+                "ok": False,
+                "count": len(files_changed),
+            })
     else:
-        # generic: any found file or agent reported changes
-        evidence["passed"] = len(found) > 0 or bool(files_changed)
+        # generic: require on-disk evidence; files_changed alone is weak
+        if len(found) > 0:
+            evidence["passed"] = True
+        elif files_changed:
+            evidence["weak"] = True
+            evidence["passed"] = False
+            evidence["checks"].append({
+                "name": "agent_files_changed_unconfirmed",
+                "ok": False,
+                "count": len(files_changed),
+            })
+        else:
+            evidence["passed"] = False
 
     if expected:
         # soft match against found names
