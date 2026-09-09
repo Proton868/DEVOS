@@ -500,8 +500,30 @@ async def dispatch_node(plan, node: OrchestrationNode) -> dict:
     if decision.hitl_required and getattr(plan, "risk_level", "") in ("critical", RiskLevel.CRITICAL.value if hasattr(RiskLevel, "CRITICAL") else "critical"):
         node.status = NodeStatus.AWAITING_APPROVAL.value
         plan.status = "waiting_for_user"
-        plan.emit("hitl.requested", {"node_id": node.id})
-        return {"node_id": node.id, "success": False, "failure_class": FailureClass.HITL_REJECTED.value, "awaiting_user": True}
+        approval = None
+        try:
+            from brain.hitl_store import create_approval
+            approval = create_approval(
+                execution_id=plan.id,
+                mission_id=plan.id,
+                node_id=node.id,
+                user_id=plan.user_id,
+                requested_action=str(node.description or node.id)[:500],
+                risk=str(getattr(plan, "risk_level", None) or "high"),
+            )
+        except Exception:
+            approval = None
+        plan.emit("hitl.requested", {
+            "node_id": node.id,
+            "approval_id": (approval or {}).get("approval_id"),
+        })
+        return {
+            "node_id": node.id,
+            "success": False,
+            "failure_class": FailureClass.HITL_REJECTED.value,
+            "awaiting_user": True,
+            "approval_id": (approval or {}).get("approval_id"),
+        }
 
     node.authorization_decision = "allow"
     node.capabilities = list(canonicalize_set(decision.effective_caps)) or list(node.capabilities or [])

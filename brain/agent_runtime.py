@@ -1389,16 +1389,51 @@ class AgentRuntime:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        # Track for cancellation; poll cancel flag while waiting
+        task = getattr(self, "_current_task", None)
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            deadline = asyncio.get_event_loop().time() + max(1, int(timeout or 60))
+            while True:
+                if task is not None and (
+                    getattr(task, "cancel_requested", False)
+                    or (_CANCEL_FLAGS.get(task.id) and _CANCEL_FLAGS[task.id].is_set())
+                ):
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                    await proc.wait()
+                    return {"exit_code": -1, "stdout": "", "stderr": "cancelled", "cancelled": True}
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                    await proc.wait()
+                    return {"exit_code": -1, "stdout": "", "stderr": "command timed out"}
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=min(1.0, remaining))
+                    return {
+                        "exit_code": proc.returncode,
+                        "stdout": stdout.decode(errors="replace"),
+                        "stderr": stderr.decode(errors="replace"),
+                    }
+                except asyncio.TimeoutError:
+                    if proc.returncode is not None:
+                        stdout, stderr = await proc.communicate()
+                        return {
+                            "exit_code": proc.returncode,
+                            "stdout": (stdout or b"").decode(errors="replace"),
+                            "stderr": (stderr or b"").decode(errors="replace"),
+                        }
+                    continue
         except asyncio.TimeoutError:
-            proc.kill()
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
             return {"exit_code": -1, "stdout": "", "stderr": "command timed out"}
-        return {
-            "exit_code": proc.returncode,
-            "stdout": stdout.decode(errors="replace"),
-            "stderr": stderr.decode(errors="replace"),
-        }
 
     async def _git(self, name: str, args: dict) -> dict:
         git = self._git_svc()

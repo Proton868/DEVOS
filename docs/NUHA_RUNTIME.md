@@ -167,3 +167,29 @@ During auto-orchestrated chat, after `plan_created` Nuha chat:
 5. Terminal `done` uses `mission_truth(plan.status)` — not LLM narrative
 
 Clients may also poll `GET /api/orchestration/{plan_id}/events?after=N` if the SSE connection drops.
+
+## HITL durability (IMPLEMENTED)
+
+Approvals are persisted via `brain/hitl_store.py` (memory + `data/hitl/*.json`).
+
+- Created when a node enters `AWAITING_APPROVAL`
+- `GET /api/orchestration/hitl/pending`
+- `POST /api/orchestration/hitl/{approval_id}/decide` with `{"decision":"APPROVED"|"DENIED"}`
+- Approve attempts `resume_plan` on the same execution
+
+Survives browser disconnect within the same process; file records survive API restart.
+
+| HITL | Status |
+|------|--------|
+| Persist approval request | IMPLEMENTED + TESTED |
+| Decide APPROVED/DENIED | IMPLEMENTED + TESTED |
+| Resume same plan on approve | IMPLEMENTED |
+| Live multi-restart proof | UNPROVEN |
+
+## Idempotent plan creation (IMPLEMENTED)
+
+`create_plan(..., idempotency_key=...)` reuses a non-terminal plan for the same user+key.
+
+## Subprocess cancellation (IMPLEMENTED)
+
+AgentRuntime `_subprocess` polls `cancel_requested` and kills the process group child on cancel.

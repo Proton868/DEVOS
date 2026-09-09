@@ -505,8 +505,25 @@ async def create_plan(
     workspace_id: str = "default",
     mode: Optional[str] = None,
     persona_id: str = "nuha",
+    idempotency_key: Optional[str] = None,
 ) -> OrchestrationPlan:
-    """Run planning state machine to PLAN_READY. Read-only; no writes."""
+    """Run planning state machine to PLAN_READY. Read-only; no writes.
+
+    If idempotency_key is provided and a non-terminal plan already exists for
+    this user+key, return that plan instead of creating a duplicate.
+    """
+    if idempotency_key:
+        key = f"{user_id}:{idempotency_key}"
+        for existing in list(_PLANS.values()):
+            if (
+                getattr(existing, "user_id", None) == user_id
+                and getattr(existing, "idempotency_key", None) == key
+                and (existing.status or "").lower() not in {
+                    "completed", "failed", "cancelled", "canceled", "blocked", "denied"
+                }
+            ):
+                existing.emit("plan.idempotent_reuse", {"key": idempotency_key})
+                return existing
     plan_id = str(uuid.uuid4())
     plan = OrchestrationPlan(
         id=plan_id,
@@ -516,6 +533,8 @@ async def create_plan(
         user_id=user_id,
         status=OrchStatus.IDLE.value,
     )
+    if idempotency_key:
+        plan.idempotency_key = f"{user_id}:{idempotency_key}"
     _PLANS[plan_id] = plan
 
     plan.set_status(OrchStatus.INTENT_DETECTED)

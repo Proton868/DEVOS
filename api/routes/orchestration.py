@@ -211,3 +211,39 @@ async def orchestration_detect_mode(req: PlanReq, request: Request, db=Depends(g
     await ensure_personal_tenant(db, user)
     mode = detect_mode(req.goal)
     return {"mode": mode.value, "goal": req.goal}
+
+
+class HitlDecisionReq(BaseModel):
+    decision: str  # APPROVED | DENIED
+
+
+@router.get("/hitl/pending")
+async def hitl_pending(request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from brain.hitl_store import list_pending_for_user
+    return {"approvals": list_pending_for_user(user.id)}
+
+
+@router.post("/hitl/{approval_id}/decide")
+async def hitl_decide(approval_id: str, req: HitlDecisionReq, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from brain.hitl_store import get_approval, decide_approval
+    rec = get_approval(approval_id)
+    if not rec or rec.get("user_id") != user.id:
+        raise HTTPException(404, "approval not found")
+    try:
+        out = decide_approval(approval_id, decision=req.decision, decided_by=user.id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    # Resume same plan when approved
+    if out and (out.get("status") == "APPROVED"):
+        plan_id = out.get("execution_id") or out.get("mission_id")
+        if plan_id:
+            try:
+                from execution.durable_resume import resume_plan
+                await resume_plan(plan_id)
+            except Exception:
+                pass
+    return out or {}
