@@ -1,5 +1,8 @@
 """Nuha orchestration API — plan (no side effects) and run (via existing agent runtime)."""
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+import asyncio
+import json
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -163,6 +166,82 @@ async def orchestration_events(
         "after": after,
         "events": out,
     }
+
+
+
+@router.get("/{plan_id}/stream")
+async def orchestration_stream(
+    plan_id: str,
+    request: Request,
+    db=Depends(get_db),
+    after: int = 0,
+):
+    """SSE stream of durable plan events with ownership + replay from sequence."""
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    plan = get_plan(plan_id)
+    if plan is None:
+        plan = await get_plan_durable(plan_id)
+    if not plan or plan.user_id != user.id:
+        raise HTTPException(404, "plan not found")
+
+    async def event_gen():
+        last = after
+        terminal = {
+            "completed", "failed", "cancelled", "canceled", "blocked", "denied",
+        }
+        open_evt = {"type": "stream.open", "execution_id": plan_id, "after": after}
+        yield "data: " + json.dumps(open_evt) + "\n\n"
+        while True:
+            if await request.is_disconnected():
+                break
+            pl = get_plan(plan_id)
+            if pl is None:
+                pl = await get_plan_durable(plan_id)
+            if pl is None:
+                yield "data: " + json.dumps({"type": "stream.error", "error": "plan_missing"}) + "\n\n"
+                break
+            events = list(getattr(pl, "events", None) or [])
+            for i, e in enumerate(events):
+                if not isinstance(e, dict):
+                    continue
+                seq = int(e.get("sequence") or (i + 1))
+                if seq <= last:
+                    continue
+                last = seq
+                payload = {
+                    "type": e.get("type") or "event",
+                    "sequence": seq,
+                    "event_id": e.get("event_id") or f"{plan_id}:{seq}",
+                    "execution_id": plan_id,
+                    "mission_id": plan_id,
+                    "payload": e.get("payload") or e.get("data") or {},
+                    "timestamp": e.get("timestamp") or e.get("at"),
+                    "plan_status": getattr(pl, "status", None),
+                }
+                yield "data: " + json.dumps(payload) + "\n\n"
+            st = (getattr(pl, "status", None) or "").lower()
+            if st in terminal:
+                term = {
+                    "type": "stream.terminal",
+                    "status": st,
+                    "execution_id": plan_id,
+                    "last_seq": last,
+                }
+                yield "data: " + json.dumps(term) + "\n\n"
+                break
+            yield f": heartbeat last_seq={last}\n\n"
+            await asyncio.sleep(2.0)
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.post("/{plan_id}/cancel")

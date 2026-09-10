@@ -63,3 +63,22 @@ Do not claim production ready until LIVE-VERIFIED on the real host.
 
 ## Reference
 See [NUHA_RUNTIME.md](NUHA_RUNTIME.md) for the canonical spine.
+
+## Live probe log (sandbox agent — 2026-09-09)
+
+Environment: **not** production host (`/home/ubuntu/DEVOS` absent, no systemd).
+
+| Probe | Result | Evidence |
+|-------|--------|----------|
+| `GET https://devos.carai.agency/api/health` | **FAILED** | HTTP 404 HTML **Page Not Found - PyRunner** (Cloudflare). Not DevOS JSON. |
+| Authenticated SSE / multi-node / cancel tree / HITL restart | **UNPROVEN** | No prime shell; no token |
+
+### Operator command (on prime)
+
+```bash
+export DEVOS_BASE_URL=https://devos.carai.agency   # or http://127.0.0.1:8000
+export DEVOS_TOKEN=<jwt>
+python scripts/live_production_proof.py
+```
+
+Public `/api/health` MUST return JSON with `"service": "devos"`. Fix nginx upstream if PyRunner is served.

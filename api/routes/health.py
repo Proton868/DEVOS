@@ -82,6 +82,7 @@ async def health():
         mission["workspace"] = f"unavailable:{type(e).__name__}"
 
     return {
+        "service": "devos",
         "status": overall,
         "db": db_status,
         "memory": MemoryStore().backend,
