@@ -329,6 +329,10 @@ async def _compute_readiness_async(user_id: str, project_id: str, path: str) -> 
         out['detail'] = 'wasm_restricted_under_current_csp'
         out['verification'] = 'PRESENT'
         return out
+    # Mission-level artifact verification is informational for Preview.
+    # A present, allowed, unblocked file is READY to serve even if mission
+    # verification did not pass (e.g. incomplete site structure). Preview
+    # security still enforces path blocks, ownership, and token scope.
     verification = 'PRESENT'
     try:
         from brain.orchestration_verify import verify_workspace_artifacts
@@ -337,14 +341,15 @@ async def _compute_readiness_async(user_id: str, project_id: str, path: str) -> 
             goal='website' if out['type'] == 'html' else '',
             expected_outputs=[rel],
         )
-        verification = 'VERIFIED' if evd.get('passed') else 'FAILED'
+        if evd.get('passed'):
+            verification = 'VERIFIED'
+        elif evd.get('weak'):
+            verification = 'PRESENT'
+        else:
+            verification = 'UNVERIFIED'
     except Exception:
         verification = 'PRESENT'
     out['verification'] = verification
-    if verification == 'FAILED':
-        out['readiness'] = READINESS_INVALID
-        out['detail'] = 'verification_failed'
-        return out
     out['preview_supported'] = True
     out['readiness'] = READINESS_READY
     out['detail'] = 'ok'

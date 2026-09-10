@@ -166,5 +166,17 @@ async def test_preview_endpoint_security_matrix():
 
 def test_surface_intent_preview():
     from brain.personas import surface_intent_for_message
-    si = surface_intent_for_message("Show me the result")
-    assert si["surface"] == "preview"
+    for phrase in (
+        "Show me the result",
+        "show me the website",
+        "show me the preview",
+        "preview the result",
+        "open the result",
+    ):
+        si = surface_intent_for_message(phrase)
+        assert si["surface"] == "preview", phrase
+    # Must not steal ordinary chat / IDE intents
+    chat = surface_intent_for_message("What do you think about this approach?")
+    assert chat["surface"] == "chat"
+    ide = surface_intent_for_message("Build me a website with a shoe catalog")
+    assert ide["surface"] in ("ide", "chat", "flow")  # creation -> ide preferred

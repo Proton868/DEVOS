@@ -354,6 +354,38 @@ def surface_intent_for_message(text: str) -> dict:
     Derived from Nuha intent classification on the server — not a React heuristic.
     Does not authorize UCIP work.
     """
+    raw = (text or "").strip()
+    tlow = raw.lower()
+    # First-class Preview surface (view existing result — not execution grant)
+    _preview_phrases = (
+        "show me the result",
+        "show me the website",
+        "show me the preview",
+        "preview the result",
+        "open the result",
+        "open the preview",
+        "show the preview",
+        "open preview",
+        "show preview",
+        "see the preview",
+        "view the preview",
+        "view the result",
+    )
+    if any(p in tlow for p in _preview_phrases) or (
+        "preview" in tlow
+        and any(k in tlow for k in ("show", "open", "see", "view", "display"))
+        and not any(k in tlow for k in ("build", "create", "generate", "scaffold", "deploy"))
+    ):
+        return {
+            "surface": "preview",
+            "action": "open",
+            "required": True,
+            "reason": "User asked to view an existing result/preview",
+            "confidence": 0.88,
+            "context": {},
+            "intent_classes": list(classify_intent_heuristic(text)),
+        }
+
     classes = set(classify_intent_heuristic(text))
     # Default: stay in chat
     intent = {
