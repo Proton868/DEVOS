@@ -572,12 +572,10 @@ app.include_router(lsp_routes.router,   prefix="/api/lsp",         tags=["lsp"])
 app.include_router(user_settings.router)
 app.include_router(nodes.router)
 
-try:
-    from api.routes.jobs import router as jobs_router
-    app.include_router(jobs_router)
-except Exception as _jobs_err:
-    import logging
-    logging.getLogger("devos").warning("jobs router: %s", _jobs_err)
+# Jobs API is required for durable execution visibility (list/get/enqueue).
+# Register like other core routers — do not swallow import failures.
+from api.routes.jobs import router as jobs_router
+app.include_router(jobs_router)
 
 @app.get("/{full_path:path}", response_class=HTMLResponse)
 async def spa(request: Request, full_path: str):
