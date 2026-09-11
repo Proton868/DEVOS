@@ -915,7 +915,7 @@ export default function SettingsModal({ embedded = false, onClose = null }) {
           </div>
         </div>
         <div className="settings-footer">
-          <span>{saved ? "✓ Saved to .carai/settings.json" : "Persisted to workspace"}</span>
+          <span>{saved ? "✓ Saved to your account settings" : "Stored per user on the server"}</span>
           <div style={{display:"flex",gap:8}}>
             <button className="btn-secondary" onClick={handleClose}>Cancel</button>
             <button className="btn-primary" onClick={saveAll}><Save size={13}/> Save</button>

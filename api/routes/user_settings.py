@@ -32,6 +32,22 @@ async def get_settings(request: Request, db: AsyncSession = Depends(get_db)):
     return {"settings": row.settings_json if row else {}}
 
 
+def _strip_authority_keys(value):
+    """Recursively drop client-supplied authority / identity fields."""
+    forbidden = {
+        "trust_level", "authority", "extra_caps", "is_admin", "user_id",
+        "tenant_id", "owner_id", "capabilities", "autonomy_override",
+        "api_key", "apiKey", "keys", "secret", "token",
+    }
+    if isinstance(value, dict):
+        return {
+            k: _strip_authority_keys(v)
+            for k, v in value.items()
+            if k not in forbidden
+        }
+    return value
+
+
 @router.put("")
 async def put_settings(req: SettingsUpdate, request: Request, db: AsyncSession = Depends(get_db)):
     """Merge the provided key-value pairs into the user's settings. Existing
@@ -39,17 +55,17 @@ async def put_settings(req: SettingsUpdate, request: Request, db: AsyncSession =
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     # Never persist client-supplied authority fields (governance is authoritative)
-    forbidden = {
-        "trust_level", "authority", "extra_caps", "is_admin", "user_id",
-        "tenant_id", "owner_id", "capabilities", "autonomy_override",
-    }
-    incoming = {k: v for k, v in (req.settings or {}).items() if k not in forbidden}
+    incoming = _strip_authority_keys(req.settings or {})
+    if not isinstance(incoming, dict):
+        incoming = {}
     r = await db.execute(
         select(UserSettings).where(UserSettings.user_id == user.id)
     )
     row = r.scalar_one_or_none()
     if row:
-        row.settings_json = {**row.settings_json, **incoming}
+        # Shallow merge top-level sections; each section value is already sanitized
+        merged = {**(row.settings_json or {}), **incoming}
+        row.settings_json = merged
     else:
         row = UserSettings(user_id=user.id, settings_json=incoming)
         db.add(row)

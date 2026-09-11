@@ -60,6 +60,7 @@ def make_jwt(uid, admin=False, expire_hours: int = None):
         {
             "sub": uid,
             "admin": admin,
+            "typ": "session",
             "iss": JWT_ISSUER,
             "aud": JWT_AUDIENCE,
             "iat": datetime.now(timezone.utc),
@@ -129,18 +130,28 @@ def decode_preview_token(token: str):
 
 
 def decode_local_token(token: str):
-    """Verify a locally-issued HS256 JWT. Returns the payload dict, or None
-    if the token isn't a valid local token (including: it's actually a
+    """Verify a locally-issued HS256 *session* JWT. Returns the payload dict, or None
+    if the token isn't a valid local session token (including: it's actually a
     Supabase token, which will fail here since it's signed with a different
     key/algorithm and won't have our iss/aud claims — that's the intended
-    signal to fall through to decode_supabase_token())."""
+    signal to fall through to decode_supabase_token()).
+
+    Preview tokens share JWT_SECRET/iss/aud but must never authenticate as a
+    full session — reject typ=devos_preview / scope=preview:read here.
+    """
     try:
-        return jwt.decode(
+        payload = jwt.decode(
             token, settings.JWT_SECRET, algorithms=["HS256"],
             issuer=JWT_ISSUER, audience=JWT_AUDIENCE,
         )
     except Exception:
         return None
+    # Narrow credentials (preview) are not session JWTs
+    if payload.get("typ") == PREVIEW_TOKEN_TYP:
+        return None
+    if payload.get("scope") == "preview:read":
+        return None
+    return payload
 
 
 @functools.lru_cache(maxsize=4)
