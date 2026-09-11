@@ -1,5 +1,4 @@
 import asyncio
-import os
 import tempfile
 from pathlib import Path
 
@@ -13,17 +12,17 @@ from governance.ucip import AgentIdentity, TrustLevel
 
 
 @pytest.mark.asyncio
-async def test_terminal_service_blocks_dangerous_commands():
+async def test_terminal_service_blocks_dangerous_commands(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
-        os.chdir(tmp)
+        monkeypatch.chdir(tmp)
         service = TerminalService("user", "proj")
         with pytest.raises(DeniedCommand):
             await service.run("rm -rf /")
 
 
-def test_file_service_rejects_path_escape():
+def test_file_service_rejects_path_escape(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
-        os.chdir(tmp)
+        monkeypatch.chdir(tmp)
         service = FileService("user", "proj")
         with pytest.raises(PathViolation):
             service.read("../secret.txt")

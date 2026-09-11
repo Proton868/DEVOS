@@ -176,6 +176,23 @@ _SPECIALISTS: list[Persona] = [
         agent_slug="technical-writer",
     ),
     Persona(
+        id="writer",
+        name="Writer Specialist",
+        description="Documentation, copy, and technical writing.",
+        specialty="writing",
+        role="specialist",
+        system_prompt=(
+            "You are the DevOS Writer Specialist. Produce clear documentation and "
+            "copy. Do not claim deploy or infrastructure authority."
+        ),
+        capabilities=["fs.read", "fs.write"],
+        allowed_tools=["read_file", "write_file"],
+        creation_domains=["docs", "copy", "readme"],
+        advisory_domains=["writing", "editing"],
+        escalation_targets=["nuha"],
+        agent_slug="technical-writer",
+    ),
+    Persona(
         id="data",
         name="Data Specialist",
         description="Schemas, ETL, analytics, and data modeling.",
@@ -219,7 +236,18 @@ NUHA = Persona(
     role="orchestrator",
     can_delegate=True,
     system_prompt=NUHA_SYSTEM_PROMPT,
-    capabilities=["fs.read", "fs.write", "shell.exec", "web.search", "workflow.write"],
+    capabilities=[
+        "fs.read",
+        "fs.write",
+        "shell.exec",
+        "web.search",
+        "workflow.write",
+        "vcs.write",
+        "vcs.push",
+        "deployment.production",
+        "preview.serve",
+        "external.publish",
+    ],
     allowed_tools=["*"],
     creation_domains=["*"],
     advisory_domains=["*"],
@@ -303,6 +331,7 @@ INTENT_CLASSES = (
     "AUTOMATION",
     "CODE",
     "RESEARCH",
+    "IDE",
     "MULTI-DOMAIN",
 )
 
@@ -320,6 +349,9 @@ def classify_intent_heuristic(text: str) -> list[str]:
         classes.append("RESEARCH")
     if any(k in t for k in ("only code", "snippet", "show me the html", "paste code")):
         classes.append("CODE")
+    if any(k in t for k in ("launch an ide", "open the ide", "ide environment", "coding environment", "launch ide")):
+        classes.append("IDE")
+        classes.append("EXECUTION")
     if any(k in t for k in ("should i", "advise", "recommend", "what do you think")):
         classes.append("ADVICE")
     if not classes:
@@ -396,7 +428,16 @@ def surface_intent_for_message(text: str) -> dict:
         "confidence": 0.55,
         "context": {},
     }
-    if classes & {"AUTOMATION"}:
+    if "IDE" in classes:
+        intent = {
+            "surface": "ide",
+            "action": "open",
+            "required": True,
+            "reason": "IDE launch request",
+            "confidence": 0.9,
+            "context": {},
+        }
+    elif classes & {"AUTOMATION"}:
         intent = {
             "surface": "flow",
             "action": "open",
@@ -406,13 +447,20 @@ def surface_intent_for_message(text: str) -> dict:
             "context": {},
         }
     elif classes & {"CREATION", "EXECUTION"} and "CODE" not in classes:
+        ctx = {}
+        try:
+            from brain.artifact_scaffold import _is_website_goal
+            if _is_website_goal(text):
+                ctx["filePath"] = "index.html"
+        except Exception:
+            pass
         intent = {
             "surface": "ide",
             "action": "open",
             "required": True,
             "reason": "Creation/execution task — IDE surface",
             "confidence": 0.82,
-            "context": {},
+            "context": ctx,
         }
     elif "CODE" in classes and not (classes & {"CREATION", "EXECUTION", "AUTOMATION"}):
         intent = {
