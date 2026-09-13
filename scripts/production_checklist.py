@@ -9,6 +9,22 @@ Exit 0 only when no FAIL items.
 from __future__ import annotations
 import asyncio
 import os
+from pathlib import Path
+
+# Load the project's .env for standalone checklist execution.
+# systemd already injects .env into the production service, but this
+# script must also behave correctly when invoked directly from a shell.
+_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+if _ENV_FILE.is_file():
+    for _line in _ENV_FILE.read_text().splitlines():
+        _line = _line.strip()
+        if not _line or _line.startswith("#") or "=" not in _line:
+            continue
+        _key, _value = _line.split("=", 1)
+        _key = _key.strip()
+        _value = _value.strip()
+        if _key and _key not in os.environ:
+            os.environ[_key] = _value
 import sys
 from pathlib import Path
 
