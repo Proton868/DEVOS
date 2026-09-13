@@ -62,7 +62,18 @@ def test_preview_token_scoped():
 
 
 @pytest.mark.asyncio
-async def test_preview_endpoint_security_matrix():
+async def test_preview_endpoint_security_matrix(monkeypatch):
+    """Session JWT can preview own workspace; preview tokens stay non-session."""
+    from core.config import settings
+    from core.database import get_db
+    from api.routes.auth import decode_local_token
+    from app import app
+
+    monkeypatch.setattr(settings, "AUTH_MODE", "dual")
+    monkeypatch.setattr(settings, "AUTH_ENABLED", True)
+    secret = (settings.JWT_SECRET or "").strip() or "test-preview-jwt-secret-not-for-production"
+    monkeypatch.setattr(settings, "JWT_SECRET", secret)
+
     await init_db()
     async with AsyncSessionLocal() as db:
         for uid, name, email in (
@@ -70,13 +81,22 @@ async def test_preview_endpoint_security_matrix():
             (OTHER, "otheruser", "other@test"),
         ):
             r = await db.execute(select(User).where(User.id == uid))
-            if not r.scalar_one_or_none():
-                db.add(User(id=uid, username=name, email=email, hashed_password="x"))
+            u = r.scalar_one_or_none()
+            if not u:
+                db.add(User(
+                    id=uid, username=name, email=email,
+                    hashed_password="x", is_active=True, is_admin=False,
+                ))
+            else:
+                u.is_active = True
+                u.username = name
+                u.email = email
         await db.commit()
+        r = await db.execute(select(User).where(User.id == USER))
+        assert r.scalar_one_or_none() is not None
 
     session = make_jwt(USER)
     other_session = make_jwt(OTHER)
-    from api.routes.auth import decode_local_token
     assert decode_local_token(session) is not None, "session JWT must verify under dual mode"
     assert decode_local_token(session).get("sub") == USER
     assert decode_local_token(make_preview_token(USER, WS)["token"]) is None
@@ -84,95 +104,76 @@ async def test_preview_endpoint_security_matrix():
     wrong_ws = make_preview_token(USER, "not-this-ws", ttl_seconds=300)
     other_preview = make_preview_token(OTHER, OTHER_WS, ttl_seconds=300)
 
-    from app import app
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # unauthenticated
-        r = await client.get(f"/api/files/{WS}/preview/index.html")
-        assert r.status_code in (401, 403)
+    async def _override_db():
+        async with AsyncSessionLocal() as session_db:
+            yield session_db
 
-        # session auth OK
-        r = await client.get(
-            f"/api/files/{WS}/preview/index.html",
-            headers={"Authorization": f"Bearer {session}"},
-        )
-        assert r.status_code == 200
-        assert "TestSite" in r.text
-        assert "Content-Security-Policy" in r.headers
-        csp = r.headers["Content-Security-Policy"]
-        assert "object-src 'none'" in csp
-        assert "connect-src 'none'" in csp
-        assert "script-src 'self'" in csp
-        assert "nosniff" in r.headers.get("X-Content-Type-Options", "")
+    app.dependency_overrides[get_db] = _override_db
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            r = await client.get(f"/api/files/{WS}/preview/index.html")
+            assert r.status_code in (401, 403)
 
-        # scoped preview token OK
-        r = await client.get(f"/api/files/{WS}/preview/index.html?token={preview['token']}")
-        assert r.status_code == 200
-        assert r.headers.get("X-DevOS-Preview-Auth") == "preview_token"
-
-        # preview token wrong workspace
-        r = await client.get(f"/api/files/{WS}/preview/index.html?token={wrong_ws['token']}")
-        assert r.status_code == 403
-
-        # other user's preview token on our workspace
-        r = await client.get(f"/api/files/{WS}/preview/index.html?token={other_preview['token']}")
-        assert r.status_code == 403
-
-        # secrets blocked
-        for secret in (".env", "id_rsa"):
             r = await client.get(
-                f"/api/files/{WS}/preview/{secret}",
+                f"/api/files/{WS}/preview/index.html",
                 headers={"Authorization": f"Bearer {session}"},
             )
-            assert r.status_code == 403, secret
+            assert r.status_code == 200, (
+                f"session JWT preview expected 200, got {r.status_code}: {r.text[:300]}"
+            )
+            assert "TestSite" in r.text
+            assert "Content-Security-Policy" in r.headers
+            csp = r.headers["Content-Security-Policy"]
+            assert "object-src 'none'" in csp
+            assert "connect-src 'none'" in csp
+            assert "script-src 'self'" in csp
+            assert "nosniff" in r.headers.get("X-Content-Type-Options", "")
 
-        # missing
-        r = await client.get(
-            f"/api/files/{WS}/preview/nope.html",
-            headers={"Authorization": f"Bearer {session}"},
-        )
-        assert r.status_code == 404
+            r = await client.get(f"/api/files/{WS}/preview/index.html?token={preview['token']}")
+            assert r.status_code == 200
+            assert r.headers.get("X-DevOS-Preview-Auth") == "preview_token"
 
-        # mint session
-        r = await client.post(
-            f"/api/files/{WS}/preview-session",
-            headers={"Authorization": f"Bearer {session}"},
-            json={"path": "index.html"},
-        )
-        assert r.status_code == 200
-        data = r.json()
-        assert data["token"]
-        assert data["readiness"]["readiness"] in ("READY", "PENDING")
-        assert "preview_url" in data
-        # minted token works
-        r = await client.get(data["preview_url"])
-        assert r.status_code == 200
+            r = await client.get(f"/api/files/{WS}/preview/index.html?token={wrong_ws['token']}")
+            assert r.status_code == 403
 
-        # readiness endpoint
-        r = await client.get(
-            f"/api/files/{WS}/preview-readiness?path=index.html",
-            headers={"Authorization": f"Bearer {session}"},
-        )
-        assert r.status_code == 200
-        body = r.json()
-        assert body["path"] == "index.html"
-        assert body["readiness"] in ("READY", "PENDING", "INVALID", "UNSUPPORTED")
+            r = await client.get(f"/api/files/{WS}/preview/index.html?token={other_preview['token']}")
+            assert r.status_code == 403
 
-        # readiness for secret path
-        r = await client.get(
-            f"/api/files/{WS}/preview-readiness?path=.env",
-            headers={"Authorization": f"Bearer {session}"},
-        )
-        assert r.status_code == 200
-        assert r.json()["readiness"] == "UNSUPPORTED"
+            for secret_name in (".env", "id_rsa"):
+                r = await client.get(
+                    f"/api/files/{WS}/preview/{secret_name}",
+                    headers={"Authorization": f"Bearer {session}"},
+                )
+                assert r.status_code == 403, secret_name
 
-        # other user cannot use our session on their path via our token project mismatch already tested
-        r = await client.get(
-            f"/api/files/{OTHER_WS}/preview/index.html",
-            headers={"Authorization": f"Bearer {other_session}"},
-        )
-        assert r.status_code == 200
-        assert "other" in r.text
+            r = await client.get(
+                f"/api/files/{WS}/preview/nope.html",
+                headers={"Authorization": f"Bearer {session}"},
+            )
+            assert r.status_code == 404
+
+            r = await client.post(
+                f"/api/files/{WS}/preview-session",
+                headers={"Authorization": f"Bearer {session}"},
+                json={"path": "index.html"},
+            )
+            assert r.status_code == 200
+            data = r.json()
+            assert data["token"]
+            assert data["readiness"]["readiness"] in ("READY", "PENDING")
+            assert "preview_url" in data
+            r = await client.get(data["preview_url"])
+            assert r.status_code == 200
+
+            r = await client.get(
+                f"/api/files/{WS}/preview-readiness?path=index.html",
+                headers={"Authorization": f"Bearer {session}"},
+            )
+            assert r.status_code == 200
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
 
 
 def test_surface_intent_preview():

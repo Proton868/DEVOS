@@ -13,8 +13,12 @@ def test_provider_status_constants():
 
 
 @pytest.mark.asyncio
-async def test_openrouter_without_key_is_not_configured():
-    r = await probe_provider("openrouter")
+async def test_openrouter_without_key_is_not_configured(monkeypatch):
+    # Deterministic NO-KEY path — do not depend on ambient production credentials.
+    from core.config import settings
+    monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    r = await probe_provider("openrouter", api_key="")
     assert r["ok"] is False
     assert r["status"] == "NOT_CONFIGURED"
     assert "key" in (r["detail"] or "").lower() or "configured" in (r["detail"] or "").lower()

@@ -4,6 +4,7 @@ import os
 import asyncio
 
 os.environ["DEVOS_ORCH_FAKE_RUNTIME"] = "1"
+os.environ["DEVOS_ALLOW_FAKE_RUNTIME"] = "1"
 
 from brain.orchestration_runtime import (
     NodeExecutionRequest,
@@ -21,7 +22,10 @@ from brain.orchestration_dag import (
 
 
 @pytest.mark.asyncio
-async def test_fake_runtime_returns_task_and_files():
+async def test_fake_runtime_returns_task_and_files(monkeypatch):
+    # Deterministic harness — must never depend on live OpenRouter/Ollama.
+    monkeypatch.setenv("DEVOS_ORCH_FAKE_RUNTIME", "1")
+    monkeypatch.setenv("DEVOS_ALLOW_FAKE_RUNTIME", "1")
     req = NodeExecutionRequest(
         plan_id="p1",
         node_id="s1",
@@ -43,7 +47,9 @@ async def test_fake_runtime_returns_task_and_files():
 
 
 @pytest.mark.asyncio
-async def test_unauthorized_never_runs():
+async def test_unauthorized_never_runs(monkeypatch):
+    monkeypatch.setenv("DEVOS_ORCH_FAKE_RUNTIME", "1")
+    monkeypatch.setenv("DEVOS_ALLOW_FAKE_RUNTIME", "1")
     req = NodeExecutionRequest(
         plan_id="p1",
         node_id="s1",
@@ -59,7 +65,9 @@ async def test_unauthorized_never_runs():
 
 
 @pytest.mark.asyncio
-async def test_missing_workspace_rejected():
+async def test_missing_workspace_rejected(monkeypatch):
+    monkeypatch.setenv("DEVOS_ORCH_FAKE_RUNTIME", "1")
+    monkeypatch.setenv("DEVOS_ALLOW_FAKE_RUNTIME", "1")
     req = NodeExecutionRequest(
         plan_id="p1",
         node_id="s1",
