@@ -193,6 +193,40 @@ _SPECIALISTS: list[Persona] = [
         agent_slug="technical-writer",
     ),
     Persona(
+        id="storyteller",
+        name="Storyteller",
+        description="Fiction, narrative, and short-form creative writing.",
+        specialty="storytelling",
+        role="specialist",
+        system_prompt=(
+            "You are the DevOS Storyteller. Write engaging fiction and narrative. "
+            "Do not claim deploy, VCS push, or infrastructure authority."
+        ),
+        capabilities=["fs.read", "fs.write"],
+        allowed_tools=["read_file", "write_file"],
+        creation_domains=["story", "fiction", "narrative", "ocean"],
+        advisory_domains=["writing", "creative"],
+        escalation_targets=["nuha"],
+        agent_slug="technical-writer",
+    ),
+    Persona(
+        id="script_writer",
+        name="Script Writer",
+        description="Video, YouTube, and spoken-script composition.",
+        specialty="scriptwriting",
+        role="specialist",
+        system_prompt=(
+            "You are the DevOS Script Writer. Produce clear scripts for video and spoken delivery. "
+            "Do not claim deploy, VCS push, or infrastructure authority."
+        ),
+        capabilities=["fs.read", "fs.write"],
+        allowed_tools=["read_file", "write_file"],
+        creation_domains=["script", "youtube", "video", "documentary"],
+        advisory_domains=["writing", "script"],
+        escalation_targets=["nuha"],
+        agent_slug="technical-writer",
+    ),
+    Persona(
         id="data",
         name="Data Specialist",
         description="Schemas, ETL, analytics, and data modeling.",
@@ -241,6 +275,8 @@ NUHA = Persona(
         "fs.write",
         "shell.exec",
         "web.search",
+        "web.intelligence",
+        "voice.session",
         "workflow.write",
         "vcs.write",
         "vcs.push",
@@ -304,7 +340,10 @@ def specialist_in_domain(persona_id: str, domain_hint: str) -> bool:
 
 
 def suggest_personas_for_goal(goal: str) -> list[str]:
-    """Lightweight keyword routing — planning still goes through Nuha + intent layer."""
+    """Lightweight keyword routing — planning still goes through Nuha + intent layer.
+
+    Nuha is always listed first as the orchestrator; specialists follow by keyword score.
+    """
     g = (goal or "").lower()
     scored: list[tuple[int, str]] = []
     for p in list_personas():
@@ -316,10 +355,23 @@ def suggest_personas_for_goal(goal: str) -> list[str]:
                 score += 2
         if p.specialty and p.specialty.lower() in g:
             score += 2
+        # creative keyword boosts
+        if p.id == "storyteller" and any(k in g for k in ("story", "fiction", "tale", "narrative")):
+            score += 3
+        if p.id == "script_writer" and any(k in g for k in ("script", "youtube", "video", "documentary")):
+            score += 3
+        if p.id == "writer" and any(k in g for k in ("write", "rewrite", "proposal", "article", "profile")):
+            score += 2
         if score:
             scored.append((score, p.id))
     scored.sort(reverse=True)
-    return [pid for _, pid in scored[:5]]
+    specialists = [pid for _, pid in scored[:5]]
+    # Orchestrator is always present; specialists are subordinate suggestions
+    out = ["nuha"]
+    for pid in specialists:
+        if pid not in out:
+            out.append(pid)
+    return out
 
 
 # Intent classes Nuha uses when classifying (mirrors brief)
