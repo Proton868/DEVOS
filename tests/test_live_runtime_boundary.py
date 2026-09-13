@@ -1,3 +1,4 @@
+import pytest
 """Production boundary: no silent fake fallback; unavailable is explicit."""
 import os
 import asyncio
@@ -16,21 +17,23 @@ def test_fake_without_allow_fails_honestly():
     assert "Never silently" in src or "TEST-ONLY" in src or "test allow" in src
 
 
-def test_unauthorized_blocked():
+@pytest.mark.asyncio
+async def test_unauthorized_blocked():
     req = NodeExecutionRequest(
         plan_id="p", node_id="n", user_id="u", workspace_id="w",
         persona_id="web", objective="x", authorization_decision="deny",
     )
-    r = asyncio.get_event_loop().run_until_complete(run_node_on_agent_runtime(req))
+    r = await run_node_on_agent_runtime(req)
     assert r.success is False
     assert r.status == "blocked"
 
 
-def test_missing_workspace():
+@pytest.mark.asyncio
+async def test_missing_workspace():
     req = NodeExecutionRequest(
         plan_id="p", node_id="n", user_id="u", workspace_id="",
         persona_id="web", objective="x", authorization_decision="allow",
     )
-    r = asyncio.get_event_loop().run_until_complete(run_node_on_agent_runtime(req))
+    r = await run_node_on_agent_runtime(req)
     assert r.success is False
     assert "workspace" in (r.error or "")

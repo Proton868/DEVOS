@@ -2,7 +2,7 @@
 from governance.capability_registry import CapabilityDescriptor, CapabilityCategory
 from governance.uci_interop import export_manifest, verify_manifest
 from governance.agency_evolution import filter_autonomous_caps
-from execution.isolation import IsolationResult, IsolationLevel
+from execution.isolation import IsolationResult, IsolationLevel, IsolationStrength
 
 def test_hmac():
     c=CapabilityDescriptor(slug="t:x",name="x",category=CapabilityCategory.SYSTEM,description="")
@@ -16,4 +16,17 @@ def test_gated():
     assert "ucip:memory.read" in f and "ucip:system.shell" not in f
 
 def test_iso():
-    assert IsolationResult("ok","","",0,1,"unshare-net",IsolationLevel.ISOLATED.value).is_isolated
+    # unshare-net / network_only is NOT strong isolation (untrusted code must not treat it as isolated)
+    weak = IsolationResult(
+        "ok", "", "", 0, 1, "unshare-net",
+        IsolationLevel.DEGRADED.value,
+        strength=IsolationStrength.NETWORK_ONLY.value,
+    )
+    assert weak.is_isolated is False
+    # Strong isolation requires restricted/strong strength — not merely isolation_level label
+    strong = IsolationResult(
+        "ok", "", "", 0, 1, "bwrap",
+        IsolationLevel.ISOLATED.value,
+        strength=IsolationStrength.STRONG.value,
+    )
+    assert strong.is_isolated is True

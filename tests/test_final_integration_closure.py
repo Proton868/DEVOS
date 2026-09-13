@@ -1,3 +1,4 @@
+import pytest
 """Final integration closure: Mission web_crawl path, recovery, composition."""
 import asyncio
 from brain.orchestration_runtime import NodeExecutionRequest, run_node_on_agent_runtime
@@ -8,7 +9,8 @@ from execution.web_intel.store import get_crawl, create_crawl, update_crawl
 from execution.web_intel import cache as web_cache
 
 
-def test_mission_runtime_executes_web_crawl_idempotent():
+@pytest.mark.asyncio
+async def test_mission_runtime_executes_web_crawl_idempotent():
     """Mission path creates crawl and runs via job handler; second call reuses."""
     # Use blocked private URL — should complete FAILED without hang
     req = NodeExecutionRequest(
@@ -23,7 +25,7 @@ def test_mission_runtime_executes_web_crawl_idempotent():
         node_kind="web_crawl",
         root_url="https://example.com",
     )
-    r1 = asyncio.get_event_loop().run_until_complete(run_node_on_agent_runtime(req))
+    r1 = await run_node_on_agent_runtime(req)
     assert r1.task_id  # crawl_id
     crawl = get_crawl(r1.task_id)
     assert crawl is not None
@@ -41,11 +43,12 @@ def test_mission_runtime_executes_web_crawl_idempotent():
         node_kind="web_crawl",
         crawl_id=r1.task_id,
     )
-    r2 = asyncio.get_event_loop().run_until_complete(run_node_on_agent_runtime(req2))
+    r2 = await run_node_on_agent_runtime(req2)
     assert r2.raw_terminal and r2.raw_terminal.get("idempotent") is True
 
 
-def test_unauthorized_web_crawl_blocked():
+@pytest.mark.asyncio
+async def test_unauthorized_web_crawl_blocked():
     req = NodeExecutionRequest(
         plan_id="p",
         node_id="web_crawl",
@@ -58,7 +61,7 @@ def test_unauthorized_web_crawl_blocked():
         node_kind="web_crawl",
         root_url="https://example.com",
     )
-    r = asyncio.get_event_loop().run_until_complete(run_node_on_agent_runtime(req))
+    r = await run_node_on_agent_runtime(req)
     assert r.success is False
     assert r.status == "blocked"
 

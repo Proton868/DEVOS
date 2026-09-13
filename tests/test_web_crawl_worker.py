@@ -1,3 +1,4 @@
+import pytest
 import time
 from execution.web_intel.store import create_crawl, get_crawl, list_pages, upsert_page
 from execution.web_intel.crawler import run_crawl, _text_similarity, _normalize_text_for_sim, _MAX_CRAWL_DELAY
@@ -11,7 +12,8 @@ class FakeJob:
         self.id = "job-test"
 
 
-def test_async_shape_create_queued_not_complete():
+@pytest.mark.asyncio
+async def test_async_shape_create_queued_not_complete():
     c = create_crawl({
         "user_id": "w1",
         "root_url": "http://10.0.0.2/",
@@ -23,13 +25,14 @@ def test_async_shape_create_queued_not_complete():
     assert c["status"] == "QUEUED"
     # job handler runs crawl
     import asyncio
-    result = asyncio.get_event_loop().run_until_complete(handle_web_crawl_job(FakeJob(c["crawl_id"])))
+    result = await handle_web_crawl_job(FakeJob(c["crawl_id"]))
     assert result["crawl_id"] == c["crawl_id"]
     final = get_crawl(c["crawl_id"])
     assert final["status"] in ("COMPLETED", "PARTIAL", "FAILED", "CANCELLED")
 
 
-def test_stale_fetching_recovery():
+@pytest.mark.asyncio
+async def test_stale_fetching_recovery():
     c = create_crawl({
         "user_id": "w2",
         "root_url": "http://10.0.0.3/",
@@ -43,7 +46,7 @@ def test_stale_fetching_recovery():
         "normalized_url": "http://10.0.0.3/", "depth": 0, "status": "FETCHING",
     })
     import asyncio
-    asyncio.get_event_loop().run_until_complete(handle_web_crawl_job(FakeJob(c["crawl_id"])))
+    await handle_web_crawl_job(FakeJob(c["crawl_id"]))
     pages = list_pages(c["crawl_id"])
     assert not any(p["status"] == "FETCHING" for p in pages)
 

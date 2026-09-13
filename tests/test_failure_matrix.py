@@ -1,3 +1,4 @@
+import pytest
 """Focused failure-matrix invariants for mission truth and cancel."""
 import asyncio
 from brain.nuha_bridge import mission_truth, synthesize_orchestration_reply
@@ -21,17 +22,19 @@ def test_matrix_synthesis_never_claims_done_on_failure():
     assert "successfully completed" not in low
 
 
-def test_matrix_cancel_before_execute():
+@pytest.mark.asyncio
+async def test_matrix_cancel_before_execute():
     async def _run():
         p = OrchestrationPlan(id="cx1", user_id="u1", goal="x", status=OrchStatus.CANCELLATION_REQUESTED.value)
         _PLANS[p.id] = p
         out = await execute_plan(p)
         assert (out.status or "").lower() == "cancelled"
         assert mission_truth(out.status)["ok"] is False
-    asyncio.get_event_loop().run_until_complete(_run())
+    await _run()
 
 
-def test_matrix_verification_false_without_disk(monkeypatch):
+@pytest.mark.asyncio
+async def test_matrix_verification_false_without_disk(monkeypatch):
     async def _run():
         class Boom:
             def __init__(self, *a, **k):
@@ -43,4 +46,4 @@ def test_matrix_verification_false_without_disk(monkeypatch):
             goal="website landing", files_changed=[{"path": "index.html"}],
         )
         assert ev.get("passed") is False
-    asyncio.get_event_loop().run_until_complete(_run())
+    await _run()

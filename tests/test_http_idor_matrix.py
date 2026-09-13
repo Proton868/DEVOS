@@ -66,14 +66,7 @@ def users(client):
                 out[name] = {"id": u.id, "token": make_jwt(u.id, False)}
         return out
 
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            raise RuntimeError
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    data = loop.run_until_complete(setup())
+    data = asyncio.run(setup())
     # Fixture identity assertions
     assert data["idor_a"]["id"] != data["idor_b"]["id"]
     return data

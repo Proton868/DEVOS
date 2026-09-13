@@ -1,4 +1,11 @@
 """Workspace preview — isolation, scoped credentials, readiness, CSP."""
+import os
+
+# Stabilize auth env before settings/app imports (Python 3.12 / dual mode).
+os.environ.setdefault("AUTH_MODE", "dual")
+os.environ.setdefault("AUTH_ENABLED", "true")
+os.environ.setdefault("JWT_SECRET", "test-preview-jwt-secret-not-for-production")
+
 import asyncio
 from datetime import datetime, timedelta, timezone
 
@@ -69,6 +76,10 @@ async def test_preview_endpoint_security_matrix():
 
     session = make_jwt(USER)
     other_session = make_jwt(OTHER)
+    from api.routes.auth import decode_local_token
+    assert decode_local_token(session) is not None, "session JWT must verify under dual mode"
+    assert decode_local_token(session).get("sub") == USER
+    assert decode_local_token(make_preview_token(USER, WS)["token"]) is None
     preview = make_preview_token(USER, WS, ttl_seconds=300)
     wrong_ws = make_preview_token(USER, "not-this-ws", ttl_seconds=300)
     other_preview = make_preview_token(OTHER, OTHER_WS, ttl_seconds=300)

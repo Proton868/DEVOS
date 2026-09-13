@@ -20,7 +20,7 @@ def app_client():
         yield client
 
 
-def _make_user(client, username: str, password: str = "TestPass123!"):
+async def await _make_user(client, username: str, password: str = "TestPass123!"):
     """Register via local login admin path or direct DB — prefer login if admin exists."""
     # Try login first (admin may exist from startup)
     r = client.post("/api/auth/login", json={"username": username, "password": password})
@@ -58,4 +58,4 @@ def _make_user(client, username: str, password: str = "TestPass123!"):
                 "is_admin": u.is_admin,
             }, token
 
-    return asyncio.get_event_loop().run_until_complete(_create())
+    return await _create()

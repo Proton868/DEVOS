@@ -1,3 +1,4 @@
+import pytest
 """HITL persistence and plan idempotency."""
 import asyncio
 from brain.hitl_store import create_approval, get_approval, decide_approval, list_pending_for_user
@@ -36,7 +37,8 @@ def test_hitl_deny():
     assert mission_truth("waiting_for_user")["ok"] is False
 
 
-def test_create_plan_idempotent():
+@pytest.mark.asyncio
+async def test_create_plan_idempotent():
     async def _run():
         p1 = await create_plan(user_id="u9", goal="build site", idempotency_key="k-site-1")
         p2 = await create_plan(user_id="u9", goal="build site", idempotency_key="k-site-1")
@@ -45,4 +47,4 @@ def test_create_plan_idempotent():
         p3 = await create_plan(user_id="u9", goal="build site", idempotency_key="k-site-2")
         assert p3.id != p1.id
         return True
-    assert asyncio.get_event_loop().run_until_complete(_run())
+    assert await _run()

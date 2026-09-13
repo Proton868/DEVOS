@@ -1,3 +1,4 @@
+import pytest
 
 """Nuha bridge: trivial chat vs orchestration promotion; memory helpers."""
 import asyncio
@@ -40,7 +41,8 @@ def test_memory_format_bounded():
     assert len(ctx) < 2000
 
 
-def test_create_plan_for_build_without_execute():
+@pytest.mark.asyncio
+async def test_create_plan_for_build_without_execute():
     async def _run():
         from brain.nuha_bridge import run_chat_orchestration
         # execute=False avoids Agent Runtime / provider
@@ -55,7 +57,7 @@ def test_create_plan_for_build_without_execute():
         assert r.get("ok") is True
         return r
 
-    r = asyncio.get_event_loop().run_until_complete(_run())
+    r = await _run()
     assert "plan_id" in r
 
 

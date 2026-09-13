@@ -8,14 +8,8 @@ from fastapi.testclient import TestClient
 
 
 def _run(coro):
-    try:
-        return asyncio.run(coro)
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
+    """Run coroutine from sync fixture (Python 3.12-safe)."""
+    return asyncio.run(coro)
 
 
 @pytest.fixture()

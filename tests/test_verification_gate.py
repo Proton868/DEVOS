@@ -3,7 +3,8 @@ import asyncio
 import pytest
 
 
-def test_files_changed_only_does_not_pass_without_fileservice(monkeypatch):
+@pytest.mark.asyncio
+async def test_files_changed_only_does_not_pass_without_fileservice(monkeypatch):
     from brain import orchestration_verify as ov
 
     async def _run():
@@ -26,7 +27,7 @@ def test_files_changed_only_does_not_pass_without_fileservice(monkeypatch):
         assert ev.get("passed") is False
         assert ev.get("weak") is True or any("FileService" in e for e in (ev.get("errors") or []))
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    await _run()
 
 
 def test_mission_truth_failed_status():

@@ -1,3 +1,4 @@
+import pytest
 """Identity isolation — ownership, IDOR posture, UCIP non-bypass, avatar truth."""
 from pathlib import Path
 
@@ -87,7 +88,8 @@ def test_avatar_uses_fileservice_upload():
     assert "write_bytes" in src or "write_bytes" in Path("execution/files.py").read_text()
 
 
-def test_ucip_deny_blocks_runtime_contract():
+@pytest.mark.asyncio
+async def test_ucip_deny_blocks_runtime_contract():
     """Unauthorized NodeExecutionRequest must not succeed."""
     import asyncio
     from brain.orchestration_runtime import NodeExecutionRequest, run_node_on_agent_runtime
@@ -101,6 +103,6 @@ def test_ucip_deny_blocks_runtime_contract():
         effective_caps=["fs.write"],
         authorization_decision="deny",
     )
-    r = asyncio.get_event_loop().run_until_complete(run_node_on_agent_runtime(req))
+    r = await run_node_on_agent_runtime(req)
     assert r.success is False
     assert r.status == "blocked"

@@ -1,3 +1,4 @@
+import pytest
 """Integration boundary tests — deterministic FAKE runtime (not live LLM)."""
 import os
 import asyncio
@@ -19,7 +20,8 @@ from brain.orchestration_dag import (
 )
 
 
-def test_fake_runtime_returns_task_and_files():
+@pytest.mark.asyncio
+async def test_fake_runtime_returns_task_and_files():
     req = NodeExecutionRequest(
         plan_id="p1",
         node_id="s1",
@@ -30,7 +32,7 @@ def test_fake_runtime_returns_task_and_files():
         effective_caps=["filesystem.write"],
         authorization_decision="allow",
     )
-    result = asyncio.get_event_loop().run_until_complete(run_node_on_agent_runtime(req))
+    result = await run_node_on_agent_runtime(req)
     assert result.success is True
     assert result.task_id
     assert result.status == "succeeded"
@@ -40,7 +42,8 @@ def test_fake_runtime_returns_task_and_files():
     )
 
 
-def test_unauthorized_never_runs():
+@pytest.mark.asyncio
+async def test_unauthorized_never_runs():
     req = NodeExecutionRequest(
         plan_id="p1",
         node_id="s1",
@@ -50,12 +53,13 @@ def test_unauthorized_never_runs():
         objective="delete production",
         authorization_decision="deny",
     )
-    result = asyncio.get_event_loop().run_until_complete(run_node_on_agent_runtime(req))
+    result = await run_node_on_agent_runtime(req)
     assert result.success is False
     assert result.status == "blocked"
 
 
-def test_missing_workspace_rejected():
+@pytest.mark.asyncio
+async def test_missing_workspace_rejected():
     req = NodeExecutionRequest(
         plan_id="p1",
         node_id="s1",
@@ -65,7 +69,7 @@ def test_missing_workspace_rejected():
         objective="build site",
         authorization_decision="allow",
     )
-    result = asyncio.get_event_loop().run_until_complete(run_node_on_agent_runtime(req))
+    result = await run_node_on_agent_runtime(req)
     assert result.success is False
     assert "workspace" in (result.error or "")
 

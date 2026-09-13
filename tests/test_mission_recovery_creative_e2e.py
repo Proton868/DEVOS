@@ -1,3 +1,4 @@
+import pytest
 """Close remaining gaps: crawl recovery loop + creative workspace E2E."""
 import asyncio
 import os
@@ -119,7 +120,8 @@ def test_partial_maps_to_budget_decision():
     assert "budget" in (ev.error or "").lower() or dec.failure_class
 
 
-def test_idempotent_completed_no_second_enqueue():
+@pytest.mark.asyncio
+async def test_idempotent_completed_no_second_enqueue():
     c = create_crawl({
         "user_id": "u-idemp",
         "root_url": "https://example.com",
@@ -138,11 +140,12 @@ def test_idempotent_completed_no_second_enqueue():
         node_kind="web_crawl",
         crawl_id=c["crawl_id"],
     )
-    r = asyncio.get_event_loop().run_until_complete(run_node_on_agent_runtime(req))
+    r = await run_node_on_agent_runtime(req)
     assert r.raw_terminal and r.raw_terminal.get("idempotent") is True
 
 
-def test_creative_personas_workspace_artifact_e2e():
+@pytest.mark.asyncio
+async def test_creative_personas_workspace_artifact_e2e():
     """Writer/Storyteller/Script Writer via fake agent runtime + workspace files."""
     os.environ["DEVOS_ORCH_FAKE_RUNTIME"] = "1"
     os.environ["PYTEST_CURRENT_TEST"] = "test_creative_personas_workspace_artifact_e2e"
@@ -165,7 +168,7 @@ def test_creative_personas_workspace_artifact_e2e():
                 effective_caps=list(p.capabilities or ["fs.write", "fs.read"]),
                 authorization_decision="allow",
             )
-            result = asyncio.get_event_loop().run_until_complete(run_node_on_agent_runtime(req))
+            result = await run_node_on_agent_runtime(req)
             assert result.success, result.error
             assert result.status == "succeeded"
             # Fake runtime should claim workspace files

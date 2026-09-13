@@ -60,14 +60,7 @@ def users(client):
         assert out["idor_a"]["id"] != out["idor_b"]["id"]
         return out
 
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            raise RuntimeError()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    return loop.run_until_complete(setup())
+    return asyncio.run(setup())
 
 
 def H(token):

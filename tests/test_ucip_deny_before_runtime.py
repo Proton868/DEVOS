@@ -1,3 +1,4 @@
+import pytest
 """UCIP / specialty deny must not invoke Agent Runtime."""
 import asyncio
 from brain.specialty_policy import evaluate_node_request
@@ -20,13 +21,14 @@ def test_always_blocked_present():
     assert len(ALWAYS_BLOCKED_CAPS) > 0
 
 
-def test_deny_authorization_skips_runtime():
+@pytest.mark.asyncio
+async def test_deny_authorization_skips_runtime():
     """Deny returns before AgentRuntime import/execution."""
     req = NodeExecutionRequest(
         plan_id="p", node_id="n", user_id="u", workspace_id="w",
         persona_id="web", objective="x", authorization_decision="deny",
     )
-    r = asyncio.get_event_loop().run_until_complete(run_node_on_agent_runtime(req))
+    r = await run_node_on_agent_runtime(req)
     assert r.success is False
     assert r.status == "blocked"
     assert "not authorized" in (r.error or "").lower() or r.status == "blocked"
