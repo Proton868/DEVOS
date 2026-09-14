@@ -12,7 +12,7 @@ import GhostTerminal from "../terminal/GhostTerminal";
 import AgencyDashboard from "../dashboard/AgencyDashboard";
 import MissionGlowOverlay from "../canvas/MissionGlowOverlay";
 import WebIntelSurface from "../surfaces/WebIntelSurface";
-import { Code2, MessageSquare, Workflow, Eye } from "lucide-react";
+import { Code2, MessageSquare, Eye } from "lucide-react";
 
 export default function SpatialWorkspace({ isMobile }) {
   const webIntelOpen = useOsStore((s) => s.webIntel?.open);
@@ -162,22 +162,9 @@ export default function SpatialWorkspace({ isMobile }) {
         </div>
       )}
 
-      {isMobile && focusOpen && (
+      {isMobile && focusOpen && (!copilot.open || preview?.minimized) && (
         <div className="sp-mobile-switcher">
-          <button type="button" className="sp-edge-tab" onClick={() => setFocusCollapsed(true)}>
-            <Workflow size={14} />
-            <span>Flow</span>
-          </button>
-          {!editor.open && (
-            <button
-              type="button"
-              className="sp-edge-tab"
-              onClick={() => openEditor({ file: "index.html" })}
-            >
-              <Code2 size={14} />
-              <span>IDE</span>
-            </button>
-          )}
+          {/* Flow/IDE live on Nuha as edge controls — not a horizontal bottom bar */}
           {!copilot.open && (
             <button type="button" className="sp-edge-tab" onClick={() => openCopilot()}>
               <MessageSquare size={14} />

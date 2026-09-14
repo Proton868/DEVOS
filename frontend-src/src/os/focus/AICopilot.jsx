@@ -2,6 +2,7 @@
  * AICopilot — Nuha / persona chat surface (spatial focus layer).
  * Real backend: /api/chat/send (SSE via api.streamChat) with persona_id.
  */
+import NuhaEdgeControls from "./NuhaEdgeControls";
 import React, { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -32,6 +33,7 @@ export default function AICopilot({ floating = false }) {
     nuhaMode, setActivePlanId, setOrchestrationStatus, applyOrchestrationPlan,
   } = useOsStore();
   const [pos, setPos] = useState({ x: null, y: null });
+  const nuhaHostRef = useRef(null);
   const dragRef = useRef(null);
   const dragging = useRef(false);
   const offset = useRef({ x: 0, y: 0 });
@@ -249,7 +251,7 @@ export default function AICopilot({ floating = false }) {
 
   return (
     <div
-      ref={dragRef}
+      ref={(el) => { dragRef.current = el; nuhaHostRef.current = el; }}
       className={`sp-copilot ${floating ? "floating" : "docked"}`}
       style={style}
     >
@@ -335,6 +337,7 @@ export default function AICopilot({ floating = false }) {
           <Send size={15} />
         </button>
       </div>
+      <NuhaEdgeControls hostRef={nuhaHostRef} />
     </div>
   );
 }

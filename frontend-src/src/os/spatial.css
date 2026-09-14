@@ -1944,3 +1944,108 @@ html[data-sp-glow="off"] .sp-mission-node { box-shadow: none !important; }
 html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
   box-shadow: 0 0 22px rgba(34,211,238,0.55);
 }
+
+
+/* ── Nuha edge-mounted Flow / IDE controls (node side ports) ── */
+.sp-copilot {
+  position: relative; /* host for absolute edge controls */
+}
+.sp-nuha-edge-controls {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+}
+.sp-nuha-edge-btn {
+  pointer-events: auto;
+  position: absolute;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 44px;
+  padding: 8px 7px;
+  border-radius: 10px 0 0 10px;
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-right: none;
+  background: rgba(10, 12, 22, 0.92);
+  color: var(--sp-text-1);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.35), 0 0 12px rgba(34, 211, 238, 0.08);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  touch-action: none;
+  user-select: none;
+  transition: color .15s, border-color .15s, box-shadow .15s, background .15s;
+}
+.sp-nuha-edge-btn span { line-height: 1.1; }
+.sp-nuha-edge-btn:hover {
+  color: var(--sp-accent);
+  border-color: rgba(34, 211, 238, 0.55);
+  background: rgba(14, 18, 32, 0.96);
+  box-shadow: -4px 0 18px rgba(0, 0, 0, 0.4), 0 0 16px rgba(34, 211, 238, 0.18);
+}
+.sp-nuha-edge-btn:active {
+  color: var(--sp-accent);
+}
+/* Default vertical stack on right edge, vertically centered */
+.sp-nuha-edge-flow {
+  top: calc(50% - 52px);
+}
+.sp-nuha-edge-ide {
+  top: calc(50% + 8px);
+}
+.sp-nuha-edge-controls.is-unlocked .sp-nuha-edge-btn {
+  cursor: grab;
+  border-color: rgba(167, 139, 250, 0.4);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.35), 0 0 14px rgba(167, 139, 250, 0.15);
+}
+.sp-nuha-edge-controls.is-unlocked .sp-nuha-edge-btn:active {
+  cursor: grabbing;
+}
+.sp-nuha-edge-lock {
+  pointer-events: auto;
+  position: absolute;
+  right: 6px;
+  top: calc(50% - 78px);
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 12, 22, 0.75);
+  color: var(--sp-text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity .15s, color .15s, border-color .15s;
+  z-index: 7;
+}
+.sp-nuha-edge-lock:hover {
+  opacity: 1;
+  color: var(--sp-text-0);
+  border-color: rgba(34, 211, 238, 0.35);
+}
+.sp-nuha-edge-controls.is-unlocked .sp-nuha-edge-lock {
+  opacity: 0.9;
+  color: rgba(167, 139, 250, 0.95);
+  border-color: rgba(167, 139, 250, 0.4);
+}
+/* Keep above chat body but clear of composer */
+@media (max-width: 720px) {
+  .sp-nuha-edge-flow { top: calc(42% - 52px); }
+  .sp-nuha-edge-ide { top: calc(42% + 8px); }
+  .sp-nuha-edge-lock { top: calc(42% - 78px); }
+  .sp-nuha-edge-btn {
+    min-width: 40px;
+    padding: 7px 6px;
+    font-size: 8.5px;
+  }
+}
