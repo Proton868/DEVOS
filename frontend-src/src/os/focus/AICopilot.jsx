@@ -198,6 +198,30 @@ export default function AICopilot({ floating = false }) {
             setOrchestrationStatus(evt.orchestration.status || null);
           } catch (_) { /* store optional */ }
         }
+        // Truthful lifecycle + artifact → IDE/Preview
+        if (evt.status && ["planning","plan_created","delegating","worker_completed","validation_started","validation_completed","artifact_created","failed"].includes(evt.status)) {
+          try {
+            if (evt.plan_id) {
+              setActivePlanId(evt.plan_id);
+              setOrchestrationStatus(evt.status);
+            }
+          } catch (_) {}
+        }
+        if (evt.status === "artifact_created" || (evt.status === "validation_completed" && evt.validation?.valid)) {
+          const entry = evt.entry_point || evt.validation?.entry_point || "index.html";
+          surfaceIntent = {
+            surface: "ide",
+            action: "open",
+            required: true,
+            reason: "Generated website artifacts ready",
+            context: { filePath: entry, projectId: "default" },
+          };
+          try {
+            const st = useOsStore.getState();
+            st.openEditor?.({ file: entry });
+            st.openPreview?.({ path: entry, projectId: "default", title: "Preview" });
+          } catch (_) {}
+        }
         if (evt.delta || evt.text) {
           const chunk = evt.delta || evt.text || "";
           setMessages((ms) => {

@@ -43,3 +43,27 @@ def test_resolve_chat_provider_source_defaults():
     assert "DEFAULT_PROVIDER" in src
     assert 'or "omniroute"' in src
     assert 'or "ollama"' not in src.split("def resolve_chat_provider")[1].split("def ")[0]
+
+
+def test_website_builder_module_exists():
+    src = (ROOT / "brain" / "website_builder.py").read_text(encoding="utf-8")
+    assert "materialize_website_via_agent" in src
+    assert "AGENT_MATERIALIZE" in src
+    assert "FileService" in src
+    assert "validate_website_artifacts" in src
+
+
+def test_chat_uses_agent_materialize_before_scaffold():
+    src = (ROOT / "api" / "routes" / "chat.py").read_text(encoding="utf-8")
+    assert "materialize_website_via_agent" in src
+    assert "AGENT_MATERIALIZE" in src
+    # materialize appears before scaffold fallback gate
+    i_mat = src.find("materialize_website_via_agent")
+    i_fb = src.find("DEVOS_ALLOW_WEBSITE_SCAFFOLD_FALLBACK")
+    assert i_mat > 0 and i_fb > i_mat
+
+
+def test_aicopilot_opens_ide_on_artifact():
+    src = (ROOT / "frontend-src" / "src" / "os" / "focus" / "AICopilot.jsx").read_text(encoding="utf-8")
+    assert "artifact_created" in src
+    assert "openPreview" in src

@@ -460,6 +460,41 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                                     "Mission finished but website validation failed: "
                                     + ", ".join(website_validation.get("errors") or ["no entry file"])
                                 )
+                    # Agent materialize: LLM structured files → FileService (not template scaffold)
+                    if not (website_validation or {}).get("valid"):
+                        yield f"data: {json.dumps({'status': 'agent_progress', 'session_id': session.id, 'phase': 'materialize_website'})}\n\n"
+                        try:
+                            from brain.website_builder import materialize_website_via_agent
+                            mat = await materialize_website_via_agent(
+                                user_id=user.id,
+                                project_id="default",
+                                goal=req.message,
+                                brain=brain,
+                            )
+                            if mat.get("ok"):
+                                website_validation = mat.get("validation") or {
+                                    "valid": True,
+                                    "entry_point": mat.get("entry_point"),
+                                    "files_checked": mat.get("files") or [],
+                                    "status": "valid",
+                                }
+                                if orch_result is not None:
+                                    orch_result["ok"] = True
+                                    orch_result["synthesis_mode"] = "success"
+                                    orch_result["error"] = None
+                                    orch_result["execution_path"] = "AGENT_MATERIALIZE"
+                                    orch_result["artifacts"] = {
+                                        "entry_point": mat.get("entry_point"),
+                                        "files": mat.get("files") or [],
+                                        "structure": (website_validation or {}).get("structure") or "static",
+                                    }
+                                yield f"data: {json.dumps({'status': 'artifact_created', 'session_id': session.id, 'files': mat.get('files') or [], 'entry_point': mat.get('entry_point'), 'execution_path': 'AGENT_MATERIALIZE'})}\n\n"
+                                yield f"data: {json.dumps({'status': 'validation_completed', 'session_id': session.id, 'validation': {'valid': True, 'entry_point': mat.get('entry_point'), 'files_checked': mat.get('files') or []}})}\n\n"
+                            else:
+                                yield f"data: {json.dumps({'status': 'agent_progress', 'session_id': session.id, 'phase': 'materialize_failed', 'errors': (mat.get('errors') or [])[:5]})}\n\n"
+                        except Exception as me:
+                            yield f"data: {json.dumps({'status': 'agent_progress', 'session_id': session.id, 'phase': 'materialize_error', 'error': str(me)[:200]})}\n\n"
+
                     # Optional last-resort scaffold ONLY when mission failed and explicit env allows
                     import os as _os
                     if (
@@ -552,6 +587,20 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
             )
 
         si = surface_intent_for_message(req.message)
+        # Prefer validated entry point for IDE/Preview surfaces
+        try:
+            art = (orch_result or {}).get("artifacts") or {}
+            ep = art.get("entry_point")
+            if ep and isinstance(si, dict):
+                ctx = dict(si.get("context") or {})
+                ctx["filePath"] = ep
+                ctx["projectId"] = "default"
+                si = {**si, "surface": si.get("surface") or "ide", "action": "open", "context": ctx}
+                if (orch_result or {}).get("ok"):
+                    si["required"] = True
+                    si["reason"] = "Website artifacts ready in workspace"
+        except Exception:
+            pass
         final_status = "completed"
         if orch_result is not None:
             if orch_result.get("ok") is False:
