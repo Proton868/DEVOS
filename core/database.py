@@ -13,15 +13,26 @@ from sqlalchemy import String, Text, Boolean, Integer, DateTime, JSON, ForeignKe
 from core.config import settings
 
 def _resolve_database_url() -> str:
-    url = settings.DATABASE_URL or ""
+    """Fail closed: production must use Postgres/Supabase only."""
+    url = (settings.DATABASE_URL or "").strip()
     require_pg = bool(getattr(settings, "REQUIRE_POSTGRES", True))
     low = url.lower()
-    if require_pg and (low.startswith("sqlite") or not low):
+    is_sqlite = low.startswith("sqlite") or ":memory:" in low
+    is_pg = low.startswith("postgres") or low.startswith("postgresql")
+    if require_pg:
+        if not url or is_sqlite or not is_pg:
+            raise RuntimeError(
+                "DevOS requires Postgres/Supabase as the single source of truth. "
+                "Set REQUIRE_POSTGRES=true and DATABASE_URL to a "
+                "postgresql+asyncpg://... or postgresql+psycopg://... URL. "
+                "SQLite is forbidden as application state. "
+                "For isolated tests only, set REQUIRE_POSTGRES=false."
+            )
+    elif not url:
+        # Test harness must still provide an explicit URL
         raise RuntimeError(
-            "DevOS requires Postgres/Supabase as the single source of truth. "
-            "Set DATABASE_URL to a postgresql+psycopg://... connection string. "
-            "SQLite is no longer an application state store. "
-            "For local tests only, set REQUIRE_POSTGRES=false."
+            "DATABASE_URL is required even when REQUIRE_POSTGRES=false "
+            "(use sqlite+aiosqlite:///... only for isolated tests)."
         )
     return url
 
@@ -278,6 +289,22 @@ class OrchestrationPlanRecord(Base):
 
 
 # ── Agency OS SoT models (Supabase/Postgres) ───────────────────────────────
+
+
+class CustomEndpointRecord(Base):
+    """User-managed LLM endpoints — Postgres SoT (replaces data/endpoints.db)."""
+    __tablename__ = "custom_endpoints"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    base_url: Mapped[str] = mapped_column(String(512))
+    api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    api_format: Mapped[str] = mapped_column(String(32), default="openai")
+    default_model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    headers: Mapped[dict] = mapped_column(JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
 
 class Agent(Base):
     __tablename__ = "agents"
