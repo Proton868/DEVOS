@@ -129,11 +129,24 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
         project_id=req.workspace_id or "default",
         user_request=req.objective,
     )
+    website_hint = ""
+    obj_l = (req.objective or "").lower()
+    if any(k in obj_l for k in ("website", "landing", "html", "page", "frontend", "one-page")):
+        website_hint = (
+            "\n\nBuild the requested website in the assigned DevOS workspace. "
+            "Create/edit the actual project files using workspace tools "
+            "(create_file / apply_patch / replace_text). "
+            "Typical deliverables: index.html, style.css or styles.css, script.js "
+            "(or an appropriate Vite/React/Next structure). "
+            "Do NOT return the complete website as chat text. "
+            "Completion is successful only after the files exist on disk and can be verified."
+        )
     objective = (
         f"[orch plan={req.plan_id} node={req.node_id} persona={req.persona_id}]\n"
         f"Workspace: {req.workspace_id}\n"
         f"Authorized caps (canonical): {', '.join(req.effective_caps) or 'none'}\n"
         f"{req.objective}"
+        f"{website_hint}"
     )
 
     result = NodeExecutionResult(success=False, status="running")

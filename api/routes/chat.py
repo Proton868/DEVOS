@@ -338,6 +338,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
         format_memory_context,
     )
     from brain.artifact_scaffold import scaffold_website_artifacts, _is_website_goal
+    from brain.orchestration_verify import validate_website_artifacts
     from brain.orchestration import create_plan, execute_plan
 
     # IMPORTANT: do NOT run execute_plan before SSE starts (root cause of HTTP 504).
@@ -428,27 +429,71 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                     }
                     yield f"data: {json.dumps({'status': 'failed', 'session_id': session.id, 'error': str(e)[:200]})}\n\n"
 
-                try:
-                    if _is_website_goal(req.message):
-                        scaffold_result = await scaffold_website_artifacts(
+                # Website goals: verify real workspace artifacts — never treat scaffold as primary success
+                website_validation = None
+                if _is_website_goal(req.message):
+                    yield f"data: {json.dumps({'status': 'validation_started', 'session_id': session.id, 'plan_id': (orch_result or {}).get('plan_id')})}\n\n"
+                    try:
+                        website_validation = await validate_website_artifacts(
                             user_id=user.id,
-                            project_id="default",
+                            workspace_id="default",
                             goal=req.message,
                         )
-                except Exception:
-                    scaffold_result = None
+                    except Exception as ve:
+                        website_validation = {"valid": False, "status": "invalid", "errors": [str(ve)[:200]]}
+                    yield f"data: {json.dumps({'status': 'validation_completed', 'session_id': session.id, 'plan_id': (orch_result or {}).get('plan_id'), 'validation': {k: website_validation.get(k) for k in ('valid','status','entry_point','structure','warnings','errors','files_checked')}})}\n\n"
+                    if orch_result is not None:
+                        orch_result["website_validation"] = website_validation
+                        if website_validation.get("valid"):
+                            orch_result["ok"] = True
+                            orch_result["artifacts"] = {
+                                "entry_point": website_validation.get("entry_point"),
+                                "files": website_validation.get("files_checked") or [],
+                                "structure": website_validation.get("structure"),
+                            }
+                        else:
+                            # Mission "completed" without on-disk site is not website success
+                            if orch_result.get("ok"):
+                                orch_result["ok"] = False
+                                orch_result["synthesis_mode"] = "incomplete"
+                                orch_result["error"] = (
+                                    "Mission finished but website validation failed: "
+                                    + ", ".join(website_validation.get("errors") or ["no entry file"])
+                                )
+                    # Optional last-resort scaffold ONLY when mission failed and explicit env allows
+                    import os as _os
+                    if (
+                        not (website_validation or {}).get("valid")
+                        and _os.environ.get("DEVOS_ALLOW_WEBSITE_SCAFFOLD_FALLBACK") == "1"
+                    ):
+                        try:
+                            scaffold_result = await scaffold_website_artifacts(
+                                user_id=user.id,
+                                project_id="default",
+                                goal=req.message,
+                            )
+                            if scaffold_result and scaffold_result.get("ok"):
+                                scaffold_result["execution_path"] = "SCAFFOLD_FALLBACK"
+                        except Exception:
+                            scaffold_result = None
             else:
                 yield f"data: {json.dumps({'status': 'responding', 'session_id': session.id})}\n\n"
 
             parts = []
             if orch_result and orch_result.get("orchestrated"):
                 parts.append(synthesize_orchestration_reply(orch_result))
+                if orch_result.get("artifacts"):
+                    art = orch_result["artifacts"]
+                    parts.append(
+                        f"**Path: MISSION_EXECUTION** — agents wrote workspace files.\n"
+                        f"Entry: `{art.get('entry_point')}` · structure: {art.get('structure')}\n"
+                        f"Open IDE / Preview on the generated project (not a template scaffold)."
+                    )
             if scaffold_result and scaffold_result.get("ok"):
                 files = ", ".join(scaffold_result.get("files") or [])
-                msg = scaffold_result.get("message") or f"Workspace files ready: {files}. Open IDE / Preview for index.html."
-                # Explicitly not specialist delegation
+                msg = scaffold_result.get("message") or f"Workspace files ready: {files}."
                 parts.append(
-                    f"**Path: DIRECT_SCAFFOLD** (not specialist Mission execution)\n{msg}"
+                    f"**Path: SCAFFOLD_FALLBACK** (explicit fallback only — specialists did not build this)\n{msg}"
                 )
             if parts:
                 text = "\n\n".join(parts)
