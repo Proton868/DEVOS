@@ -56,3 +56,8 @@ workspace/*
 # Live staging drill artifacts
 data/staging-results/
 data/hitl/
+
+# Runtime SQLite databases
+data/*.sqlite3
+data/*.sqlite3-shm
+data/*.sqlite3-wal

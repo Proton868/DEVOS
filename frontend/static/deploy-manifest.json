@@ -1,0 +1,23 @@
+{
+  "mains": [
+    "main.820fe499.js"
+  ],
+  "htmlRefs": [
+    "/static/js/main.820fe499.js",
+    "/static/css/main.4278a2a4.css"
+  ],
+  "chunkRefs": [
+    "47.1e165510.chunk.js",
+    "62.5fd6faef.chunk.js",
+    "237.6993bd7f.chunk.js",
+    "401.343afb8b.chunk.js",
+    "544.f583b736.chunk.js",
+    "676.0640de33.chunk.js",
+    "700.acfbb79d.chunk.js",
+    "706.0c919e24.chunk.js",
+    "826.4bea0559.chunk.js",
+    "873.55eb86a0.chunk.js",
+    "931.ea089b09.chunk.js"
+  ],
+  "builtAt": "2026-09-15T16:19:32.227Z"
+}
