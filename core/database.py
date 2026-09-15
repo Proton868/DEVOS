@@ -291,6 +291,42 @@ class OrchestrationPlanRecord(Base):
 # ── Agency OS SoT models (Supabase/Postgres) ───────────────────────────────
 
 
+
+class MemoryRecord(Base):
+    """Durable agent/user memory — Postgres SoT (replaces data/memory.db)."""
+    __tablename__ = "memories"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    role: Mapped[str] = mapped_column(String(32), default="user")
+    content: Mapped[str] = mapped_column(Text)
+    meta: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    kind: Mapped[str] = mapped_column(String(32), default="episodic", index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+
+
+class KnowledgeEntity(Base):
+    __tablename__ = "knowledge_entities"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(256), index=True)
+    entity_type: Mapped[str] = mapped_column(String(64), default="concept")
+    properties: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class KnowledgeRelationship(Base):
+    __tablename__ = "knowledge_relationships"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    from_entity_id: Mapped[str] = mapped_column(String, ForeignKey("knowledge_entities.id"), index=True)
+    to_entity_id: Mapped[str] = mapped_column(String, ForeignKey("knowledge_entities.id"), index=True)
+    rel_type: Mapped[str] = mapped_column(String(64), default="related_to")
+    properties: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
 class CustomEndpointRecord(Base):
     """User-managed LLM endpoints — Postgres SoT (replaces data/endpoints.db)."""
     __tablename__ = "custom_endpoints"
