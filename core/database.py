@@ -292,6 +292,141 @@ class OrchestrationPlanRecord(Base):
 
 
 
+
+class OutboxEvent(Base):
+    __tablename__ = "outbox_events"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    aggregate_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    available_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class SagaRecord(Base):
+    __tablename__ = "sagas"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    plan_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    mission_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="running", index=True)
+    failure: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class SagaStepRecord(Base):
+    __tablename__ = "saga_steps"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    saga_id: Mapped[str] = mapped_column(String, ForeignKey("sagas.id"), index=True)
+    node_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    action: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    phase: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evidence_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class DeliveryRuntime(Base):
+    __tablename__ = "delivery_runtimes"
+    runtime_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    project_id: Mapped[str] = mapped_column(String, index=True)
+    status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    pid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    port: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    command: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cwd: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    app_type: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    revision: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    isolation_mode: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+    started_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+    stopped_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class DeliveryShare(Base):
+    __tablename__ = "delivery_shares"
+    share_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    project_id: Mapped[str] = mapped_column(String, index=True)
+    path: Mapped[str] = mapped_column(Text)
+    permission: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    revision_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+    expires_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+    revoked_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+
+
+class AuditLogRecord(Base):
+    __tablename__ = "audit_log"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    actor_id: Mapped[str] = mapped_column(String, index=True)
+    actor_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    action: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    resource: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    resource_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    mission_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    result: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    evidence: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+
+
+class TraceSpanRecord(Base):
+    """Durable span store — observational; not authority."""
+    __tablename__ = "trace_spans"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    trace_id: Mapped[str] = mapped_column(String, index=True)
+    span_id: Mapped[str] = mapped_column(String, index=True)
+    parent_span_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    name: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    attrs: Mapped[dict] = mapped_column(JSON, default=dict)
+    started_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+    ended_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+
+
+class WebCrawlRecord(Base):
+    __tablename__ = "web_crawls"
+    crawl_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    root_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    normalized_root_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+    updated_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+
+
+class CaraiVoiceSession(Base):
+    __tablename__ = "carai_voice_sessions"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    transcript: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+    updated_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+
+
 class MemoryRecord(Base):
     """Durable agent/user memory — Postgres SoT (replaces data/memory.db)."""
     __tablename__ = "memories"

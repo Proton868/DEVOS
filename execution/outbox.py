@@ -1,164 +1,117 @@
-"""
-Minimal durable outbox — same SQLite DB as delivery durable store.
-Not an execution queue. Not an authorization authority.
-Ensures domain state + event record commit together.
-"""
+"""Transactional outbox — Postgres SoT (no SQLite)."""
 from __future__ import annotations
 
-import json
 import logging
-import sqlite3
-import threading
 import time
-import uuid
-from pathlib import Path
-from typing import Any, Callable, Optional
+from datetime import datetime, timezone, timedelta
+from typing import Callable, Optional
 
 logger = logging.getLogger("devos.outbox")
-
-_LOCK = threading.Lock()
-_DB = Path("data/delivery_durable.sqlite3")
-_HANDLERS: dict[str, Callable[[dict], None]] = {}
+_HANDLERS: dict[str, Callable] = {}
 
 
-def _conn() -> sqlite3.Connection:
-    _DB.parent.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(str(_DB), check_same_thread=False)
-    c.row_factory = sqlite3.Row
-    return c
+def _backend() -> str:
+    from core.sync_session import store_backend
+    return store_backend()
 
 
 def init_outbox() -> None:
-    with _LOCK:
-        c = _conn()
-        try:
-            c.execute(
-                """CREATE TABLE IF NOT EXISTS outbox_events (
-                    id TEXT PRIMARY KEY,
-                    event_type TEXT NOT NULL,
-                    aggregate_type TEXT,
-                    aggregate_id TEXT,
-                    payload TEXT,
-                    trace_id TEXT,
-                    created_at REAL,
-                    available_at REAL,
-                    attempts INTEGER DEFAULT 0,
-                    delivered_at REAL,
-                    status TEXT DEFAULT 'pending',
-                    last_error TEXT,
-                    idempotency_key TEXT UNIQUE
-                )"""
-            )
-            c.execute(
-                "CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events(status, available_at)"
-            )
-            c.commit()
-        finally:
-            c.close()
-
-
-init_outbox()
+    """Tables created via SQLAlchemy metadata / migrations."""
+    return
 
 
 def enqueue(
     event_type: str,
+    payload: dict,
     *,
-    aggregate_type: str = "",
-    aggregate_id: str = "",
-    payload: Optional[dict] = None,
-    trace_id: Optional[str] = None,
-    idempotency_key: Optional[str] = None,
-    conn: Optional[sqlite3.Connection] = None,
+    aggregate_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> str:
-    """Insert outbox row. Pass conn to participate in an outer transaction."""
-    eid = uuid.uuid4().hex
-    key = idempotency_key or f"{event_type}:{aggregate_id}:{uuid.uuid4().hex[:8]}"
-    now = time.time()
-    row = (
-        eid, event_type, aggregate_type, aggregate_id,
-        json.dumps(payload or {}, default=str),
-        trace_id, now, now, 0, None, "pending", None, key,
-    )
-    owns = conn is None
-    if owns:
-        conn = _conn()
-    try:
-        try:
-            conn.execute(
-                """INSERT INTO outbox_events
-                   (id,event_type,aggregate_type,aggregate_id,payload,trace_id,
-                    created_at,available_at,attempts,delivered_at,status,last_error,idempotency_key)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                row,
+    from core.sync_session import get_sync_session
+    from core.database import OutboxEvent, gen_id, utcnow_naive
+
+    eid = gen_id()
+    now = utcnow_naive()
+    with get_sync_session() as s:
+        s.add(
+            OutboxEvent(
+                id=eid,
+                event_type=event_type,
+                aggregate_id=aggregate_id,
+                user_id=user_id,
+                payload=payload or {},
+                status="pending",
+                attempts=0,
+                available_at=now,
+                created_at=now,
+                updated_at=now,
             )
-            if owns:
-                conn.commit()
-        except sqlite3.IntegrityError:
-            # idempotent — return existing id if key exists
-            cur = conn.execute(
-                "SELECT id FROM outbox_events WHERE idempotency_key=?", (key,)
-            ).fetchone()
-            return cur["id"] if cur else eid
-    finally:
-        if owns:
-            conn.close()
+        )
+        s.commit()
     return eid
 
 
 def claim_pending(limit: int = 20) -> list[dict]:
-    """Claim pending events for dispatch (status → processing)."""
-    now = time.time()
-    with _LOCK:
-        c = _conn()
-        try:
-            rows = c.execute(
-                """SELECT * FROM outbox_events
-                   WHERE status='pending' AND available_at<=?
-                   ORDER BY created_at ASC LIMIT ?""",
-                (now, limit),
-            ).fetchall()
-            claimed = []
-            for r in rows:
-                c.execute(
-                    "UPDATE outbox_events SET status='processing', attempts=attempts+1 WHERE id=? AND status='pending'",
-                    (r["id"],),
+    from core.sync_session import get_sync_session
+    from core.database import OutboxEvent, utcnow_naive
+    from sqlalchemy import select
+
+    now = utcnow_naive()
+    with get_sync_session() as s:
+        rows = (
+            s.execute(
+                select(OutboxEvent)
+                .where(
+                    OutboxEvent.status == "pending",
+                    (OutboxEvent.available_at == None) | (OutboxEvent.available_at <= now),  # noqa: E711
                 )
-                if c.total_changes:
-                    claimed.append(dict(r))
-            c.commit()
-            return claimed
-        finally:
-            c.close()
+                .order_by(OutboxEvent.created_at)
+                .limit(limit)
+            )
+        ).scalars().all()
+        out = []
+        for r in rows:
+            r.status = "processing"
+            r.attempts = int(r.attempts or 0) + 1
+            r.updated_at = now
+            out.append(
+                {
+                    "id": r.id,
+                    "event_type": r.event_type,
+                    "aggregate_id": r.aggregate_id,
+                    "user_id": r.user_id,
+                    "payload": r.payload or {},
+                    "attempts": r.attempts,
+                }
+            )
+        s.commit()
+        return out
 
 
 def mark_delivered(event_id: str) -> None:
-    with _LOCK:
-        c = _conn()
-        try:
-            c.execute(
-                "UPDATE outbox_events SET status='delivered', delivered_at=? WHERE id=?",
-                (time.time(), event_id),
-            )
-            c.commit()
-        finally:
-            c.close()
+    from core.sync_session import get_sync_session
+    from core.database import OutboxEvent, utcnow_naive
+
+    with get_sync_session() as s:
+        r = s.get(OutboxEvent, event_id)
+        if r:
+            r.status = "delivered"
+            r.updated_at = utcnow_naive()
+            s.commit()
 
 
 def mark_failed(event_id: str, error: str, *, backoff_sec: float = 5.0) -> None:
-    with _LOCK:
-        c = _conn()
-        try:
-            row = c.execute("SELECT attempts FROM outbox_events WHERE id=?", (event_id,)).fetchone()
-            attempts = (row["attempts"] if row else 1) or 1
-            delay = min(backoff_sec * (2 ** max(0, attempts - 1)), 300)
-            status = "failed" if attempts >= 8 else "pending"
-            c.execute(
-                """UPDATE outbox_events SET status=?, last_error=?, available_at=? WHERE id=?""",
-                (status, (error or "")[:500], time.time() + delay, event_id),
-            )
-            c.commit()
-        finally:
-            c.close()
+    from core.sync_session import get_sync_session
+    from core.database import OutboxEvent, utcnow_naive
+
+    with get_sync_session() as s:
+        r = s.get(OutboxEvent, event_id)
+        if r:
+            r.status = "pending"
+            r.last_error = (error or "")[:2000]
+            r.available_at = utcnow_naive() + timedelta(seconds=backoff_sec)
+            r.updated_at = utcnow_naive()
+            s.commit()
 
 
 def register_handler(event_type: str, fn: Callable[[dict], None]) -> None:
@@ -166,40 +119,41 @@ def register_handler(event_type: str, fn: Callable[[dict], None]) -> None:
 
 
 def dispatch_once(limit: int = 20) -> dict:
-    """Deliver claimed events to in-process handlers. Safe on restart."""
-    claimed = claim_pending(limit)
-    delivered = 0
-    failed = 0
+    claimed = claim_pending(limit=limit)
+    delivered = failed = 0
     for ev in claimed:
-        et = ev["event_type"]
+        fn = _HANDLERS.get(ev["event_type"])
         try:
-            payload = json.loads(ev["payload"] or "{}")
-            handler = _HANDLERS.get(et) or _HANDLERS.get("*")
-            if handler:
-                handler({**ev, "payload": payload})
-            # no handler = still mark delivered (observability sink)
+            if fn:
+                fn(ev)
             mark_delivered(ev["id"])
             delivered += 1
         except Exception as e:
             mark_failed(ev["id"], str(e))
             failed += 1
-            logger.warning("outbox delivery failed %s: %s", ev["id"], e)
     return {"claimed": len(claimed), "delivered": delivered, "failed": failed}
 
 
-def list_events(*, aggregate_id: Optional[str] = None, limit: int = 50) -> list[dict]:
-    with _LOCK:
-        c = _conn()
-        try:
-            if aggregate_id:
-                rows = c.execute(
-                    "SELECT * FROM outbox_events WHERE aggregate_id=? ORDER BY created_at DESC LIMIT ?",
-                    (aggregate_id, limit),
-                ).fetchall()
-            else:
-                rows = c.execute(
-                    "SELECT * FROM outbox_events ORDER BY created_at DESC LIMIT ?", (limit,)
-                ).fetchall()
-            return [dict(r) for r in rows]
-        finally:
-            c.close()
+def list_events(*, aggregate_id: Optional[str] = None, user_id: Optional[str] = None, limit: int = 50) -> list[dict]:
+    from core.sync_session import get_sync_session
+    from core.database import OutboxEvent
+    from sqlalchemy import select
+
+    with get_sync_session() as s:
+        stmt = select(OutboxEvent).order_by(OutboxEvent.created_at.desc()).limit(limit)
+        if aggregate_id:
+            stmt = stmt.where(OutboxEvent.aggregate_id == aggregate_id)
+        if user_id:
+            stmt = stmt.where(OutboxEvent.user_id == user_id)
+        rows = s.execute(stmt).scalars().all()
+        return [
+            {
+                "id": r.id,
+                "event_type": r.event_type,
+                "aggregate_id": r.aggregate_id,
+                "user_id": r.user_id,
+                "status": r.status,
+                "payload": r.payload,
+            }
+            for r in rows
+        ]

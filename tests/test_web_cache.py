@@ -18,12 +18,7 @@ def test_cache_miss_fresh_stale():
     hit = web_cache.lookup(url)
     assert hit["status"] == "FRESH"
     assert hit["entry"]["content_hash"] is not None
-    import sqlite3, time as _t
-    from execution.web_intel.cache import _DB, cache_key_for
-    key = cache_key_for(url)
-    c = sqlite3.connect(str(_DB))
-    c.execute("UPDATE web_cache SET expires_at=? WHERE cache_key=?", (_t.time() - 10, key))
-    c.commit(); c.close()
+    web_cache._force_expire(url)
     assert web_cache.lookup(url)["status"] == "STALE"
 
 

@@ -120,6 +120,20 @@ async def health():
     except Exception as e:
         mission["workspace"] = f"unavailable:{type(e).__name__}"
 
+
+    # Subsystem backends (derived — never hardcode)
+    try:
+        from core.sync_session import store_backend
+        _sb = store_backend()
+    except Exception:
+        _sb = "unknown"
+    execution_store_backend = _sb
+    outbox_backend = _sb
+    saga_backend = _sb
+    audit_backend = _sb
+    if require_pg and _sb != "postgres":
+        overall = "fail"
+
     return {
         "service": "devos",
         "status": overall,
@@ -139,4 +153,8 @@ async def health():
             "suitable_for_untrusted_code": isolation.get("suitable_for_untrusted_code"),
         },
         "mission_runtime": mission,
+        "execution_store_backend": execution_store_backend,
+        "outbox_backend": outbox_backend,
+        "saga_backend": saga_backend,
+        "audit_backend": audit_backend,
     }

@@ -1,23 +1,17 @@
-"""Distributed tracing — observational only. Never grants authority."""
+"""Distributed tracing — observational spans in Postgres (not authority)."""
 from __future__ import annotations
 
 import contextvars
-import json
 import re
-import sqlite3
-import threading
 import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Generator, Optional
 
-_trace_ctx: contextvars.ContextVar[Optional["TraceContext"]] = contextvars.ContextVar("devos_trace", default=None)
-_LOCK = threading.Lock()
-_DB = Path("data/tracing.sqlite3")
-_MAX_SPANS = 50000
-
+_trace_ctx: contextvars.ContextVar[Optional["TraceContext"]] = contextvars.ContextVar(
+    "devos_trace", default=None
+)
 _SECRET_RE = re.compile(
     r"(?i)(api[_-]?key|token|password|secret|bearer|authorization)\s*[:=]\s*\S+"
 )
@@ -30,11 +24,15 @@ class TraceContext:
     parent_span_id: Optional[str] = None
 
     def child(self) -> "TraceContext":
-        return TraceContext(trace_id=self.trace_id, span_id=uuid.uuid4().hex[:16], parent_span_id=self.span_id)
+        return TraceContext(
+            trace_id=self.trace_id,
+            span_id=uuid.uuid4().hex[:16],
+            parent_span_id=self.span_id,
+        )
 
 
 def new_trace() -> TraceContext:
-    return TraceContext(trace_id=uuid.uuid4().hex, span_id=uuid.uuid4().hex[:16], parent_span_id=None)
+    return TraceContext(trace_id=uuid.uuid4().hex, span_id=uuid.uuid4().hex[:16])
 
 
 def get_current_trace() -> Optional[TraceContext]:
@@ -46,7 +44,9 @@ def set_current_trace(ctx: Optional[TraceContext]) -> None:
 
 
 def continue_trace(trace_id: str, parent_span_id: Optional[str] = None) -> TraceContext:
-    ctx = TraceContext(trace_id=trace_id, span_id=uuid.uuid4().hex[:16], parent_span_id=parent_span_id)
+    ctx = TraceContext(
+        trace_id=trace_id, span_id=uuid.uuid4().hex[:16], parent_span_id=parent_span_id
+    )
     _trace_ctx.set(ctx)
     return ctx
 
@@ -82,146 +82,98 @@ def _sanitize_attrs(attrs: Optional[dict]) -> dict:
     return out
 
 
-def _conn() -> sqlite3.Connection:
-    _DB.parent.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(str(_DB), check_same_thread=False)
-    c.row_factory = sqlite3.Row
-    return c
-
-
 def init_tracing_db() -> None:
-    with _LOCK:
-        c = _conn()
-        try:
-            c.execute(
-                """CREATE TABLE IF NOT EXISTS spans (
-                    span_id TEXT PRIMARY KEY,
-                    trace_id TEXT NOT NULL,
-                    parent_span_id TEXT,
-                    name TEXT,
-                    kind TEXT,
-                    status TEXT,
-                    started_at REAL,
-                    ended_at REAL,
-                    attributes TEXT,
-                    error TEXT
-                )"""
+    return
+
+
+def _persist_span(
+    *,
+    trace_id: str,
+    span_id: str,
+    parent_span_id: Optional[str],
+    name: str,
+    status: str,
+    attrs: dict,
+    started_at: float,
+    ended_at: Optional[float],
+) -> None:
+    try:
+        from core.sync_session import get_sync_session
+        from core.database import TraceSpanRecord, gen_id
+
+        with get_sync_session() as s:
+            s.add(
+                TraceSpanRecord(
+                    id=gen_id(),
+                    trace_id=trace_id,
+                    span_id=span_id,
+                    parent_span_id=parent_span_id,
+                    name=name,
+                    status=status,
+                    attrs=attrs,
+                    started_at=started_at,
+                    ended_at=ended_at,
+                )
             )
-            c.execute("CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(trace_id)")
-            c.commit()
-        finally:
-            c.close()
-
-
-init_tracing_db()
-
-
-def _persist_span(span: dict) -> None:
-    with _LOCK:
-        c = _conn()
-        try:
-            c.execute(
-                """INSERT OR REPLACE INTO spans
-                   (span_id,trace_id,parent_span_id,name,kind,status,started_at,ended_at,attributes,error)
-                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    span["span_id"], span["trace_id"], span.get("parent_span_id"),
-                    span.get("name"), span.get("kind"), span.get("status"),
-                    span.get("started_at"), span.get("ended_at"),
-                    json.dumps(span.get("attributes") or {}),
-                    json.dumps(span.get("error")) if span.get("error") else None,
-                ),
-            )
-            c.execute(
-                "DELETE FROM spans WHERE span_id NOT IN (SELECT span_id FROM spans ORDER BY started_at DESC LIMIT ?)",
-                (_MAX_SPANS,),
-            )
-            c.commit()
-        finally:
-            c.close()
+            s.commit()
+    except Exception:
+        pass  # observational — never block execution
 
 
 @contextmanager
-def start_span(name: str, kind: str = "internal", attributes: Optional[dict] = None) -> Generator[TraceContext, None, None]:
+def start_span(name: str, attrs: Optional[dict] = None) -> Generator[TraceContext, None, None]:
     parent = get_current_trace()
-    if parent:
-        ctx = parent.child()
-    else:
-        ctx = new_trace()
+    ctx = parent.child() if parent else new_trace()
     token = _trace_ctx.set(ctx)
     started = time.time()
     status = "ok"
-    err = None
     try:
-        try:
-            from observability.otel import start_otel_span, init_otel
-            init_otel()
-            with start_otel_span(
-                name, kind=kind, attributes=attributes,
-                devos_trace_id=ctx.trace_id, devos_span_id=ctx.span_id,
-                devos_parent_span_id=ctx.parent_span_id,
-            ):
-                yield ctx
-        except Exception:
-            yield ctx
-    except Exception as e:
+        yield ctx
+    except Exception:
         status = "error"
-        err = {"message": str(e)[:300]}
         raise
     finally:
-        ended = time.time()
-        _persist_span({
-            "span_id": ctx.span_id,
-            "trace_id": ctx.trace_id,
-            "parent_span_id": ctx.parent_span_id,
-            "name": name,
-            "kind": kind,
-            "status": status,
-            "started_at": started,
-            "ended_at": ended,
-            "attributes": _sanitize_attrs(attributes),
-            "error": err,
-        })
+        _persist_span(
+            trace_id=ctx.trace_id,
+            span_id=ctx.span_id,
+            parent_span_id=ctx.parent_span_id,
+            name=name,
+            status=status,
+            attrs=_sanitize_attrs(attrs),
+            started_at=started,
+            ended_at=time.time(),
+        )
         _trace_ctx.reset(token)
 
 
-def end_span(ctx: TraceContext, status: str = "ok", attributes: Optional[dict] = None, error: Optional[dict] = None) -> None:
-    _persist_span({
-        "span_id": ctx.span_id,
-        "trace_id": ctx.trace_id,
-        "parent_span_id": ctx.parent_span_id,
-        "name": (attributes or {}).get("name", "span"),
-        "kind": (attributes or {}).get("kind", "internal"),
-        "status": status,
-        "started_at": time.time(),
-        "ended_at": time.time(),
-        "attributes": _sanitize_attrs(attributes),
-        "error": error,
-    })
+def end_span(*args, **kwargs) -> None:
+    return
 
 
-def get_trace_spans(trace_id: str) -> list[dict]:
-    with _LOCK:
-        c = _conn()
-        try:
-            rows = c.execute(
-                "SELECT * FROM spans WHERE trace_id=? ORDER BY started_at ASC", (trace_id,)
-            ).fetchall()
-            return [dict(r) for r in rows]
-        finally:
-            c.close()
+def get_trace_spans(trace_id: str, limit: int = 100) -> list[dict]:
+    from core.sync_session import get_sync_session
+    from core.database import TraceSpanRecord
+    from sqlalchemy import select
+
+    with get_sync_session() as s:
+        rows = s.execute(
+            select(TraceSpanRecord)
+            .where(TraceSpanRecord.trace_id == trace_id)
+            .limit(limit)
+        ).scalars().all()
+        return [
+            {
+                "trace_id": r.trace_id,
+                "span_id": r.span_id,
+                "name": r.name,
+                "status": r.status,
+                "attrs": r.attrs,
+            }
+            for r in rows
+        ]
 
 
 def tracing_health() -> dict:
-    with _LOCK:
-        c = _conn()
-        try:
-            n = c.execute("SELECT COUNT(*) AS n FROM spans").fetchone()["n"]
-        finally:
-            c.close()
-    return {
-        "tracing_enabled": True,
-        "trace_storage_available": True,
-        "span_count": n,
-        "retention_policy": f"max_spans={_MAX_SPANS}",
-    }
+    from core.sync_session import store_backend
+
+    return {"backend": store_backend(), "role": "observational"}

@@ -5,7 +5,6 @@ Mission Engine decides what/when; Saga records what succeeded and compensation.
 from __future__ import annotations
 
 import json
-import sqlite3
 import threading
 import time
 import uuid
@@ -17,7 +16,6 @@ from execution.saga_compensation import CompensationPolicy, CompensationMode, Co
 from execution.compensation_ucip import authorize_compensation
 
 _LOCK = threading.Lock()
-_DB = Path("data/saga.sqlite3")
 
 SAGA_STATUSES = (
     "PENDING", "RUNNING", "COMPLETED", "COMPENSATING", "COMPENSATED",
@@ -29,91 +27,15 @@ STEP_STATUSES = (
 )
 
 
-def _conn() -> sqlite3.Connection:
-    _DB.parent.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(str(_DB), check_same_thread=False)
-    c.row_factory = sqlite3.Row
-    return c
-
 
 def init_saga_db() -> None:
-    with _LOCK:
-        c = _conn()
-        try:
-            c.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS sagas (
-                  saga_id TEXT PRIMARY KEY,
-                  plan_id TEXT,
-                  mission_id TEXT,
-                  status TEXT,
-                  created_at REAL,
-                  updated_at REAL,
-                  started_at REAL,
-                  completed_at REAL,
-                  failure TEXT,
-                  trace_id TEXT,
-                  pivot_reached INTEGER DEFAULT 0,
-                  pivot_step_id TEXT,
-                  pivot_action TEXT,
-                  pivot_at REAL
-                );
-                CREATE TABLE IF NOT EXISTS saga_steps (
-                  step_id TEXT PRIMARY KEY,
-                  saga_id TEXT NOT NULL,
-                  node_id TEXT,
-                  action TEXT,
-                  status TEXT,
-                  compensation_policy TEXT,
-                  evidence_id TEXT,
-                  trace_id TEXT,
-                  span_id TEXT,
-                  created_at REAL,
-                  updated_at REAL,
-                  started_at REAL,
-                  completed_at REAL,
-                  error TEXT,
-                  meta_json TEXT
-                );
-                CREATE INDEX IF NOT EXISTS idx_steps_saga ON saga_steps(saga_id);
-                """
-            )
-            c.commit()
-        finally:
-            c.close()
+    """Tables via SQLAlchemy metadata / migrations."""
+    return
 
 
-init_saga_db()
-
-def _migrate_saga_columns():
-    with _LOCK:
-        c = _conn()
-        try:
-            cols = {r[1] for r in c.execute("PRAGMA table_info(sagas)").fetchall()}
-            for col, decl in (
-                ("pivot_reached", "INTEGER DEFAULT 0"),
-                ("pivot_step_id", "TEXT"),
-                ("pivot_action", "TEXT"),
-                ("pivot_at", "REAL"),
-            ):
-                if col not in cols:
-                    c.execute(f"ALTER TABLE sagas ADD COLUMN {col} {decl}")
-            c.commit()
-        finally:
-            c.close()
-
-_migrate_saga_columns()
-
-
-# Phase classification relative to pivot (point of no return)
-SAGA_PHASE_COMPENSABLE = "COMPENSABLE"
-SAGA_PHASE_PIVOT = "PIVOT"
-SAGA_PHASE_POST_PIVOT = "POST_PIVOT"
-
-_PIVOT_ACTIONS = {
-    "github_push", "github_pr", "deploy", "deploy_vercel", "deploy_netlify",
-    "publish", "publication", "github_repo",
-}
+def _backend() -> str:
+    from core.sync_session import store_backend
+    return store_backend()
 
 
 def classify_step_phase(action: str, *, pivot_seen: bool = False) -> str:
@@ -188,43 +110,136 @@ class Saga:
         }
 
 
+
 def _save_saga_row(s: Saga) -> None:
-    with _LOCK:
-        c = _conn()
-        try:
-            c.execute(
-                """INSERT OR REPLACE INTO sagas
-                   (saga_id,plan_id,mission_id,status,created_at,updated_at,started_at,completed_at,failure,trace_id,
-                    pivot_reached,pivot_step_id,pivot_action,pivot_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (s.saga_id, s.plan_id, s.mission_id, s.status, s.created_at, time.time(),
-                 s.started_at, s.completed_at, s.failure, s.trace_id,
-                 1 if s.pivot_reached else 0, s.pivot_step_id, s.pivot_action, s.pivot_at),
+    from core.sync_session import get_sync_session
+    from core.database import SagaRecord, utcnow_naive
+
+    with get_sync_session() as db:
+        row = db.get(SagaRecord, s.saga_id)
+        meta = {
+            "trace_id": s.trace_id,
+            "pivot_reached": s.pivot_reached,
+            "pivot_step_id": s.pivot_step_id,
+            "pivot_action": s.pivot_action,
+            "pivot_at": s.pivot_at,
+            "started_at": s.started_at,
+            "completed_at": s.completed_at,
+            "created_at": s.created_at,
+        }
+        if row is None:
+            db.add(
+                SagaRecord(
+                    id=s.saga_id,
+                    plan_id=s.plan_id,
+                    mission_id=s.mission_id,
+                    status=s.status,
+                    failure=s.failure,
+                    meta=meta,
+                    created_at=utcnow_naive(),
+                    updated_at=utcnow_naive(),
+                )
             )
-            c.commit()
-        finally:
-            c.close()
+        else:
+            row.plan_id = s.plan_id
+            row.mission_id = s.mission_id
+            row.status = s.status
+            row.failure = s.failure
+            row.meta = meta
+            row.updated_at = utcnow_naive()
+        db.commit()
 
 
 def _save_step_row(st: SagaStep) -> None:
-    with _LOCK:
-        c = _conn()
-        try:
-            c.execute(
-                """INSERT OR REPLACE INTO saga_steps
-                   (step_id,saga_id,node_id,action,status,compensation_policy,evidence_id,trace_id,span_id,
-                    created_at,updated_at,started_at,completed_at,error,meta_json)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    st.step_id, st.saga_id, st.node_id, st.action, st.status,
-                    json.dumps(st.compensation_policy or {}), st.evidence_id, st.trace_id, st.span_id,
-                    st.created_at, time.time(), st.started_at, st.completed_at, st.error,
-                    json.dumps(st.meta or {}),
-                ),
+    from core.sync_session import get_sync_session
+    from core.database import SagaStepRecord, utcnow_naive
+
+    with get_sync_session() as db:
+        row = db.get(SagaStepRecord, st.step_id)
+        meta = dict(st.meta or {})
+        meta["compensation_policy"] = st.compensation_policy
+        meta["trace_id"] = st.trace_id
+        meta["span_id"] = st.span_id
+        meta["started_at"] = st.started_at
+        meta["completed_at"] = st.completed_at
+        meta["created_at"] = st.created_at
+        if row is None:
+            db.add(
+                SagaStepRecord(
+                    id=st.step_id,
+                    saga_id=st.saga_id,
+                    node_id=st.node_id,
+                    action=st.action,
+                    status=st.status,
+                    phase=None,
+                    attempts=0,
+                    error=st.error,
+                    evidence_id=st.evidence_id,
+                    meta=meta,
+                    created_at=utcnow_naive(),
+                    updated_at=utcnow_naive(),
+                )
             )
-            c.commit()
-        finally:
-            c.close()
+        else:
+            row.status = st.status
+            row.error = st.error
+            row.evidence_id = st.evidence_id
+            row.meta = meta
+            row.updated_at = utcnow_naive()
+        db.commit()
+
+
+
+def load_saga(saga_id: str) -> Optional[Saga]:
+    from core.sync_session import get_sync_session
+    from core.database import SagaRecord, SagaStepRecord
+    from sqlalchemy import select
+
+    with get_sync_session() as db:
+        row = db.get(SagaRecord, saga_id)
+        if not row:
+            return None
+        meta = row.meta or {}
+        steps_rows = db.execute(
+            select(SagaStepRecord).where(SagaStepRecord.saga_id == saga_id)
+        ).scalars().all()
+        steps = []
+        for st in steps_rows:
+            sm = st.meta or {}
+            steps.append(
+                SagaStep(
+                    step_id=st.id,
+                    saga_id=st.saga_id,
+                    node_id=st.node_id or "",
+                    action=st.action or "",
+                    status=st.status,
+                    compensation_policy=sm.get("compensation_policy"),
+                    evidence_id=st.evidence_id,
+                    trace_id=sm.get("trace_id"),
+                    span_id=sm.get("span_id"),
+                    created_at=float(sm.get("created_at") or 0),
+                    started_at=sm.get("started_at"),
+                    completed_at=sm.get("completed_at"),
+                    error=st.error,
+                    meta={k: v for k, v in sm.items() if k not in ("compensation_policy", "trace_id", "span_id", "started_at", "completed_at", "created_at")},
+                )
+            )
+        return Saga(
+            saga_id=row.id,
+            plan_id=row.plan_id,
+            mission_id=row.mission_id,
+            status=row.status,
+            created_at=float(meta.get("created_at") or 0),
+            failure=row.failure,
+            trace_id=meta.get("trace_id"),
+            pivot_reached=bool(meta.get("pivot_reached")),
+            pivot_step_id=meta.get("pivot_step_id"),
+            pivot_action=meta.get("pivot_action"),
+            pivot_at=meta.get("pivot_at"),
+            started_at=meta.get("started_at"),
+            completed_at=meta.get("completed_at"),
+            steps=steps,
+        )
 
 
 def create_saga(*, plan_id: Optional[str] = None, mission_id: Optional[str] = None,
