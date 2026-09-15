@@ -61,7 +61,7 @@ class ChatSession(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     title: Mapped[str] = mapped_column(String(256), default="New Chat")
-    provider: Mapped[str] = mapped_column(String(32), default="ollama")
+    provider: Mapped[str] = mapped_column(String(32), default="omniroute")
     model: Mapped[str] = mapped_column(String(128), default="")
     mode: Mapped[str] = mapped_column(String(16), default="chat")  # chat | loop
     system_prompt: Mapped[Optional[str]] = mapped_column(Text)

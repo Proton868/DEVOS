@@ -168,7 +168,7 @@ class BrainExecutionLoop:
 
     async def run(self, goal, expected_outcome=None, decompose_first=False, use_reflection=False):
         from governance.ratelimit import RateLimiter
-        from brain.llm import BrainLLM
+        from brain.llm import resolve_chat_provider,  BrainLLM
 
         rl = RateLimiter()
         allowed, reason = await rl.check_loop(self.user_id)
@@ -200,7 +200,7 @@ class BrainExecutionLoop:
         state.use_reflection = use_reflection  # read by _loop's mark_complete handling
         rl.register_loop(state.id)
         self.obs.start_trace(state.id, self.agent.agent_id, self.session_id, goal,
-                             self.provider or "ollama", self.model or "default")
+                             resolve_chat_provider(self.provider), self.model or "default")
         try:
             await self._loop(state, brain)
         except Exception as e:

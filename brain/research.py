@@ -197,13 +197,13 @@ class DeepResearchAgent:
     async def _generate_queries(self, question: str) -> list[str]:
         """Generate effective search queries for the research question."""
         try:
-            from brain.llm import BrainLLM
+            from brain.llm import resolve_chat_provider,  BrainLLM
             brain = BrainLLM(provider=self.provider, model=self.model)
             prompt = f"""Generate 3-5 effective search queries for this research question:
 QUESTION: {question}
 
 Respond with JSON: {{"queries": ["query1", "query2", ...]}}"""
-            response = await brain._call(self.provider or "ollama", [
+            response = await brain._call(resolve_chat_provider(self.provider), [
                 {"role": "system", "content": RESEARCH_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ])
@@ -263,7 +263,7 @@ Respond with JSON:
   "gaps": ["known gaps or uncertainties"]
 }}"""
 
-            response = await brain._call(self.provider or "ollama", [
+            response = await brain._call(resolve_chat_provider(self.provider), [
                 {"role": "system", "content": RESEARCH_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ])

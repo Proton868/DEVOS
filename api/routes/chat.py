@@ -8,6 +8,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy import select, desc
+from core.config import settings
+from brain.llm import resolve_chat_provider
 from core.database import get_db, ChatSession, Message
 from api.routes.auth import get_current_user
 from brain.llm import resolve_user_model
@@ -69,7 +71,7 @@ async def create_session(request: Request, db=Depends(get_db)):
     session = ChatSession(
         user_id=user.id,
         title="New Chat",
-        provider="ollama",
+        provider=resolve_chat_provider(),
         model="",
         mode="chat",
     )
@@ -159,7 +161,7 @@ async def edit(req: EditReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
-    brain = await BrainLLM.for_user(db, user.id, provider=req.providerId or provider, model=model or req.model)
+    brain = await BrainLLM.for_user(db, user.id, provider=resolve_chat_provider(req.providerId), model=req.model or None)
 
     lang_hint = f" ({req.language})" if req.language else ""
     if req.selectedCode.strip():
@@ -216,7 +218,7 @@ async def explain(req: ExplainReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from brain.llm import BrainLLM
-    brain = await BrainLLM.for_user(db, user.id, provider=req.providerId or provider, model=model or req.model)
+    brain = await BrainLLM.for_user(db, user.id, provider=resolve_chat_provider(req.providerId), model=req.model or None)
 
     lang_hint = f" ({req.language})" if req.language else ""
     system = (
@@ -272,7 +274,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
     if not session:
         session = ChatSession(
             user_id=user.id, title=req.message[:60],
-            provider=req.provider or "ollama", model=req.model or "",
+            provider=resolve_chat_provider(req.provider), model=req.model or "",
             mode="chat", system_prompt=req.system_prompt,
             node_id=req.node_id,
             workflow_id=req.workflow_id,
@@ -315,7 +317,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
         session.system_prompt = base_system
 
     model = await resolve_user_model(db, user.id, "chat", explicit=req.model or session.model or None)
-    provider = req.provider or session.provider or "ollama"
+    provider = resolve_chat_provider(req.provider, session.provider)
     if model and not session.model:
         session.model = model
     db.add(Message(session_id=session.id, role="user", content=req.message))
@@ -324,7 +326,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
     await db.commit()
 
     from brain.llm import BrainLLM
-    brain = await BrainLLM.for_user(db, user.id, provider=req.provider or session.provider, model=req.model or session.model or None)
+    brain = await BrainLLM.for_user(db, user.id, provider=provider, model=req.model or session.model or None)
 
     from brain.nuha_bridge import (
         should_auto_orchestrate,

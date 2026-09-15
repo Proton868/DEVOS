@@ -183,7 +183,7 @@ async def personas_patch_profile(persona_id: str, req: PersonaProfilePatch, requ
     # Validate provider against known system providers if set (no credential storage)
     if req.provider is not None and req.provider.strip():
         from core.config import settings
-        allowed = set(settings.available_providers) | {"ollama", "openrouter", "deepseek", "gemini", "openai", "huggingface", "nararouter"}
+        allowed = set(settings.available_providers) | {"omniroute", "ollama", "openrouter", "deepseek", "gemini", "openai", "huggingface", "nararouter"}
         if req.provider.strip().lower() not in {a.lower() for a in allowed}:
             # Soft allow custom ids that match editable keys — still no secrets here
             if not req.provider.replace("_", "").isalnum():

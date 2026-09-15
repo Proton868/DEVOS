@@ -53,6 +53,21 @@ def system_provider_key(provider: str) -> str:
         return ""
     return (getattr(settings, attr, None) or "").strip()
 
+def resolve_chat_provider(*candidates: Optional[str]) -> str:
+    """Resolve provider for Nuha/chat: first non-empty candidate, else DEFAULT_PROVIDER.
+
+    Never injects a hard-coded "ollama" fallback. Explicit user/session values win.
+    """
+    for c in candidates:
+        if c is None:
+            continue
+        s = str(c).strip()
+        if s:
+            return s
+    return (settings.DEFAULT_PROVIDER or "omniroute").strip() or "omniroute"
+
+
+
 
 # Structured provider health statuses for diagnostics (not a new provider layer).
 PROVIDER_STATUS = (

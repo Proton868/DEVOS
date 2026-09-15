@@ -27,7 +27,7 @@ const useStore = create((set, get) => ({
       terminalContext: null,
       agentActions: [],
       providers: {},
-      selectedProvider: localStorage.getItem("devos_provider") || "ollama",
+      selectedProvider: localStorage.getItem("devos_provider") || "",
       selectedModel: localStorage.getItem("devos_model") || "",
       workspaceSettings: {},
       status: "",
@@ -179,7 +179,7 @@ const useStore = create((set, get) => ({
   // ── AI Settings ───────────────────────────────────────────
   providers: {},
   setProviders: (p) => set({ providers: p }),
-  selectedProvider: localStorage.getItem("devos_provider") || "ollama",
+  selectedProvider: localStorage.getItem("devos_provider") || "",
   selectedModel: localStorage.getItem("devos_model") || "",
   setProvider: (id) => {
     localStorage.setItem("devos_provider", id);
