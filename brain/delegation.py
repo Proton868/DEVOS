@@ -317,7 +317,7 @@ async def run_delegated_mission(
         await persist_message(pt_req)
         msg_ids.append(pt_req.message_id)
 
-        from cognitive.ponytail_gate import validate_agent_artifacts
+        from cognitive.ponytail_gate import validate_agent_artifacts, assert_accepted
 
         gate = await validate_agent_artifacts(
             user_id=user_id,
@@ -327,6 +327,8 @@ async def run_delegated_mission(
             agent_id=agent_id,
             mission_id=mission_id,
             task_id=task_id,
+            requirements=goal,
+            force_code_gate=(persona_key in ("web", "code", "data", "automation", "script_writer")),
         )
         if gate.evidence_id:
             evidence_refs.append(gate.evidence_id)
@@ -350,6 +352,11 @@ async def run_delegated_mission(
         msg_ids.append(pt_res.message_id)
 
         if gate.passed:
+            try:
+                assert_accepted(gate)
+            except PermissionError as pe:
+                last_error = str(pe)
+                continue
             try:
                 from brain.agent_identity import (
                     Provenance,
