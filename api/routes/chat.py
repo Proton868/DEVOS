@@ -461,28 +461,36 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                                     "Mission finished but website validation failed: "
                                     + ", ".join(website_validation.get("errors") or ["no entry file"])
                                 )
-                    # Agent materialize: LLM structured files → FileService (not template scaffold)
+                    # A2A delegation: Nuha orchestrates → agent executes → Ponytail validates
                     if not (website_validation or {}).get("valid"):
-                        yield f"data: {json.dumps({'status': 'agent_progress', 'session_id': session.id, 'phase': 'materialize_website'})}\n\n"
+                        yield f"data: {json.dumps({'status': 'delegating', 'session_id': session.id, 'phase': 'a2a_delegation'})}\n\n"
                         try:
-                            from brain.website_builder import materialize_website_via_agent
-                            mat = await materialize_website_via_agent(
+                            from brain.delegation import run_delegated_mission
+                            dres = await run_delegated_mission(
                                 user_id=user.id,
-                                project_id="default",
                                 goal=req.message,
-                                brain=brain,
+                                workspace_id="default",
                             )
-                            if mat.get("ok"):
-                                website_validation = mat.get("validation") or {
+                            if dres.ok:
+                                files = []
+                                for f in (dres.files_changed or []):
+                                    if isinstance(f, dict):
+                                        files.append(f.get("path") or "")
+                                    else:
+                                        files.append(str(f))
+                                files = [x for x in files if x]
+                                ep = "index.html" if "index.html" in files else (files[0] if files else "index.html")
+                                website_validation = {
                                     "valid": True,
-                                    "entry_point": mat.get("entry_point"),
-                                    "files_checked": mat.get("files") or [],
+                                    "entry_point": ep,
+                                    "files_checked": files,
                                     "status": "valid",
+                                    "ponytail": dres.ponytail,
                                 }
                                 _art = {
-                                    "entry_point": mat.get("entry_point"),
-                                    "files": mat.get("files") or [],
-                                    "structure": (website_validation or {}).get("structure") or "static",
+                                    "entry_point": ep,
+                                    "files": files,
+                                    "structure": "static",
                                 }
                                 if orch_result is None:
                                     orch_result = {
@@ -490,23 +498,27 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                                         "orchestrated": True,
                                         "status": "completed",
                                         "synthesis_mode": "success",
-                                        "execution_path": "AGENT_MATERIALIZE",
+                                        "execution_path": "A2A_DELEGATION",
                                         "artifacts": _art,
                                         "website_validation": website_validation,
+                                        "mission_id": dres.mission_id,
+                                        "a2a_message_ids": dres.a2a_message_ids,
                                     }
                                 else:
                                     orch_result["ok"] = True
                                     orch_result["synthesis_mode"] = "success"
                                     orch_result["error"] = None
-                                    orch_result["execution_path"] = "AGENT_MATERIALIZE"
+                                    orch_result["execution_path"] = "A2A_DELEGATION"
                                     orch_result["artifacts"] = _art
                                     orch_result["website_validation"] = website_validation
-                                yield f"data: {json.dumps({'status': 'artifact_created', 'session_id': session.id, 'files': mat.get('files') or [], 'entry_point': mat.get('entry_point'), 'execution_path': 'AGENT_MATERIALIZE'})}\n\n"
-                                yield f"data: {json.dumps({'status': 'validation_completed', 'session_id': session.id, 'validation': {'valid': True, 'entry_point': mat.get('entry_point'), 'files_checked': mat.get('files') or []}})}\n\n"
+                                    orch_result["mission_id"] = dres.mission_id
+                                    orch_result["a2a_message_ids"] = dres.a2a_message_ids
+                                yield f"data: {json.dumps({'status': 'artifact_created', 'session_id': session.id, 'files': files, 'entry_point': ep, 'execution_path': 'A2A_DELEGATION', 'mission_id': dres.mission_id})}\n\n"
+                                yield f"data: {json.dumps({'status': 'validation_completed', 'session_id': session.id, 'validation': website_validation})}\n\n"
                             else:
-                                yield f"data: {json.dumps({'status': 'agent_progress', 'session_id': session.id, 'phase': 'materialize_failed', 'errors': (mat.get('errors') or [])[:5]})}\n\n"
+                                yield f"data: {json.dumps({'status': 'failed', 'session_id': session.id, 'phase': 'a2a_delegation_failed', 'error': (dres.error or '')[:200], 'mission_id': dres.mission_id})}\n\n"
                         except Exception as me:
-                            yield f"data: {json.dumps({'status': 'agent_progress', 'session_id': session.id, 'phase': 'materialize_error', 'error': str(me)[:200]})}\n\n"
+                            yield f"data: {json.dumps({'status': 'failed', 'session_id': session.id, 'phase': 'a2a_error', 'error': str(me)[:200]})}\n\n"
 
                     # Optional last-resort scaffold ONLY when mission failed and explicit env allows
                     import os as _os
