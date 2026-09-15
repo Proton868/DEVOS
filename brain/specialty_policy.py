@@ -163,6 +163,35 @@ SPECIALTY_POLICIES: dict[str, SpecialtyPolicy] = {
             ActionRisk.EXTERNAL_SIDE_EFFECT, ActionRisk.IRREVERSIBLE,
         },
     ),
+
+    "writer": SpecialtyPolicy(
+        persona_id="writer",
+        allow={"fs.read", "fs.write"},
+        deny={"shell.exec", "credentials.read", "production.delete", "deployment.production"},
+        require_hitl=set(),
+        scope_paths=["docs/**", "content/**", "**/*.md"],
+        trust_ceiling=TrustLevel.ASSISTANT,
+        allow_risk={ActionRisk.READ_ONLY, ActionRisk.REVERSIBLE_WRITE},
+        deny_risk={ActionRisk.EXECUTION, ActionRisk.IRREVERSIBLE, ActionRisk.EXTERNAL_SIDE_EFFECT},
+    ),
+    "storyteller": SpecialtyPolicy(
+        persona_id="storyteller",
+        allow={"fs.read", "fs.write"},
+        deny={"shell.exec", "credentials.read", "production.delete", "deployment.production"},
+        require_hitl=set(),
+        scope_paths=["docs/**", "content/**", "stories/**", "**/*.md"],
+        trust_ceiling=TrustLevel.ASSISTANT,
+        allow_risk={ActionRisk.READ_ONLY, ActionRisk.REVERSIBLE_WRITE},
+        deny_risk={ActionRisk.EXECUTION, ActionRisk.IRREVERSIBLE, ActionRisk.EXTERNAL_SIDE_EFFECT},
+    ),
+    "script_writer": SpecialtyPolicy(
+        persona_id="script_writer",
+        allow={"fs.read", "fs.write", "shell.exec"},
+        deny={"production.delete", "credentials.read"},
+        require_hitl={"deployment.production"},
+        scope_paths=["scripts/**", "**/*.py", "**/*.sh", "**/*.js"],
+        trust_ceiling=TrustLevel.OPERATOR,
+    ),
 }
 
 

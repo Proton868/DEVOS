@@ -101,7 +101,7 @@ _SPECIALISTS: list[Persona] = [
             "If asked for legal, payments policy, or unrelated domains, escalate to Nuha."
         ),
         capabilities=["fs.write", "fs.read", "shell.exec"],
-        allowed_tools=["write_file", "read_file", "run_terminal"],
+        allowed_tools=["create_file", "apply_patch", "read_file", "list_files", "run_command", "run_tests"],
         creation_domains=["website", "frontend", "ui", "react", "html"],
         advisory_domains=["css", "accessibility", "performance"],
         escalation_targets=["nuha"],
@@ -118,7 +118,7 @@ _SPECIALISTS: list[Persona] = [
             "engineering scope. Escalate pure design/legal/marketing work to Nuha."
         ),
         capabilities=["fs.write", "fs.read", "shell.exec"],
-        allowed_tools=["write_file", "read_file", "run_terminal", "apply_patch"],
+        allowed_tools=["create_file", "apply_patch", "replace_text", "read_file", "list_files", "search_files", "run_command", "run_tests", "run_linter", "git_status", "git_diff"],
         creation_domains=["api", "service", "library", "refactor"],
         advisory_domains=["architecture", "testing"],
         escalation_targets=["nuha"],
@@ -135,7 +135,7 @@ _SPECIALISTS: list[Persona] = [
             "engine. Do not invent a parallel automation runtime."
         ),
         capabilities=["workflow.write", "fs.write"],
-        allowed_tools=["write_file", "run_terminal"],
+        allowed_tools=["create_file", "apply_patch", "read_file", "run_command", "list_files"],
         creation_domains=["workflow", "automation", "trigger", "pipeline"],
         advisory_domains=["orchestration", "ops"],
         escalation_targets=["nuha"],
@@ -151,8 +151,8 @@ _SPECIALISTS: list[Persona] = [
             "You are the DevOS Design Specialist. Advise on UX/UI. Escalate pure "
             "backend or legal work to Nuha."
         ),
-        capabilities=["fs.read"],
-        allowed_tools=["read_file"],
+        capabilities=["fs.read", "fs.write"],
+        allowed_tools=["read_file", "list_files", "search_files", "create_file", "apply_patch"],
         creation_domains=["design-system", "layout", "brand"],
         advisory_domains=["ux", "ui", "a11y"],
         escalation_targets=["nuha", "web"],
@@ -169,7 +169,7 @@ _SPECIALISTS: list[Persona] = [
             "Do not claim execution of builds or deploys."
         ),
         capabilities=["web.search", "fs.write"],
-        allowed_tools=["search_web", "write_file"],
+        allowed_tools=["read_file", "list_files", "search_files", "create_file", "apply_patch", "get_evidence"],
         creation_domains=["report", "brief"],
         advisory_domains=["research", "analysis"],
         escalation_targets=["nuha"],
@@ -186,7 +186,7 @@ _SPECIALISTS: list[Persona] = [
             "copy. Do not claim deploy or infrastructure authority."
         ),
         capabilities=["fs.read", "fs.write"],
-        allowed_tools=["read_file", "write_file"],
+        allowed_tools=["read_file", "list_files", "create_file", "apply_patch", "search_files"],
         creation_domains=["docs", "copy", "readme"],
         advisory_domains=["writing", "editing"],
         escalation_targets=["nuha"],
@@ -203,7 +203,7 @@ _SPECIALISTS: list[Persona] = [
             "Do not claim deploy, VCS push, or infrastructure authority."
         ),
         capabilities=["fs.read", "fs.write"],
-        allowed_tools=["read_file", "write_file"],
+        allowed_tools=["read_file", "list_files", "create_file", "apply_patch", "search_files"],
         creation_domains=["story", "fiction", "narrative", "ocean"],
         advisory_domains=["writing", "creative"],
         escalation_targets=["nuha"],
@@ -220,7 +220,7 @@ _SPECIALISTS: list[Persona] = [
             "Do not claim deploy, VCS push, or infrastructure authority."
         ),
         capabilities=["fs.read", "fs.write"],
-        allowed_tools=["read_file", "write_file"],
+        allowed_tools=["read_file", "list_files", "create_file", "apply_patch", "search_files"],
         creation_domains=["script", "youtube", "video", "documentary"],
         advisory_domains=["writing", "script"],
         escalation_targets=["nuha"],
@@ -236,7 +236,7 @@ _SPECIALISTS: list[Persona] = [
             "You are the DevOS Data Specialist. Stay within data/engineering scope."
         ),
         capabilities=["fs.write", "fs.read", "shell.exec"],
-        allowed_tools=["write_file", "read_file", "run_terminal"],
+        allowed_tools=["create_file", "apply_patch", "read_file", "list_files", "run_command", "run_tests"],
         creation_domains=["schema", "etl", "analytics"],
         advisory_domains=["sql", "modeling"],
         escalation_targets=["nuha"],
@@ -253,7 +253,7 @@ _SPECIALISTS: list[Persona] = [
             "edge cases — escalate formal legal or regulated advice to Nuha."
         ),
         capabilities=["fs.read"],
-        allowed_tools=["read_file"],
+        allowed_tools=["read_file", "list_files", "search_files", "get_evidence"],
         creation_domains=["brief", "prd"],
         advisory_domains=["product", "growth", "ops"],
         escalation_targets=["nuha"],

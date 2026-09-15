@@ -77,15 +77,26 @@ def select_persona_for_goal(goal: str) -> str:
 
 async def _ensure_persona_agent(persona_key: str) -> dict:
     try:
+        from brain.executable_agents import build_registry
+        reg = build_registry()
+        contract = reg.get(persona_key)
+        agent_id = contract.agent_id if contract else f"agent:{persona_key}"
+    except Exception:
+        agent_id = f"agent:{persona_key}"
+    try:
         from core.repositories.agency import ensure_agent
 
-        return await ensure_agent(
+        row = await ensure_agent(
             slug=f"persona-{persona_key}",
             name=f"{persona_key} agent",
             kind="persona",
         )
+        # Prefer stable contract id when DB id differs
+        row = dict(row)
+        row["contract_id"] = agent_id
+        return row
     except Exception:
-        return {"id": f"persona-{persona_key}", "slug": f"persona-{persona_key}", "name": persona_key}
+        return {"id": agent_id, "slug": f"persona-{persona_key}", "name": persona_key, "contract_id": agent_id}
 
 
 async def _run_agent_node(
