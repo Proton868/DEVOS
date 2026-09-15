@@ -38,7 +38,12 @@ class Settings(BaseSettings):
     SQL_ECHO: bool = False
     ALLOWED_ORIGINS: List[str] = ["http://localhost:8000"]
 
-    DATABASE_URL: str = "sqlite+aiosqlite:///./data/devos.db"
+    # Authoritative store is Postgres (Supabase). SQLite is legacy-only for offline unit tests.
+    # Production: postgresql+psycopg://postgres.[ref]:[password]@...pooler.supabase.com:6543/postgres
+    # Local verify: postgresql+psycopg://devos:devos@127.0.0.1:5432/devos
+    DATABASE_URL: str = "postgresql+psycopg://devos:devos@127.0.0.1:5432/devos"
+    # When True (default in production images), refuse to boot on sqlite application URLs.
+    REQUIRE_POSTGRES: bool = True
 
     AUTH_ENABLED: bool = True
     JWT_SECRET: str = ""  # default empty — replace with persisted secret if not set in .env
@@ -178,6 +183,10 @@ class Settings(BaseSettings):
     CALDAV_PASSWORD: str = ""
 
     @property
+    def is_postgres(self) -> bool:
+        u = (self.DATABASE_URL or "").lower()
+        return u.startswith("postgresql") or u.startswith("postgres")
+
     def has_supabase(self) -> bool:
         return bool(self.SUPABASE_URL and self.SUPABASE_KEY)
 

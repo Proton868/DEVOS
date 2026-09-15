@@ -1,0 +1,11 @@
+# DevOS Supabase project configuration
+# Project ref: heinpngifdqsykqzufhe (DEVOS)
+project_id = "heinpngifdqsykqzufhe"
+
+[api]
+enabled = true
+port = 54321
+
+[db]
+port = 54322
+major_version = 15

@@ -12,7 +12,23 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy import String, Text, Boolean, Integer, DateTime, JSON, ForeignKey
 from core.config import settings
 
-engine = create_async_engine(settings.DATABASE_URL, echo=bool(getattr(settings, "SQL_ECHO", False)))
+def _resolve_database_url() -> str:
+    url = settings.DATABASE_URL or ""
+    require_pg = bool(getattr(settings, "REQUIRE_POSTGRES", True))
+    low = url.lower()
+    if require_pg and (low.startswith("sqlite") or not low):
+        raise RuntimeError(
+            "DevOS requires Postgres/Supabase as the single source of truth. "
+            "Set DATABASE_URL to a postgresql+psycopg://... connection string. "
+            "SQLite is no longer an application state store. "
+            "For local tests only, set REQUIRE_POSTGRES=false."
+        )
+    return url
+
+engine = create_async_engine(
+    _resolve_database_url(),
+    echo=bool(getattr(settings, "SQL_ECHO", False)),
+)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 def gen_id(): return str(uuid.uuid4())
@@ -258,6 +274,234 @@ class OrchestrationPlanRecord(Base):
     plan_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+
+# ── Agency OS SoT models (Supabase/Postgres) ───────────────────────────────
+
+class Agent(Base):
+    __tablename__ = "agents"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    slug: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(256))
+    kind: Mapped[str] = mapped_column(String(32), default="persona")
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    default_capabilities: Mapped[list] = mapped_column(JSON, default=list)
+    default_tools: Mapped[list] = mapped_column(JSON, default=list)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class AgentPersonaRecord(Base):
+    __tablename__ = "agent_personas"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    agent_id: Mapped[str] = mapped_column(String, ForeignKey("agents.id"), index=True)
+    persona_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    role: Mapped[str] = mapped_column(String(32), default="specialist")
+    can_delegate: Mapped[bool] = mapped_column(Boolean, default=False)
+    system_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    agent_slug: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class AgentProfileRecord(Base):
+    __tablename__ = "agent_profiles"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    agent_id: Mapped[str] = mapped_column(String, ForeignKey("agents.id"), index=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    xp: Mapped[int] = mapped_column(Integer, default=0)
+    level: Mapped[int] = mapped_column(Integer, default=1)
+    stats: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class AgentSoul(Base):
+    __tablename__ = "agent_souls"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    agent_id: Mapped[str] = mapped_column(String, ForeignKey("agents.id"), index=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    principles: Mapped[list] = mapped_column(JSON, default=list)
+    preferences: Mapped[dict] = mapped_column(JSON, default=dict)
+    lessons: Mapped[list] = mapped_column(JSON, default=list)
+    memory_refs: Mapped[list] = mapped_column(JSON, default=list)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class AgentWorkHistory(Base):
+    __tablename__ = "agent_work_history"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    agent_id: Mapped[str] = mapped_column(String, index=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    actor_type: Mapped[str] = mapped_column(String(32))
+    actor_id: Mapped[str] = mapped_column(String)
+    delegated_by_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    delegated_by_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    mission_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    task_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    action: Mapped[str] = mapped_column(String(128))
+    tools_used: Mapped[list] = mapped_column(JSON, default=list)
+    files_changed: Mapped[list] = mapped_column(JSON, default=list)
+    outcome: Mapped[str] = mapped_column(String(64), default="unknown")
+    evidence_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    ponytail_check_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class Mission(Base):
+    __tablename__ = "missions"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    workspace_id: Mapped[str] = mapped_column(String, default="default")
+    goal: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(64), default="pending", index=True)
+    plan_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    actor_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    actor_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    outcome: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class MissionTask(Base):
+    __tablename__ = "mission_tasks"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    mission_id: Mapped[str] = mapped_column(String, ForeignKey("missions.id"), index=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    persona_key: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(64), default="pending")
+    sequence_no: Mapped[int] = mapped_column(Integer, default=0)
+    agent_task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    outcome: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evidence_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class TaskDelegation(Base):
+    __tablename__ = "task_delegations"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    mission_id: Mapped[str] = mapped_column(String, index=True)
+    task_id: Mapped[str] = mapped_column(String, index=True)
+    from_actor_type: Mapped[str] = mapped_column(String(32))
+    from_actor_id: Mapped[str] = mapped_column(String)
+    to_actor_type: Mapped[str] = mapped_column(String(32))
+    to_actor_id: Mapped[str] = mapped_column(String)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class AgentMessage(Base):
+    __tablename__ = "agent_messages"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    mission_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    from_agent_id: Mapped[str] = mapped_column(String, index=True)
+    to_agent_id: Mapped[str] = mapped_column(String, index=True)
+    envelope: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class AgentEvent(Base):
+    __tablename__ = "agent_events"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    agent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    mission_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    event_type: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    actor_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    actor_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class ToolExecution(Base):
+    __tablename__ = "tool_executions"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    agent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    mission_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    tool_name: Mapped[str] = mapped_column(String(128))
+    args_digest: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="started")
+    outcome: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evidence_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    operation_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    actor_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    actor_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    delegated_by_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    delegated_by_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class PonytailCheck(Base):
+    __tablename__ = "ponytail_checks"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    agent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    mission_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    stage_results: Mapped[list] = mapped_column(JSON, default=list)
+    self_check: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evidence_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class Artifact(Base):
+    __tablename__ = "artifacts"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    project_id: Mapped[str] = mapped_column(String, default="default")
+    path: Mapped[str] = mapped_column(String(1024))
+    kind: Mapped[str] = mapped_column(String(32), default="file")
+    mission_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class ArtifactVersion(Base):
+    __tablename__ = "artifact_versions"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    artifact_id: Mapped[str] = mapped_column(String, ForeignKey("artifacts.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    actor_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    actor_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    mission_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
 
 async def init_db():
     async with engine.begin() as conn:
