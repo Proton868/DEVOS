@@ -75,28 +75,27 @@ def select_persona_for_goal(goal: str) -> str:
     return "code"
 
 
-async def _ensure_persona_agent(persona_key: str) -> dict:
+async def _ensure_persona_agent(persona_key: str, user_id: str = "") -> dict:
+    """Durable identity + empty profile/soul for this user."""
     try:
-        from brain.executable_agents import build_registry
-        reg = build_registry()
-        contract = reg.get(persona_key)
-        agent_id = contract.agent_id if contract else f"agent:{persona_key}"
-    except Exception:
-        agent_id = f"agent:{persona_key}"
+        from brain.agent_identity import ensure_agent_identity
+        if user_id:
+            ident = await ensure_agent_identity(persona_key=persona_key, user_id=user_id)
+            return {
+                "id": ident["agent_id"],
+                "slug": f"persona-{persona_key}",
+                "name": persona_key,
+                "contract_id": ident.get("agent_id"),
+                "capabilities": ident.get("capabilities") or [],
+            }
+    except Exception as e:
+        logger.debug("identity ensure fallback: %s", e)
     try:
         from core.repositories.agency import ensure_agent
-
-        row = await ensure_agent(
-            slug=f"persona-{persona_key}",
-            name=f"{persona_key} agent",
-            kind="persona",
-        )
-        # Prefer stable contract id when DB id differs
-        row = dict(row)
-        row["contract_id"] = agent_id
-        return row
+        row = await ensure_agent(slug=f"persona-{persona_key}", name=f"{persona_key} agent", kind="persona")
+        return dict(row)
     except Exception:
-        return {"id": agent_id, "slug": f"persona-{persona_key}", "name": persona_key, "contract_id": agent_id}
+        return {"id": f"agent:{persona_key}", "slug": f"persona-{persona_key}", "name": persona_key}
 
 
 async def _run_agent_node(
@@ -142,7 +141,7 @@ async def run_delegated_mission(
     """
     max_rounds = max_rounds if max_rounds is not None else MAX_CORRECTION_ROUNDS
     persona_key = persona_key or select_persona_for_goal(goal)
-    agent = await _ensure_persona_agent(persona_key)
+    agent = await _ensure_persona_agent(persona_key, user_id=user_id)
     agent_id = agent["id"]
     msg_ids: list[str] = []
     evidence_refs: list[str] = []
@@ -183,6 +182,25 @@ async def run_delegated_mission(
             to_actor_id=agent_id,
             reason="initial_delegation",
         )
+        try:
+            from brain.agent_identity import (
+                Provenance,
+                record_task_lifecycle,
+                EVENT_TASK_ASSIGNED,
+            )
+            prov = Provenance.human_via_nuha(user_id, agent_id)
+            await record_task_lifecycle(
+                event_type=EVENT_TASK_ASSIGNED,
+                agent_id=agent_id,
+                user_id=user_id,
+                provenance=prov,
+                mission_id=mission_id,
+                task_id=task_id,
+                outcome="assigned",
+                summary="task assigned via Nuha",
+            )
+        except Exception as ie:
+            logger.debug("task_assigned event: %s", ie)
     except Exception as e:
         logger.warning("mission persist degraded: %s", e)
         import uuid
@@ -332,6 +350,49 @@ async def run_delegated_mission(
         msg_ids.append(pt_res.message_id)
 
         if gate.passed:
+            try:
+                from brain.agent_identity import (
+                    Provenance,
+                    record_task_lifecycle,
+                    append_validated_lesson,
+                    EVENT_PONYTAIL_VALIDATION,
+                    EVENT_TASK_COMPLETED,
+                )
+                prov = Provenance.human_via_nuha(user_id, agent_id)
+                await record_task_lifecycle(
+                    event_type=EVENT_PONYTAIL_VALIDATION,
+                    agent_id=agent_id,
+                    user_id=user_id,
+                    provenance=prov,
+                    mission_id=mission_id,
+                    task_id=task_id,
+                    files_changed=files,
+                    outcome="passed",
+                    summary=gate.summary,
+                    ponytail_check_id=gate.evidence_id,
+                )
+                await record_task_lifecycle(
+                    event_type=EVENT_TASK_COMPLETED,
+                    agent_id=agent_id,
+                    user_id=user_id,
+                    provenance=prov,
+                    mission_id=mission_id,
+                    task_id=task_id,
+                    files_changed=files,
+                    outcome="success",
+                    summary="accepted after Ponytail",
+                    ponytail_check_id=gate.evidence_id,
+                )
+                # Explicit validated lesson only (bounded operational fact)
+                await append_validated_lesson(
+                    agent_id=agent_id,
+                    user_id=user_id,
+                    lesson=f"Delivered {len(files)} artifact(s) under Ponytail for: {(goal or '')[:80]}",
+                    source_event=EVENT_PONYTAIL_VALIDATION,
+                    mission_id=mission_id,
+                )
+            except Exception as ie:
+                logger.debug("completion identity: %s", ie)
             # Accepted — only now Nuha treats as success
             return DelegationResult(
                 ok=True,
@@ -348,6 +409,37 @@ async def run_delegated_mission(
             )
 
         last_error = gate.summary or "ponytail_failed"
+        try:
+            from brain.agent_identity import (
+                Provenance,
+                record_task_lifecycle,
+                EVENT_PONYTAIL_VALIDATION,
+                EVENT_CORRECTION_REQUESTED,
+            )
+            prov = Provenance.human_via_nuha(user_id, agent_id)
+            await record_task_lifecycle(
+                event_type=EVENT_PONYTAIL_VALIDATION,
+                agent_id=agent_id,
+                user_id=user_id,
+                provenance=prov,
+                mission_id=mission_id,
+                task_id=task_id,
+                files_changed=files,
+                outcome="failed",
+                summary=last_error,
+            )
+            await record_task_lifecycle(
+                event_type=EVENT_CORRECTION_REQUESTED,
+                agent_id=agent_id,
+                user_id=user_id,
+                provenance=prov,
+                mission_id=mission_id,
+                task_id=task_id,
+                outcome="pending",
+                summary=last_error,
+            )
+        except Exception as ie:
+            logger.debug("correction identity: %s", ie)
         # Correction will loop — Nuha delegates again (not silent patch)
 
     return DelegationResult(
