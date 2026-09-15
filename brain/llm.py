@@ -16,6 +16,7 @@ logger = logging.getLogger("devos.brain")
 
 # Map provider id -> settings attribute for API key / host
 _PROVIDER_KEY_ATTR = {
+    "omniroute": "OMNIROUTE_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
     "gemini": "GEMINI_API_KEY",
@@ -101,13 +102,20 @@ async def probe_provider(
     brain = BrainLLM(provider=provider, model=model, api_keys=keys or None)
 
     # Pre-check configuration before network I/O
-    if provider == "ollama":
+    if provider == "omniroute":
+        base = (settings.OMNIROUTE_BASE_URL or "").strip()
+        if not base:
+            result["status"] = "NOT_CONFIGURED"
+            result["detail"] = "OMNIROUTE_BASE_URL is empty"
+            return result
+        # Optional internal key — not required for local VPS OmniRoute
+    elif provider == "ollama":
         host = (settings.OLLAMA_HOST or "").strip()
         if not host:
             result["status"] = "NOT_CONFIGURED"
             result["detail"] = "OLLAMA_HOST is empty"
             return result
-    elif provider in _PROVIDER_KEY_ATTR:
+    elif provider in _PROVIDER_KEY_ATTR and provider != "omniroute":
         key = brain._key_for(provider)
         if not key:
             result["status"] = "NOT_CONFIGURED"
@@ -157,7 +165,7 @@ async def probe_provider(
 class BrainLLM:
     """
     The Brain. provider can be:
-      "ollama" | "openrouter" | "deepseek" | "gemini" | "openai"
+      "omniroute" | "ollama" | "openrouter" | "deepseek" | "gemini" | "openai"
       "custom:<endpoint_id>"   — any user-added endpoint
 
     Session 9 found BrainLLM() construction cost ~30ms every time, from
@@ -208,7 +216,7 @@ class BrainLLM:
         """Construct BrainLLM with this user's encrypted provider keys loaded."""
         from core.config import settings as _s
         keys = {}
-        for pid in ("openrouter", "deepseek", "gemini", "openai", "huggingface", "nararouter"):
+        for pid in ("omniroute", "openrouter", "deepseek", "gemini", "openai", "huggingface", "nararouter"):
             k = await load_user_provider_key(db, user_id, pid)
             if k:
                 keys[pid] = k
@@ -277,6 +285,8 @@ class BrainLLM:
         if provider.startswith("custom:"):
             endpoint_id = provider.split(":", 1)[1]
             return await self._custom_endpoint(endpoint_id, messages)
+        elif provider == "omniroute":
+            return await self._omniroute(messages)
         elif provider == "ollama":
             return await self._ollama(messages)
         elif provider == "openrouter":
@@ -343,22 +353,91 @@ class BrainLLM:
             body = (e.response.text or "")[:200]
             raise ValueError(f"Ollama at {host} returned {e.response.status_code}: {body}") from e
 
-    async def _openai_compat(self, base_url: str, api_key: str, model: str,
-                               messages: list[dict],
-                               extra_headers: Optional[dict] = None) -> str:
-        if not api_key:
+
+    async def _omniroute(self, messages: list[dict]) -> str:
+        """Call OmniRoute OpenAI-compatible chat completions gateway.
+
+        Upstream provider credentials stay inside OmniRoute. DevOS only needs
+        OMNIROUTE_BASE_URL and optionally OMNIROUTE_API_KEY for internal auth.
+        """
+        base = (settings.OMNIROUTE_BASE_URL or "").rstrip("/")
+        if not base:
+            raise RuntimeError("OmniRoute is not configured (OMNIROUTE_BASE_URL is empty)")
+        model = (self.model or settings.OMNIROUTE_DEFAULT_MODEL or "").strip()
+        if not model:
+            # Prefer first discovered model if no default configured
+            try:
+                models = await self.list_models("omniroute")
+                if models:
+                    model = models[0]["id"]
+            except Exception:
+                pass
+        if not model:
+            raise RuntimeError(
+                "No OmniRoute model selected. Set OMNIROUTE_DEFAULT_MODEL or choose a model from the catalog."
+            )
+        key = self._key_for("omniroute") or (settings.OMNIROUTE_API_KEY or "").strip() or "devos"
+        timeout = float(getattr(settings, "OMNIROUTE_TIMEOUT", 90.0) or 90.0)
+        try:
+            return await self._openai_compat(
+                base, key, model, messages,
+                timeout=timeout,
+                require_api_key=False,
+            )
+        except httpx.ConnectError as e:
+            raise RuntimeError(f"OmniRoute unavailable at {base}: connection failed") from e
+        except httpx.TimeoutException as e:
+            raise RuntimeError(f"OmniRoute timeout after {timeout}s") from e
+        except httpx.HTTPStatusError as e:
+            code = e.response.status_code if e.response is not None else "?"
+            body = ""
+            try:
+                body = (e.response.text or "")[:200]
+            except Exception:
+                pass
+            if code in (400, 404):
+                raise RuntimeError(f"OmniRoute invalid model or request ({code}): {body}") from e
+            if code in (401, 403):
+                raise RuntimeError(f"OmniRoute authentication failed ({code})") from e
+            raise RuntimeError(f"OmniRoute provider failure ({code}): {body}") from e
+
+    async def _openai_compat(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        messages: list[dict],
+        extra_headers: Optional[dict] = None,
+        *,
+        timeout: Optional[float] = None,
+        require_api_key: bool = True,
+    ) -> str:
+        if require_api_key and not api_key:
             raise ValueError("No API key configured for this provider (save a user credential or system key in Settings)")
         model = self.model or model
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         if extra_headers:
             headers.update(extra_headers)
-        r = await self._http.post(
-            f"{base_url.rstrip('/')}/chat/completions",
-            json={"model": model, "messages": messages, "temperature": 0.1},
-            headers=headers,
-        )
-        r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
+        try:
+            r = await self._http.post(
+                f"{base_url.rstrip('/')}/chat/completions",
+                json={"model": model, "messages": messages, "temperature": 0.1},
+                headers=headers,
+                timeout=timeout,
+            )
+            r.raise_for_status()
+        except httpx.HTTPStatusError:
+            raise
+        try:
+            data = r.json()
+        except Exception as e:
+            raise RuntimeError(f"Malformed provider response (non-JSON): {e}") from e
+        try:
+            return data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as e:
+            raise RuntimeError(f"Malformed provider response (missing choices): {e}") from e
 
     async def _gemini(self, messages: list[dict]) -> str:
         if not self._key_for("gemini"):
@@ -440,6 +519,40 @@ class BrainLLM:
             finally:
                 await client.close()
 
+        if provider == "omniroute":
+            base = (settings.OMNIROUTE_BASE_URL or "").rstrip("/")
+            if not base:
+                return []
+            try:
+                headers = {}
+                key = (settings.OMNIROUTE_API_KEY or "").strip()
+                if key:
+                    headers["Authorization"] = f"Bearer {key}"
+                r = await self._http.get(f"{base}/models", headers=headers or None)
+                r.raise_for_status()
+                data = r.json()
+                items = data.get("data") if isinstance(data, dict) else data
+                out = []
+                for m in items or []:
+                    if isinstance(m, str):
+                        mid = m
+                        name = m
+                        free = ":free" in m.lower() or "free" in m.lower()
+                    else:
+                        mid = m.get("id") or m.get("name") or ""
+                        name = m.get("name") or mid
+                        free = bool(m.get("free")) or ":free" in str(mid).lower()
+                    if mid:
+                        out.append({
+                            "id": mid,
+                            "name": name,
+                            "provider": "omniroute",
+                            "free": free,
+                        })
+                return out
+            except Exception as e:
+                logger.warning("OmniRoute model list failed: %s", e)
+                return []
         if provider == "ollama":
             try:
                 r = await self._http.get(f"{settings.OLLAMA_HOST.rstrip('/')}/api/tags")

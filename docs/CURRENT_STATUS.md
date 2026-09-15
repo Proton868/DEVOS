@@ -70,7 +70,7 @@ Production gates: [PRODUCTION_GATES.md](PRODUCTION_GATES.md) · Runtime: [NUHA_R
 ## Honest limits
 
 
-- LLM quality depends on Ollama or cloud keys (not exercised in CI without keys).
+- LLM quality depends on OmniRoute (default gateway) and its upstream models; Ollama/cloud keys are optional direct providers.
 - Pure-logic chaos drills **do not** replace live Postgres/Redis/process-kill staging.
 - Multi-node quotas need Redis when `DEVOS_MULTI_NODE=true`.
 - Plan docs under `plans/` may lag; this file + README are authoritative for “what runs.”
@@ -78,7 +78,7 @@ Production gates: [PRODUCTION_GATES.md](PRODUCTION_GATES.md) · Runtime: [NUHA_R
 ## Operator path
 
 1. `./install.sh`
-2. Optional: start Ollama or set a provider key in `.env`
+2. Ensure OmniRoute is running locally (`OMNIROUTE_BASE_URL`); Ollama/cloud keys remain optional
 3. `./devos start`
 4. Open http://localhost:8000
 5. `./devos doctor` if issues

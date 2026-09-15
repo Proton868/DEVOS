@@ -11,15 +11,20 @@ const ThemeCustomizer = lazy(() => import("../settings/ThemeCustomizer"));
 const PROVIDER_LINKS = {
   anthropic:"https://console.anthropic.com/keys", openrouter:"https://openrouter.ai/keys",
   deepseek:"https://platform.deepseek.com/api_keys", gemini:"https://aistudio.google.com/app/apikey",
-  huggingface:"https://huggingface.co/settings/tokens", ollama:null,
+  huggingface:"https://huggingface.co/settings/tokens", omniroute:null, ollama:null,
 };
 
 // Groups of EDITABLE_PROVIDER_KEYS (core/config.py) into per-provider cards.
 const PROVIDER_CONFIG_GROUPS = [
   { id: "default", label: "🎯 Default Provider", fields: [
-    { key: "DEFAULT_PROVIDER", label: "Default Provider", placeholder: "ollama" },
+    { key: "DEFAULT_PROVIDER", label: "Default Provider", placeholder: "omniroute" },
   ], testable: false },
-  { id: "ollama", label: "🦙 Ollama (local)", fields: [
+  { id: "omniroute", label: "🛰️ OmniRoute (gateway)", fields: [
+    { key: "OMNIROUTE_BASE_URL", label: "Base URL", placeholder: "http://127.0.0.1:3000/api/v1" },
+    { key: "OMNIROUTE_API_KEY", label: "Internal API Key (optional)", placeholder: "leave empty for local VPS", secret: true },
+    { key: "OMNIROUTE_DEFAULT_MODEL", label: "Default Model", placeholder: "from OmniRoute catalog" },
+  ], testable: true, testId: "omniroute" },
+  { id: "ollama", label: "🦙 Ollama (optional local)", fields: [
     { key: "OLLAMA_HOST", label: "Host", placeholder: "http://localhost:11434" },
     { key: "OLLAMA_DEFAULT_MODEL", label: "Default Model", placeholder: "llama3" },
   ], testable: true, testId: "ollama" },

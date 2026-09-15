@@ -4,6 +4,7 @@ import { api } from "../../services/api";
 
 /** Providers a normal user may attach their own credentials to. */
 const USER_PROVIDERS = [
+  { id: "omniroute", label: "OmniRoute (gateway)", needsKey: false },
   { id: "openrouter", label: "OpenRouter", needsKey: true },
   { id: "openai", label: "OpenAI", needsKey: true },
   { id: "deepseek", label: "DeepSeek", needsKey: true },

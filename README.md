@@ -40,7 +40,7 @@ After installation, Node/npm are **not** required to run `./devos start`.
 | **Docker** | Optional |
 | **Redis / Postgres** | Optional (multi-node / enterprise) |
 
-LLM: local **Ollama** (default) or any configured cloud provider key in `.env`.
+LLM: **OmniRoute** gateway (default, `http://127.0.0.1:3000`) routes to configured upstream models. Ollama is optional.
 
 ---
 
@@ -104,7 +104,9 @@ docs/                   Status, staging drills, hardening
 | Variable | Purpose |
 |----------|---------|
 | `JWT_SECRET` | Auth + secrets vault seed (auto-generated on install) |
-| `DEFAULT_PROVIDER` | `ollama` (default), `openrouter`, `openai`, … |
+| `DEFAULT_PROVIDER` | `omniroute` (default), `ollama` (optional), `openrouter`, `openai`, … |
+| `OMNIROUTE_BASE_URL` | OmniRoute OpenAI-compatible base (default `http://127.0.0.1:3000/api/v1`) |
+| `OMNIROUTE_DEFAULT_MODEL` | Optional default model id from OmniRoute catalog |
 | `OLLAMA_HOST` | Default `http://127.0.0.1:11434` |
 | `DATABASE_URL` | Default SQLite under `./data/` |
 | `AUTH_MODE` | `local` / `supabase` / `dual` |

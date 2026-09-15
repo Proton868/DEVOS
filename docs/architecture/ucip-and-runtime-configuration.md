@@ -161,7 +161,9 @@ Not competing auth engines — different scopes. Revisions do not reset UCIP ide
 |----------|---------|-------|
 | `DATABASE_URL` | Persistence | REQUIRED |
 | `JWT_SECRET` / `SECRET_KEY` | Auth/crypto | REQUIRED (prod) |
-| `DEFAULT_PROVIDER` | LLM selection | REQUIRED for chat/missions |
+| `DEFAULT_PROVIDER` | LLM selection (`omniroute` default) | REQUIRED for chat/missions |
+| `OMNIROUTE_BASE_URL` | OmniRoute gateway | REQUIRED when default is omniroute |
+| `OMNIROUTE_DEFAULT_MODEL` | Default model via OmniRoute catalog | OPTIONAL |
 
 ### Provider (pick one path)
 
@@ -172,7 +174,7 @@ Not competing auth engines — different scopes. Revisions do not reset UCIP ide
 | `OPENAI_API_KEY` | OpenAI | OPTIONAL |
 | `GEMINI_API_KEY` | Gemini | OPTIONAL |
 | `DEEPSEEK_API_KEY` | DeepSeek | OPTIONAL |
-| `OLLAMA_HOST` | Local/remote Ollama | OPTIONAL |
+| `OLLAMA_HOST` | Optional local/remote Ollama (not required) | OPTIONAL |
 | `TAVILY_API_KEY` | Search | OPTIONAL |
 
 ### Mission / test

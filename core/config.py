@@ -109,6 +109,11 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_DEFAULT_MODEL: str = "openrouter/free"
+    # OmniRoute — native AI gateway (OpenAI-compatible). Upstream keys live in OmniRoute.
+    OMNIROUTE_BASE_URL: str = "http://127.0.0.1:3000/api/v1"
+    OMNIROUTE_API_KEY: str = ""
+    OMNIROUTE_DEFAULT_MODEL: str = ""
+    OMNIROUTE_TIMEOUT: float = 90.0
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
     DEEPSEEK_DEFAULT_MODEL: str = "deepseek-chat"
@@ -126,7 +131,7 @@ class Settings(BaseSettings):
     NARAROUTER_API_KEY: str = ""
     NARAROUTER_BASE_URL: str = "https://router.bynara.id/v1"
     NARAROUTER_DEFAULT_MODEL: str = "deepseek/deepseek-chat"
-    DEFAULT_PROVIDER: str = "openrouter"
+    DEFAULT_PROVIDER: str = "omniroute"
 
     # Search
     TAVILY_API_KEY: str = ""
@@ -182,14 +187,22 @@ class Settings(BaseSettings):
 
     @property
     def available_providers(self) -> List[str]:
-        p = ["ollama"]
+        """Providers DevOS can call. OmniRoute is the default gateway when configured.
+        Ollama remains optional. Direct cloud providers remain available when keyed.
+        """
+        p: List[str] = []
+        if (self.OMNIROUTE_BASE_URL or "").strip():
+            p.append("omniroute")
+        # Optional local/remote Ollama — never required for startup
+        if (self.OLLAMA_HOST or "").strip():
+            p.append("ollama")
         if self.OPENROUTER_API_KEY:   p.append("openrouter")
         if self.DEEPSEEK_API_KEY:     p.append("deepseek")
         if self.GEMINI_API_KEY:       p.append("gemini")
         if self.OPENAI_API_KEY:       p.append("openai")
         if self.HUGGINGFACE_API_KEY:  p.append("huggingface")
         if self.NARAROUTER_API_KEY:   p.append("nararouter")
-        return p
+        return p or ["omniroute"]
 
     class Config:
         env_file = ".env"
