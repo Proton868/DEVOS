@@ -1946,106 +1946,108 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
 }
 
 
-/* ── Nuha edge-mounted Flow / IDE controls (node side ports) ── */
+
+  .sp-nuha-edge-lock { top: calc(42% - 78px); }
+  .sp-nuha-edge-btn {
+    min-width: 40px;
+    padding: 7px 6px;
+    font-size: 8.5px;
+  }
+}
+
+
+/* ── Nuha workspace controls (above composer) ─────────────── */
 .sp-copilot {
-  position: relative; /* host for absolute edge controls */
+  position: relative;
 }
-.sp-nuha-edge-controls {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 6;
-}
-.sp-nuha-edge-btn {
-  pointer-events: auto;
-  position: absolute;
-  right: 0;
+.sp-nuha-ws-controls {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  gap: 2px;
-  min-width: 44px;
-  padding: 8px 7px;
-  border-radius: 10px 0 0 10px;
-  border: 1px solid rgba(34, 211, 238, 0.28);
-  border-right: none;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 6px 12px 4px;
+  flex: 0 0 auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  background: linear-gradient(180deg, transparent, rgba(8, 10, 18, 0.35));
+  z-index: 5;
+}
+.sp-nuha-ws-btn {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(34, 211, 238, 0.3);
   background: rgba(10, 12, 22, 0.92);
   color: var(--sp-text-1);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   cursor: pointer;
-  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.35), 0 0 12px rgba(34, 211, 238, 0.08);
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.08);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   touch-action: none;
   user-select: none;
   transition: color .15s, border-color .15s, box-shadow .15s, background .15s;
 }
-.sp-nuha-edge-btn span { line-height: 1.1; }
-.sp-nuha-edge-btn:hover {
+.sp-nuha-ws-btn:hover {
   color: var(--sp-accent);
   border-color: rgba(34, 211, 238, 0.55);
-  background: rgba(14, 18, 32, 0.96);
-  box-shadow: -4px 0 18px rgba(0, 0, 0, 0.4), 0 0 16px rgba(34, 211, 238, 0.18);
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.18);
 }
-.sp-nuha-edge-btn:active {
-  color: var(--sp-accent);
+.sp-nuha-ws-btn.is-floating {
+  position: absolute;
+  z-index: 8;
+  pointer-events: auto;
 }
-/* Default vertical stack on right edge, vertically centered */
-.sp-nuha-edge-flow {
-  top: calc(50% - 52px);
-}
-.sp-nuha-edge-ide {
-  top: calc(50% + 8px);
-}
-.sp-nuha-edge-controls.is-unlocked .sp-nuha-edge-btn {
+.sp-nuha-ws-controls.is-unlocked .sp-nuha-ws-btn,
+.sp-nuha-ws-btn.is-floating {
   cursor: grab;
-  border-color: rgba(167, 139, 250, 0.4);
-  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.35), 0 0 14px rgba(167, 139, 250, 0.15);
 }
-.sp-nuha-edge-controls.is-unlocked .sp-nuha-edge-btn:active {
+.sp-nuha-ws-controls.is-unlocked .sp-nuha-ws-btn:active,
+.sp-nuha-ws-btn.is-floating:active {
   cursor: grabbing;
 }
-.sp-nuha-edge-lock {
-  pointer-events: auto;
-  position: absolute;
-  right: 6px;
-  top: calc(50% - 78px);
-  width: 22px;
-  height: 22px;
+.sp-nuha-ws-controls.is-locked .sp-nuha-ws-btn {
+  cursor: pointer;
+}
+.sp-nuha-ws-lock {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(10, 12, 22, 0.75);
   color: var(--sp-text-2);
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  opacity: 0.55;
+  opacity: 0.7;
   transition: opacity .15s, color .15s, border-color .15s;
-  z-index: 7;
+  flex: 0 0 auto;
 }
-.sp-nuha-edge-lock:hover {
+.sp-nuha-ws-lock:hover {
   opacity: 1;
   color: var(--sp-text-0);
   border-color: rgba(34, 211, 238, 0.35);
 }
-.sp-nuha-edge-controls.is-unlocked .sp-nuha-edge-lock {
-  opacity: 0.9;
+.sp-nuha-ws-controls.is-unlocked .sp-nuha-ws-lock {
+  opacity: 0.95;
   color: rgba(167, 139, 250, 0.95);
   border-color: rgba(167, 139, 250, 0.4);
 }
-/* Keep above chat body but clear of composer */
 @media (max-width: 720px) {
-  .sp-nuha-edge-flow { top: calc(42% - 52px); }
-  .sp-nuha-edge-ide { top: calc(42% + 8px); }
-  .sp-nuha-edge-lock { top: calc(42% - 78px); }
-  .sp-nuha-edge-btn {
-    min-width: 40px;
-    padding: 7px 6px;
-    font-size: 8.5px;
+  .sp-nuha-ws-controls {
+    padding: 5px 10px 3px;
+    gap: 6px;
+  }
+  .sp-nuha-ws-btn {
+    padding: 5px 10px;
+    font-size: 10px;
   }
 }

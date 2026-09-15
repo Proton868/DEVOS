@@ -320,6 +320,7 @@ export default function AICopilot({ floating = false }) {
           </div>
         )}
       </div>
+      <NuhaEdgeControls hostRef={nuhaHostRef} />
       <div className="sp-copilot-input">
         <textarea
           value={input}
@@ -337,7 +338,6 @@ export default function AICopilot({ floating = false }) {
           <Send size={15} />
         </button>
       </div>
-      <NuhaEdgeControls hostRef={nuhaHostRef} />
     </div>
   );
 }
