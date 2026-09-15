@@ -199,11 +199,31 @@ export default function AICopilot({ floating = false }) {
           } catch (_) { /* store optional */ }
         }
         // Truthful lifecycle + artifact → IDE/Preview
-        if (evt.status && ["planning","plan_created","delegating","worker_completed","validation_started","validation_completed","artifact_created","failed"].includes(evt.status)) {
+        if (evt.status && ["planning","plan_created","delegating","worker_completed","validation_started","validation_completed","artifact_created","agent_progress","failed"].includes(evt.status)) {
           try {
             if (evt.plan_id) {
               setActivePlanId(evt.plan_id);
               setOrchestrationStatus(evt.status);
+            } else if (evt.status) {
+              setOrchestrationStatus(evt.status);
+            }
+            const phaseNotes = {
+              planning: "Planning mission…",
+              plan_created: "Plan created — delegating to specialists…",
+              delegating: "Delegating to agents…",
+              validation_started: "Validating workspace artifacts…",
+              validation_completed: evt.validation?.valid ? "Artifacts verified on disk." : "Validation incomplete.",
+              artifact_created: `Files ready: ${(evt.files || []).join(", ") || evt.entry_point || "entry"}`,
+              agent_progress: evt.phase === "materialize_website" ? "Agents writing website files…" : (evt.phase || "Agent progress…"),
+              failed: evt.error ? `Failed: ${evt.error}` : "Mission failed.",
+            };
+            const note = phaseNotes[evt.status];
+            if (note && ["planning","plan_created","delegating","validation_started","validation_completed","artifact_created","agent_progress","failed"].includes(evt.status)) {
+              setMessages((ms) => {
+                const last = ms[ms.length - 1];
+                if (last?.role === "system-note" && last.content === note) return ms;
+                return [...ms, { role: "system-note", content: note }];
+              });
             }
           } catch (_) {}
         }

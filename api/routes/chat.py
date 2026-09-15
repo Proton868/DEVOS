@@ -355,7 +355,8 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
 
             yield f"data: {json.dumps({'status': 'classifying', 'session_id': session.id})}\n\n"
 
-            if should_auto_orchestrate(req.message):
+            force_website = _is_website_goal(req.message)
+            if should_auto_orchestrate(req.message) or force_website:
                 yield f"data: {json.dumps({'status': 'planning', 'session_id': session.id})}\n\n"
                 try:
                     # Fast durable plan first (no full execute)
@@ -478,16 +479,28 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                                     "files_checked": mat.get("files") or [],
                                     "status": "valid",
                                 }
-                                if orch_result is not None:
+                                _art = {
+                                    "entry_point": mat.get("entry_point"),
+                                    "files": mat.get("files") or [],
+                                    "structure": (website_validation or {}).get("structure") or "static",
+                                }
+                                if orch_result is None:
+                                    orch_result = {
+                                        "ok": True,
+                                        "orchestrated": True,
+                                        "status": "completed",
+                                        "synthesis_mode": "success",
+                                        "execution_path": "AGENT_MATERIALIZE",
+                                        "artifacts": _art,
+                                        "website_validation": website_validation,
+                                    }
+                                else:
                                     orch_result["ok"] = True
                                     orch_result["synthesis_mode"] = "success"
                                     orch_result["error"] = None
                                     orch_result["execution_path"] = "AGENT_MATERIALIZE"
-                                    orch_result["artifacts"] = {
-                                        "entry_point": mat.get("entry_point"),
-                                        "files": mat.get("files") or [],
-                                        "structure": (website_validation or {}).get("structure") or "static",
-                                    }
+                                    orch_result["artifacts"] = _art
+                                    orch_result["website_validation"] = website_validation
                                 yield f"data: {json.dumps({'status': 'artifact_created', 'session_id': session.id, 'files': mat.get('files') or [], 'entry_point': mat.get('entry_point'), 'execution_path': 'AGENT_MATERIALIZE'})}\n\n"
                                 yield f"data: {json.dumps({'status': 'validation_completed', 'session_id': session.id, 'validation': {'valid': True, 'entry_point': mat.get('entry_point'), 'files_checked': mat.get('files') or []}})}\n\n"
                             else:
@@ -519,10 +532,11 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                 parts.append(synthesize_orchestration_reply(orch_result))
                 if orch_result.get("artifacts"):
                     art = orch_result["artifacts"]
+                    path_label = orch_result.get("execution_path") or "MISSION_EXECUTION"
                     parts.append(
-                        f"**Path: MISSION_EXECUTION** — agents wrote workspace files.\n"
+                        f"**Path: {path_label}** — workspace files on disk.\n"
                         f"Entry: `{art.get('entry_point')}` · structure: {art.get('structure')}\n"
-                        f"Open IDE / Preview on the generated project (not a template scaffold)."
+                        f"Open IDE / Preview on the generated project (not a chat paste)."
                     )
             if scaffold_result and scaffold_result.get("ok"):
                 files = ", ".join(scaffold_result.get("files") or [])
@@ -549,6 +563,23 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
             else:
                 text = await brain.stream_chat(messages)
 
+            # Never paste full website source into chat for website goals
+            if _is_website_goal(req.message) and (
+                "<!DOCTYPE" in text or "<html" in text.lower() or len(text) > 4000
+            ):
+                path_l = (orch_result or {}).get("execution_path") or "unknown"
+                art = (orch_result or {}).get("artifacts") or {}
+                if art.get("entry_point"):
+                    text = (
+                        "Website generation finished. Open **IDE** / **Preview** for the files on disk — "
+                        "I will not paste full HTML into chat.\n"
+                        f"Entry: `{art.get('entry_point')}` · path: `{path_l}`"
+                    )
+                else:
+                    text = (
+                        "Website generation did not produce verified workspace files. "
+                        "Check Fleet / mission status and retry. I will not paste full HTML into chat."
+                    )
             for i in range(0, len(text), 8):
                 chunk = text[i : i + 8]
                 full += chunk
@@ -607,6 +638,14 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                 final_status = "failed" if orch_result.get("synthesis_mode") != "waiting" else "waiting_for_user"
             elif orch_result.get("orchestrated") and orch_result.get("ok"):
                 final_status = "completed"
+        # Website goals: never report completed without validated on-disk artifacts
+        if _is_website_goal(req.message):
+            wv = (orch_result or {}).get("website_validation") or {}
+            has_art = bool((orch_result or {}).get("artifacts", {}).get("entry_point"))
+            if not (wv.get("valid") or has_art or (scaffold_result and scaffold_result.get("ok"))):
+                final_status = "failed"
+                if orch_result is not None:
+                    orch_result["ok"] = False
         done = {
             "done": True,
             "session_id": session.id,
@@ -622,6 +661,13 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                 "synthesis_mode": orch_result.get("synthesis_mode"),
                 "execution_path": orch_result.get("execution_path") or "MISSION_EXECUTION",
             }
+            if orch_result.get("artifacts"):
+                done["artifacts"] = orch_result["artifacts"]
+            if orch_result.get("website_validation"):
+                done["validation"] = {
+                    k: orch_result["website_validation"].get(k)
+                    for k in ("valid", "status", "entry_point", "structure", "errors", "files_checked")
+                }
         if scaffold_result and scaffold_result.get("ok"):
             done["scaffold"] = {
                 "ok": True,

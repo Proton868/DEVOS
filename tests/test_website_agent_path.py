@@ -67,3 +67,64 @@ def test_aicopilot_opens_ide_on_artifact():
     src = (ROOT / "frontend-src" / "src" / "os" / "focus" / "AICopilot.jsx").read_text(encoding="utf-8")
     assert "artifact_created" in src
     assert "openPreview" in src
+
+
+def test_materialize_writes_real_files(tmp_path, monkeypatch):
+    """AGENT_MATERIALIZE must write via FileService and pass validation."""
+    import asyncio
+    from pathlib import Path as P
+    import sys
+    sys.path.insert(0, str(ROOT))
+
+    # Point projects dir under tmp
+    import execution.files as files_mod
+    monkeypatch.setattr(files_mod, "PROJECTS_DIR", tmp_path / "projects")
+    (tmp_path / "projects").mkdir(parents=True, exist_ok=True)
+
+    html = """<!DOCTYPE html><html><head><title>Footwalk</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><h1>Footwalk</h1><script src="script.js"></script></body></html>"""
+    css = "body{font-family:sans-serif}"
+    js = "console.log('ok')"
+    payload = {
+        "files": [
+            {"path": "index.html", "content": html},
+            {"path": "style.css", "content": css},
+            {"path": "script.js", "content": js},
+        ]
+    }
+
+    class FakeBrain:
+        async def stream_chat(self, messages):
+            import json
+            return json.dumps(payload)
+
+    from brain.website_builder import materialize_website_via_agent
+    result = asyncio.run(
+        materialize_website_via_agent(
+            user_id="test-user",
+            project_id="default",
+            goal="Create a 1 page website for Footwalk shoe store",
+            brain=FakeBrain(),
+        )
+    )
+    assert result["ok"] is True, result
+    assert result["execution_path"] == "AGENT_MATERIALIZE"
+    assert "index.html" in result["files"]
+    root = tmp_path / "projects" / "test-user" / "default"
+    assert (root / "index.html").is_file()
+    assert "Footwalk" in (root / "index.html").read_text()
+    assert result.get("entry_point") == "index.html"
+
+
+def test_chat_never_claims_website_success_without_artifacts():
+    src = (ROOT / "api" / "routes" / "chat.py").read_text(encoding="utf-8")
+    assert "never report completed without validated" in src or "Website goals: never report completed" in src
+    assert "I will not paste full HTML into chat" in src
+    assert "force_website" in src
+
+
+def test_no_direct_scaffold_primary_path():
+    src = (ROOT / "api" / "routes" / "chat.py").read_text(encoding="utf-8")
+    assert "DIRECT_SCAFFOLD" not in src or "SCAFFOLD_FALLBACK" in src
+    assert "DEVOS_ALLOW_WEBSITE_SCAFFOLD_FALLBACK" in src
