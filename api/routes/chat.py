@@ -576,8 +576,9 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
         if scaffold_result and scaffold_result.get("ok"):
             done["scaffold"] = {
                 "ok": True,
-                "execution_path": "DIRECT_SCAFFOLD",
+                "execution_path": scaffold_result.get("execution_path") or "SCAFFOLD_FALLBACK",
                 "files": scaffold_result.get("files") or [],
+                "fallback": True,
             }
         yield f"data: {json.dumps(done)}\n\n"
 
