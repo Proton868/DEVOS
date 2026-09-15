@@ -256,8 +256,8 @@ def test_chat_uses_a2a_not_materialize():
     src = (ROOT / "api" / "routes" / "chat.py").read_text(encoding="utf-8")
     assert "run_delegated_mission" in src
     assert "A2A_DELEGATION" in src
-    # materialize may still exist as import but must not be primary success path
-    assert "materialize_website_via_agent" not in src or "A2A_DELEGATION" in src
+    assert "materialize_website_via_agent" not in src
+    assert not (ROOT / "brain" / "website_builder.py").exists()
 
 
 def test_select_persona_website_is_web():

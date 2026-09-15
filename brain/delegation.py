@@ -257,6 +257,7 @@ async def run_delegated_mission(
         try:
             from core.repositories.agency import record_work_history
 
+            tools = list(exec_result.get("tools_used") or []) or ["agent_runtime"]
             await record_work_history(
                 agent_id=agent_id,
                 user_id=user_id,
@@ -267,11 +268,45 @@ async def run_delegated_mission(
                 mission_id=mission_id,
                 task_id=task_id,
                 action="agent_runtime_execution",
-                tools_used=["agent_runtime"],
+                tools_used=tools,
                 files_changed=files,
                 outcome="success" if agent_ok else "failure",
                 summary=(exec_result.get("summary") or "")[:500],
             )
+            # Persist tool executions for provenance
+            try:
+                from brain.agent_identity import (
+                    Provenance, record_task_lifecycle, EVENT_TOOL_EXECUTION, EVENT_FILE_CREATED,
+                )
+                prov = Provenance.human_via_nuha(user_id, agent_id)
+                for tool in tools:
+                    await record_task_lifecycle(
+                        event_type=EVENT_TOOL_EXECUTION,
+                        agent_id=agent_id,
+                        user_id=user_id,
+                        provenance=prov,
+                        mission_id=mission_id,
+                        task_id=task_id,
+                        tools_used=[tool],
+                        files_changed=files,
+                        outcome="success" if agent_ok else "failure",
+                        summary=f"tool:{tool}",
+                    )
+                if agent_ok and files:
+                    await record_task_lifecycle(
+                        event_type=EVENT_FILE_CREATED,
+                        agent_id=agent_id,
+                        user_id=user_id,
+                        provenance=prov,
+                        mission_id=mission_id,
+                        task_id=task_id,
+                        tools_used=tools,
+                        files_changed=files,
+                        outcome="success",
+                        summary="files written via AgentRuntime tools",
+                    )
+            except Exception as te:
+                logger.debug("tool events: %s", te)
         except Exception as e:
             logger.debug("work_history: %s", e)
 
@@ -398,6 +433,52 @@ async def run_delegated_mission(
                     source_event=EVENT_PONYTAIL_VALIDATION,
                     mission_id=mission_id,
                 )
+                # Website goals: authoritative validate_website_artifacts + artifact metadata
+                try:
+                    from brain.artifact_scaffold import _is_website_goal
+                    from brain.orchestration_verify import validate_website_artifacts
+                    from core.repositories.agency import upsert_artifact_metadata
+                    if _is_website_goal(goal) or persona_key == "web":
+                        wv = await validate_website_artifacts(
+                            user_id=user_id,
+                            workspace_id=workspace_id,
+                            goal=goal,
+                        )
+                        if not wv.get("valid"):
+                            last_error = "website_validation:" + ",".join(wv.get("errors") or ["invalid"])
+                            # treat as ponytail-class failure for correction loop
+                            gate.passed = False
+                            raise RuntimeError(last_error)
+                        for path in (wv.get("files_checked") or files or []):
+                            pp = path.get("path") if isinstance(path, dict) else str(path)
+                            if not pp:
+                                continue
+                            await upsert_artifact_metadata(
+                                user_id=user_id,
+                                project_id=workspace_id,
+                                path=pp,
+                                agent_id=agent_id,
+                                mission_id=mission_id,
+                                task_id=task_id,
+                                actor_type="agent",
+                                actor_id=agent_id,
+                            )
+                        # Prefer validated entry point in files list
+                        if wv.get("entry_point"):
+                            files = list(files or [])
+                            if not any(
+                                (f.get("path") if isinstance(f, dict) else f) == wv["entry_point"]
+                                for f in files
+                            ):
+                                files.append({"path": wv["entry_point"], "kind": "validated"})
+                except RuntimeError:
+                    raise
+                except Exception as ve:
+                    logger.debug("website validate/artifact meta: %s", ve)
+            except RuntimeError as rexc:
+                last_error = str(rexc)
+                logger.info("post-ponytail website validation failed: %s", last_error)
+                continue
             except Exception as ie:
                 logger.debug("completion identity: %s", ie)
             # Accepted — only now Nuha treats as success

@@ -39,6 +39,7 @@ class NodeExecutionResult:
     status: str = "unknown"  # succeeded|failed|cancelled|blocked|error
     summary: str = ""
     files_changed: list = field(default_factory=list)
+    tools_used: list = field(default_factory=list)
     error: Optional[str] = None
     events_seen: list[str] = field(default_factory=list)
     raw_terminal: Optional[dict] = None
@@ -50,6 +51,7 @@ class NodeExecutionResult:
             "status": self.status,
             "summary": self.summary,
             "files_changed": list(self.files_changed or []),
+            "tools_used": list(self.tools_used or []),
             "error": self.error,
             "events_seen": list(self.events_seen or []),
         }
@@ -191,44 +193,69 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
 
 
 async def _fake_runtime(req: NodeExecutionRequest) -> NodeExecutionResult:
-    """Deterministic harness only — creates a minimal artifact for website goals."""
+    """Test harness: simulates AgentRuntime file tools (create_file), not Nuha LLM write."""
     import uuid
     task_id = f"fake-{uuid.uuid4().hex[:12]}"
     files: list[dict] = []
-    goal = req.objective.lower()
+    tools_used: list[str] = []
+    goal = (req.objective or "").lower()
     try:
         from execution.files import FileService
         fs = FileService(req.user_id, req.workspace_id or "default")
-        if any(k in goal for k in ("website", "shoe", "page", "landing")):
-            html = (
-                "<!DOCTYPE html><html><head><title>Shoes</title></head>"
-                "<body><h1>Shoes</h1><p>One-page shoe website (test harness).</p></body></html>"
-            )
-            path = "index.html"
-            if hasattr(fs, "write"):
-                maybe = fs.write(path, html)
-                if hasattr(maybe, "__await__"):
-                    await maybe
-            files.append({"path": path, "kind": "created"})
+        is_site = any(
+            k in goal
+            for k in ("website", "web site", "landing", "homepage", "shoe", "page for", "site for")
+        ) or (req.persona_id or "") == "web"
+        if is_site:
+            # Simulate Web Agent calling create_file for each artifact
+            brand = "Site"
+            for token in ("footwalk", "shoe", "carai", "store"):
+                if token in goal:
+                    brand = token.title()
+                    break
+            artifacts = {
+                "index.html": (
+                    f"<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+                    f"<title>{brand}</title>"
+                    f"<link rel=\"stylesheet\" href=\"style.css\"></head>"
+                    f"<body><h1>{brand}</h1>"
+                    f"<p>Built by DevOS Web Agent via create_file.</p>"
+                    f"<script src=\"script.js\"></script></body></html>"
+                ),
+                "style.css": (
+                    f"/* {brand} */ body{{font-family:system-ui;margin:2rem;}}"
+                    f"h1{{color:#1a1a1a;}}"
+                ),
+                "script.js": f"console.log('{brand} ready');",
+            }
+            for path, content in artifacts.items():
+                fs.write(path, content)
+                files.append({"path": path, "kind": "created", "tool": "create_file"})
+                tools_used.append("create_file")
         else:
             path = "orch_result.txt"
-            if hasattr(fs, "write"):
-                maybe = fs.write(path, f"completed node {req.node_id}\n")
-                if hasattr(maybe, "__await__"):
-                    await maybe
-            files.append({"path": path, "kind": "created"})
+            fs.write(path, f"completed node {req.node_id}\n")
+            files.append({"path": path, "kind": "created", "tool": "create_file"})
+            tools_used.append("create_file")
     except Exception as e:
-        # Still succeed structural path without FS if unavailable
         logger.warning("fake runtime workspace write skipped: %s", e)
-        files.append({"path": "index.html", "kind": "claimed"})
+        return NodeExecutionResult(
+            success=False,
+            task_id=task_id,
+            status="failed",
+            summary="fake runtime could not write files",
+            error=str(e)[:300],
+            events_seen=["agent.started", "agent.failed"],
+        )
 
     return NodeExecutionResult(
         success=True,
         task_id=task_id,
         status="succeeded",
-        summary=f"fake runtime completed {req.node_id}",
+        summary=f"web agent create_file x{len(files)}" if tools_used else f"fake runtime {req.node_id}",
         files_changed=files,
-        events_seen=["agent.started", "agent.completed"],
+        tools_used=tools_used,
+        events_seen=["agent.started", "agent.tool_result", "agent.completed"],
     )
 
 
