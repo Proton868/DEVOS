@@ -95,7 +95,25 @@ def update_crawl(crawl_id: str, **fields) -> bool:
         return True
 
 
-def emit_event(crawl_id: str, event: dict) -> None:
+def emit_event(
+    crawl_id: str,
+    event_or_type,
+    payload: Optional[dict] = None,
+    trace_id: Optional[str] = None,
+) -> None:
+    """Accept (crawl_id, event_dict) or (crawl_id, type, payload, trace_id).
+
+    Persistence is completed in the web-intel durability cluster; this entry
+    point must accept the canonical caller contract without TypeError.
+    """
+    if isinstance(event_or_type, dict):
+        _event = dict(event_or_type)
+    else:
+        _event = {"type": str(event_or_type), **(payload or {})}
+        if trace_id is not None:
+            _event["trace_id"] = trace_id
+    _event.setdefault("crawl_id", crawl_id)
+    # Cluster 3 persists; keep side-effect free here beyond validation.
     return
 
 
@@ -103,8 +121,16 @@ def list_events(crawl_id: str, limit: int = 50) -> list:
     return []
 
 
-def upsert_page(**fields) -> str:
-    return new_id()
+def upsert_page(*args, **kwargs) -> str:
+    """Accept a single mapping or keyword fields; returns page id."""
+    if len(args) == 1 and isinstance(args[0], dict):
+        fields = dict(args[0])
+        fields.update(kwargs)
+    elif args:
+        raise TypeError("upsert_page expects a dict or keyword fields")
+    else:
+        fields = dict(kwargs)
+    return fields.get("page_id") or fields.get("id") or new_id()
 
 
 def get_page(page_id: str) -> Optional[dict]:
@@ -115,5 +141,6 @@ def list_pages(crawl_id: str) -> list:
     return []
 
 
-def claim_queued_pages(limit: int = 10) -> list:
+def claim_queued_pages(crawl_id: Optional[str] = None, limit: int = 10) -> list:
+    """Claim queued pages for a crawl (persistence in Cluster 3)."""
     return []

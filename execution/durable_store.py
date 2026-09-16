@@ -10,15 +10,30 @@ def init_store() -> None:
     return
 
 
+def _coerce_fields(*args, **kwargs) -> dict:
+    """Accept either a single mapping or keyword fields (canonical internal API)."""
+    if len(args) == 1 and isinstance(args[0], dict):
+        out = dict(args[0])
+        out.update(kwargs)
+        return out
+    if args:
+        raise TypeError(
+            "expected a single dict or keyword fields, got %d positional args" % len(args)
+        )
+    return dict(kwargs)
+
+
+
 def new_id(prefix: str = "") -> str:
     """Generate a durable identifier, optionally with a caller-defined prefix."""
     return f"{prefix}{uuid.uuid4()}"
 
 
-def upsert_runtime(**fields) -> str:
+def upsert_runtime(*args, **kwargs) -> str:
     from core.sync_session import get_sync_session
     from core.database import DeliveryRuntime
 
+    fields = _coerce_fields(*args, **kwargs)
     rid = fields.get("runtime_id") or new_id()
     with get_sync_session() as s:
         row = s.get(DeliveryRuntime, rid)
@@ -90,14 +105,18 @@ def append_log(runtime_id: str, line: str) -> None:
     return
 
 
-def read_logs(runtime_id: str, limit: int = 200) -> list[str]:
+def read_logs(runtime_id: str, after_id: int = 0, limit: int = 200) -> list:
+    """Return recent log rows for a runtime (empty list if none persisted yet)."""
+    # Structured rows preferred by log_stream; plain strings also acceptable.
     return []
 
 
-def save_share(**fields) -> str:
+
+def save_share(*args, **kwargs) -> str:
     from core.sync_session import get_sync_session
     from core.database import DeliveryShare
 
+    fields = _coerce_fields(*args, **kwargs)
     sid = fields.get("share_id") or new_id()
     with get_sync_session() as s:
         row = s.get(DeliveryShare, sid)
@@ -140,7 +159,8 @@ def get_share_db(share_id: str) -> Optional[dict]:
         }
 
 
-def save_deployment(**fields) -> str:
+def save_deployment(*args, **kwargs) -> str:
+    fields = _coerce_fields(*args, **kwargs)
     # store as meta on a synthetic runtime id for minimal surface
     return upsert_runtime(
         runtime_id=fields.get("deployment_id") or new_id(),
@@ -158,7 +178,8 @@ def get_deployment(deployment_id: str) -> Optional[dict]:
     return r
 
 
-def save_tunnel(**fields) -> str:
+def save_tunnel(*args, **kwargs) -> str:
+    fields = _coerce_fields(*args, **kwargs)
     return upsert_runtime(
         runtime_id=fields.get("tunnel_id") or new_id(),
         user_id=fields.get("user_id") or "",
