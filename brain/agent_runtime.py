@@ -345,6 +345,8 @@ class AgentRuntime:
 
         # Default capability set for IDE agent: filesystem + vcs write + shell.
         # UCIP still evaluates each call; HITL escalations still apply.
+        # Capabilities are clamped to the trust tier — never trust caller-supplied elevation.
+        from governance.ucip import TRUST_LEVEL_CAPS, ALWAYS_BLOCKED_CAPS
         default_caps = {
             "ucip:filesystem.read",
             "ucip:filesystem.write",
@@ -357,21 +359,24 @@ class AgentRuntime:
             "ucip:memory.write",
             "ucip:search.web",
         }
-        caps = capabilities if capabilities is not None else default_caps
+        tier = set(TRUST_LEVEL_CAPS.get(trust_level, set()))
+        requested = set(capabilities) if capabilities is not None else set(default_caps)
+        if "*" in tier:
+            caps = requested - set(ALWAYS_BLOCKED_CAPS)
+        else:
+            caps = (requested & tier) - set(ALWAYS_BLOCKED_CAPS)
+            if not caps:
+                caps = (set(default_caps) & tier) - set(ALWAYS_BLOCKED_CAPS)
 
         session_id = str(uuid.uuid4())
-        agent_id = hashlib.sha256(
-            f"{user_id}:{session_id}:ide-agent".encode()
-        ).hexdigest()[:32]
-
-        self.agent = AgentIdentity(
-            agent_id=agent_id,
+        # Identity is server-minted; never accept agent_id/trust from the client.
+        self.agent = AgentIdentity.create(
             user_id=user_id,
             session_id=session_id,
             trust_level=trust_level,
-            capabilities=caps,
-            metadata={"role": "ide_agent", "project_id": project_id},
+            extra_caps=caps,
         )
+        self.agent.metadata = {"role": "ide_agent", "project_id": project_id}
         self.gateway = UCIPGateway(self.agent, BudgetPolicy(
             max_iterations=24,
             max_execution_calls=40,

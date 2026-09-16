@@ -204,15 +204,29 @@ class AgentIdentity:
     def create(cls, user_id: str, session_id: str,
                trust_level: TrustLevel = TrustLevel.OPERATOR,
                extra_caps: Optional[set[str]] = None) -> "AgentIdentity":
+        """Build identity. Capabilities are server-derived from trust_level.
+
+        extra_caps may only *narrow* the tier set (intersection). ROOT ("*")
+        may name explicit caps via extra_caps but ALWAYS_BLOCKED_CAPS are never
+        granted. Caller-supplied caps never elevate past the trust tier.
+        """
         raw = f"{user_id}:{session_id}:{datetime.now(timezone.utc).isoformat()}"
         agent_id = "ucip:" + hashlib.sha256(raw.encode()).hexdigest()[:24]
-        caps = set(TRUST_LEVEL_CAPS.get(trust_level, set()))
-        if extra_caps:
-            # Extra caps can only be granted up to delegator's trust level
-            caps = (set(extra_caps) & caps) if "*" not in caps else set(extra_caps)
-            caps -= set(ALWAYS_BLOCKED_CAPS)
+        tier = set(TRUST_LEVEL_CAPS.get(trust_level, set()))
+        if "*" in tier:
+            # ROOT: explicit extra_caps preferred; otherwise wildcard token only
+            if extra_caps:
+                caps = set(extra_caps)
+            else:
+                caps = {"*"}
+        else:
+            caps = set(tier)
+            if extra_caps:
+                # Narrow only — never elevate
+                caps = set(extra_caps) & tier
             if not caps:
-                caps = set(TRUST_LEVEL_CAPS.get(trust_level, set()))
+                caps = set(tier)
+        caps -= set(ALWAYS_BLOCKED_CAPS)
         return cls(agent_id=agent_id, user_id=user_id, session_id=session_id,
                    trust_level=trust_level, capabilities=caps)
 
