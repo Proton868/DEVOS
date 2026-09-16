@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     GITHUB_TOKEN: str = ""
     ADMIN_USER: str = "Admin"
     ADMIN_EMAIL: str = "admin@localhost"
-    ADMIN_PASSWORD: str = "123456.."
+    ADMIN_PASSWORD: str = ""  # empty → auto-generate on first boot
 
     # Supabase
     SUPABASE_URL: str = ""

@@ -1,6 +1,7 @@
 """DevOS v3 — Brain + Execution + Governance + Agency Agents + AIS-OS Workspace"""
 import json
 import logging
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -11,6 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from core.config import settings
+from core.secrets_redact import install_redacting_filter, redact_text
+install_redacting_filter()
+
 from core.database import init_db
 
 
@@ -99,52 +103,107 @@ def _is_weak_password(pw: str) -> Optional[str]:
 
 
 def _validate_startup_env():
-    """Fail fast (or loudly warn) on dangerous misconfiguration before the
-    app starts serving traffic (security-audit P4c). Deliberately does not
-    raise for most issues -- this app is also meant to run "out of the box"
-    for local/dev use -- but DEBUG=True combined with a non-localhost
-    ALLOWED_ORIGINS, or a production-looking origin list with no
-    JWT_SECRET/ADMIN_PASSWORD set, are logged loudly since they're the
-    kind of thing that's easy to miss in a .env file."""
-    if settings.DEBUG:
-        logger.warning("[startup] DEBUG=True — do not run this in production (cookies are sent over plain HTTP, stack traces may leak).")
-    if not settings.JWT_SECRET:
-        logger.warning("[startup] JWT_SECRET is empty — a persisted random secret was generated (see core/.devos_secret). Set JWT_SECRET explicitly in production so it doesn't depend on that file surviving.")
-    if settings.has_supabase and not (settings.SUPABASE_URL.startswith("https://")):
-        logger.warning("[startup] SUPABASE_URL does not start with https:// — Supabase JWKS verification requires TLS.")
-    if any(o in ("*",) for o in settings.ALLOWED_ORIGINS):
-        logger.warning("[startup] ALLOWED_ORIGINS contains '*' — combined with allow_credentials=True this is rejected by browsers and is almost never what you want; set explicit origins.")
-    # P6h: the shipped default is localhost-only so the app still runs
-    # out-of-the-box for local dev, but that same default silently
-    # breaks (or worse, insecurely wildcards) CORS if it's ever left
-    # unset in a real deployment. Warn loudly whenever it looks like
-    # we're not running locally (DEBUG=False, i.e. a production-style
-    # config) but the default was never overridden in .env.
-    if not settings.DEBUG and settings.ALLOWED_ORIGINS == ["http://localhost:8000"]:
-        logger.warning("[startup] ALLOWED_ORIGINS is still the localhost-only default while DEBUG=False — "
-                        "set ALLOWED_ORIGINS in .env to your real deployed origin(s) or the frontend will be blocked by CORS.")
-    # P3d: warn (don't block startup — this app must still work out of the
-    # box) if the configured admin password is weak. If ADMIN_PASSWORD is
-    # unset entirely, _create_admin() below generates a strong random one
-    # instead, so there's nothing to warn about in that case.
+    """Fail closed on dangerous production misconfiguration.
+
+    Local/dev (DEBUG=True) may warn and continue.
+    Production-style (DEBUG=False) or DEVOS_DEPLOY_MODE=production raises.
+    Never logs secret values.
+    """
+    strict = (
+        (not settings.DEBUG)
+        or os.environ.get("DEVOS_DEPLOY_MODE", "").lower() == "production"
+        or os.environ.get("DEVOS_STRICT_PRODUCTION", "").lower() in ("1", "true", "yes")
+    )
+
+    if settings.DEBUG and not strict:
+        logger.warning(
+            "[startup] DEBUG=True — not for production (stack traces / cookies risk)."
+        )
+
+    # Database authority
+    db_url = (settings.DATABASE_URL or "").strip()
+    if getattr(settings, "REQUIRE_POSTGRES", True):
+        low = db_url.lower()
+        if low.startswith("sqlite") or (low and not low.startswith("postgres")):
+            msg = "[startup] REQUIRE_POSTGRES=true but DATABASE_URL is not Postgres/Supabase"
+            if strict:
+                raise RuntimeError(msg)
+            logger.warning(msg)
+
+    # JWT
+    jwt = (settings.JWT_SECRET or "").strip()
+    if not jwt or len(jwt) < 16:
+        msg = "[startup] JWT_SECRET missing or too short"
+        if strict:
+            raise RuntimeError(msg + " — set a strong JWT_SECRET in .env (>=32 chars recommended)")
+        logger.warning(msg)
+    elif strict and len(jwt) < 32:
+        raise RuntimeError(
+            "[startup] JWT_SECRET must be at least 32 characters in production"
+        )
+
+    # Admin password
     if settings.ADMIN_PASSWORD:
         weak_reason = _is_weak_password(settings.ADMIN_PASSWORD)
-        is_known_default = settings.ADMIN_PASSWORD in _KNOWN_DEFAULT_ADMIN_PASSWORDS
-        if not settings.DEBUG and (is_known_default or weak_reason):
+        is_known_default = settings.ADMIN_PASSWORD in (
+            "123456..", "admin", "password", "123456", "changeme", "Admin123",
+        )
+        if strict and (is_known_default or weak_reason):
             raise RuntimeError(
-                "Refusing to start: ADMIN_PASSWORD is a known default or weak value while DEBUG=False. "
-                "Set a strong unique ADMIN_PASSWORD in .env, or leave ADMIN_PASSWORD empty to auto-generate "
-                "on first boot. Shipped example values such as '123456..' are not production-safe."
+                "Refusing to start: ADMIN_PASSWORD is a known default or weak value while "
+                "running in production mode. Set a strong unique ADMIN_PASSWORD in .env, "
+                "or leave ADMIN_PASSWORD empty to auto-generate one on first boot."
             )
         if weak_reason:
-            logger.warning("[startup] ADMIN_PASSWORD is weak (%s) — set a strong, random ADMIN_PASSWORD "
-                            "in .env before running in production, or leave it unset to auto-generate one.",
-                            weak_reason)
-    logger.info("[startup] AUTH_ENABLED=%s has_supabase=%s ALLOWED_ORIGINS=%s",
-                settings.AUTH_ENABLED, settings.has_supabase(), settings.ALLOWED_ORIGINS)
+            logger.warning(
+                "[startup] ADMIN_PASSWORD is weak (%s) — set a strong value in .env",
+                weak_reason,
+            )
+
+    # Encryption / SECRET_KEY
+    if not (settings.ENCRYPTION_KEY or "").strip():
+        if strict:
+            logger.warning(
+                "[startup] ENCRYPTION_KEY empty — secrets vault features will be limited"
+            )
+        else:
+            logger.info("[startup] ENCRYPTION_KEY not set (ok for local if unused)")
+    if not (settings.SECRET_KEY or "").strip():
+        logger.info("[startup] SECRET_KEY empty (optional legacy field)")
+
+    # CORS
+    origins = list(settings.ALLOWED_ORIGINS or [])
+    if any(o.strip() == "*" for o in origins):
+        logger.warning("[startup] ALLOWED_ORIGINS contains '*' — avoid with credentials")
+    if strict and origins == ["http://localhost:8000"]:
+        raise RuntimeError(
+            "[startup] ALLOWED_ORIGINS is still localhost-only in production mode. "
+            "Set ALLOWED_ORIGINS in .env to your public origin(s)."
+        )
+
+    # Auth mode + Supabase
+    auth_mode = (getattr(settings, "AUTH_MODE", "local") or "local").lower()
+    if auth_mode in ("supabase", "dual"):
+        if not (settings.SUPABASE_URL or "").strip():
+            msg = "[startup] AUTH_MODE=%s requires SUPABASE_URL" % auth_mode
+            if strict:
+                raise RuntimeError(msg)
+            logger.warning(msg)
+        elif not str(settings.SUPABASE_URL).startswith("https://"):
+            logger.warning("[startup] SUPABASE_URL should use https://")
+
+    if not getattr(settings, "AUTH_ENABLED", True) and strict:
+        raise RuntimeError("[startup] AUTH_ENABLED must remain true in production")
+
+    logger.info(
+        "[startup] AUTH_ENABLED=%s AUTH_MODE=%s has_supabase=%s origins_count=%s",
+        settings.AUTH_ENABLED,
+        auth_mode,
+        settings.has_supabase(),
+        len(origins),
+    )
 
 
-@asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🚀 DevOS v3 starting...")
     _validate_startup_env()
