@@ -88,3 +88,7 @@ PYTHONPATH=. python scripts/repo_deploy_simulation.py
 - DNS / TLS certificates / Cloudflare
 - OmniRoute upstream API keys (configured inside OmniRoute, not DevOS)
 - Paying cloud resources
+
+## E2E acceptance record
+
+See [PRODUCTION_E2E_ACCEPTANCE.md](PRODUCTION_E2E_ACCEPTANCE.md).
