@@ -121,10 +121,15 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
             error=f"AGENT_RUNTIME_UNAVAILABLE: {e}",
         )
 
+    # Production path: use configured default provider (OmniRoute-native).
+    # Do not rely on BrainLLM falling back silently; make the contract explicit.
+    from core.config import settings as _settings
     runtime = AgentRuntime(
         user_id=req.user_id,
         project_id=req.workspace_id or "default",
         tenant_id=None,
+        provider=getattr(_settings, "DEFAULT_PROVIDER", None) or "omniroute",
+        model=None,  # provider defaults / user prefs resolve inside BrainLLM
         mode=AgentMode.AGENT,
     )
     context = AgentContext(

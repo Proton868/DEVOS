@@ -258,3 +258,30 @@ Language rule: **sandbox test pass ≠ production release green**.
 | End-to-end live specialist mission on Prime | STILL UNVERIFIED |
 | Artifact/evidence acceptance under load | STILL UNVERIFIED |
 
+
+---
+
+## Specialist / AgentRuntime path (cluster after progress SSE)
+
+### Actual path (code)
+
+```text
+chat → create_plan → run_delegated_mission
+  → _run_agent_node → run_node_on_agent_runtime
+  → AgentRuntime (provider=DEFAULT_PROVIDER / omniroute)
+  → BrainLLM.stream_chat → OmniRoute
+  → UCIP-gated tools → workspace files
+  → Ponytail → evidence → mission acceptance → SSE
+```
+
+Fake runtime only when `DEVOS_ORCH_FAKE_RUNTIME=1` **and** test allow (`PYTEST_CURRENT_TEST` or `DEVOS_ALLOW_FAKE_RUNTIME=1`).
+
+### Proof status
+
+| Item | Status |
+|------|--------|
+| Code path AgentRuntime + explicit DEFAULT_PROVIDER | LOCALLY TESTED |
+| Progress SSE checkpoints | LOCALLY TESTED (prior cluster) |
+| Live OmniRoute specialist mission on Prime | **STILL UNVERIFIED** — see `docs/PRIME_SPECIALIST_MISSION_VERIFY.md` |
+| Production proof of artifact + evidence under load | **STILL UNVERIFIED** |
+
