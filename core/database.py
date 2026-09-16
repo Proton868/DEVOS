@@ -13,7 +13,11 @@ from sqlalchemy import String, Text, Boolean, Integer, DateTime, JSON, ForeignKe
 from core.config import settings
 
 def _resolve_database_url() -> str:
-    """Fail closed: production must use Postgres/Supabase only."""
+    """Fail closed: Supabase/Postgres is the only application SoT.
+
+    SQLite is forbidden when REQUIRE_POSTGRES=true (default).
+    Tests may set REQUIRE_POSTGRES=false with an explicit sqlite URL.
+    """
     url = (settings.DATABASE_URL or "").strip()
     require_pg = bool(getattr(settings, "REQUIRE_POSTGRES", True))
     low = url.lower()
@@ -22,14 +26,18 @@ def _resolve_database_url() -> str:
     if require_pg:
         if not url or is_sqlite or not is_pg:
             raise RuntimeError(
-                "DevOS requires Postgres/Supabase as the single source of truth. "
-                "Set REQUIRE_POSTGRES=true and DATABASE_URL to a "
-                "postgresql+asyncpg://... or postgresql+psycopg://... URL. "
+                "DevOS requires Supabase/Postgres as the single source of truth. "
+                "Set REQUIRE_POSTGRES=true and DATABASE_URL to a Supabase or "
+                "Postgres URL (postgresql+asyncpg://... or postgresql+psycopg://...). "
                 "SQLite is forbidden as application state. "
                 "For isolated tests only, set REQUIRE_POSTGRES=false."
             )
+        # Normalize plain postgresql:// for the async engine
+        if low.startswith("postgresql://") or low.startswith("postgres://"):
+            url = "postgresql+asyncpg://" + url.split("://", 1)[1]
+        elif low.startswith("postgresql+psycopg2://"):
+            url = "postgresql+asyncpg://" + url.split("://", 1)[1]
     elif not url:
-        # Test harness must still provide an explicit URL
         raise RuntimeError(
             "DATABASE_URL is required even when REQUIRE_POSTGRES=false "
             "(use sqlite+aiosqlite:///... only for isolated tests)."

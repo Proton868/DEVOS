@@ -1,3 +1,15 @@
+# Supabase / Postgres — Single Source of Truth
+
+DevOS application domain state is stored in **Supabase (Postgres)** only.
+
+- `REQUIRE_POSTGRES=true` (default) — SQLite application URLs are **rejected at startup**
+- `DATABASE_URL` must be a Postgres/Supabase connection string
+- Local/test only: `REQUIRE_POSTGRES=false` with an explicit sqlite test URL
+- Filesystem holds workspace **artifact bytes** only, not authoritative metadata
+
+See also: `ops/env_validate.py --production`, `docs/PRODUCTION_OPERATOR_CHECKLIST.md`
+
+---
 # DevOS Single Source of Truth — Supabase / Postgres
 
 Project: **DEVOS** · ref: `heinpngifdqsykqzufhe`

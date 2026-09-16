@@ -120,15 +120,17 @@ def _validate_startup_env():
             "[startup] DEBUG=True — not for production (stack traces / cookies risk)."
         )
 
-    # Database authority
+    # Database authority — Supabase/Postgres is the only application SoT
     db_url = (settings.DATABASE_URL or "").strip()
     if getattr(settings, "REQUIRE_POSTGRES", True):
         low = db_url.lower()
-        if low.startswith("sqlite") or (low and not low.startswith("postgres")):
-            msg = "[startup] REQUIRE_POSTGRES=true but DATABASE_URL is not Postgres/Supabase"
-            if strict:
-                raise RuntimeError(msg)
-            logger.warning(msg)
+        if not low or low.startswith("sqlite") or not low.startswith("postgres"):
+            msg = (
+                "[startup] REQUIRE_POSTGRES=true but DATABASE_URL is not "
+                "Postgres/Supabase — SQLite is not a valid application database"
+            )
+            # Always fail closed for SQLite authority (even if DEBUG=True)
+            raise RuntimeError(msg)
 
     # JWT
     jwt = (settings.JWT_SECRET or "").strip()

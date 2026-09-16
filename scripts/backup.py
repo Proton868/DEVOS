@@ -30,8 +30,14 @@ from core.config import settings
 
 
 def backup_database(work_dir: Path) -> Path:
-    """Dump the database to work_dir/db_dump.sql (SQLite) or work_dir/db_dump.pg (Postgres)."""
-    db_url = settings.DATABASE_URL
+    """Dump the database — Postgres/Supabase preferred; SQLite only if explicitly allowed."""
+    db_url = settings.DATABASE_URL or ""
+    require_pg = bool(getattr(settings, "REQUIRE_POSTGRES", True))
+    if require_pg and db_url.lower().startswith("sqlite"):
+        raise SystemExit(
+            "ERROR: REQUIRE_POSTGRES=true — refusing SQLite backup. "
+            "Application SoT is Supabase/Postgres only."
+        )
     if db_url.startswith("sqlite"):
         sqlite_path = db_url.replace("sqlite+aiosqlite:///", "").replace("sqlite:///", "")
         if not os.path.isabs(sqlite_path):

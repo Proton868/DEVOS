@@ -41,8 +41,11 @@ class Settings(BaseSettings):
     # Authoritative store is Postgres (Supabase). SQLite is legacy-only for offline unit tests.
     # Production: postgresql+psycopg://postgres.[ref]:[password]@...pooler.supabase.com:6543/postgres
     # Local verify: postgresql+psycopg://devos:devos@127.0.0.1:5432/devos
-    DATABASE_URL: str = "postgresql+psycopg://devos:devos@127.0.0.1:5432/devos"
-    # When True (default in production images), refuse to boot on sqlite application URLs.
+    # Canonical SoT: Supabase Postgres (or any Postgres). Never SQLite for app state.
+    # Example Supabase pooler:
+    #   postgresql+asyncpg://postgres.[ref]:[password]@aws-0-....pooler.supabase.com:6543/postgres
+    DATABASE_URL: str = "postgresql+asyncpg://devos:devos@127.0.0.1:5432/devos"
+    # When True (default), refuse to boot on SQLite application URLs. Tests only: false.
     REQUIRE_POSTGRES: bool = True
 
     AUTH_ENABLED: bool = True
