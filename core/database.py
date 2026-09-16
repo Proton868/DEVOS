@@ -751,33 +751,26 @@ class ArtifactVersion(Base):
 async def init_db():
     """Initialize or verify the database.
 
-    Production Postgres/Supabase: schema is owned by ``supabase/migrations/``.
-    Application startup does **not** create or alter production tables unless
-    ``DEVOS_SCHEMA_CREATE_ALL=1`` is explicitly set (emergency/dev only).
+    Production Postgres/Supabase: schema is owned exclusively by
+    ``supabase/migrations/`` (via ops/apply_migrations.sh). Application
+    startup never creates or mutates production schema via create_all.
 
-    SQLite (tests / constrained non-production): ``create_all`` + legacy
-    column patches remain available when REQUIRE_POSTGRES is false.
+    SQLite is test-only (REQUIRE_POSTGRES=false): create_all + legacy
+    column patches remain available for isolated test engines.
     """
-    import os
     from sqlalchemy import text as sa_text
 
     dialect = (engine.dialect.name or "").lower()
-    allow_create = os.environ.get("DEVOS_SCHEMA_CREATE_ALL", "").lower() in (
-        "1", "true", "yes", "on",
-    )
-    require_pg = bool(getattr(settings, "REQUIRE_POSTGRES", True))
 
     async with engine.begin() as conn:
         # Connectivity check always
         await conn.execute(sa_text("SELECT 1"))
 
-        if dialect in ("postgresql", "postgres") and not allow_create:
-            # Schema authority = migrations. Do not secretly create production tables.
+        if dialect in ("postgresql", "postgres"):
+            # Schema authority = Supabase migrations only. Never create_all.
             return
 
-        if dialect in ("postgresql", "postgres") and require_pg and not allow_create:
-            return
-
+        # SQLite / other non-production test engines only
         await conn.run_sync(Base.metadata.create_all)
         await _migrate_missing_columns(conn)
 

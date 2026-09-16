@@ -2,7 +2,7 @@
 """Agency OS post-migration steps (capability seed).
 
 Production schema is applied by scripts/apply_supabase_migrations.py.
-init_db() does not create_all on Postgres unless DEVOS_SCHEMA_CREATE_ALL=1.
+init_db() never create_all on Postgres; schema is migration-owned.
 """
 import asyncio, sys
 from pathlib import Path

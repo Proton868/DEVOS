@@ -90,12 +90,19 @@ def get_sync_engine() -> Engine:
         )
         _Session = sessionmaker(_engine, expire_on_commit=False, autoflush=False)
         _engine_url = url
-        # Ensure ORM tables exist on this engine (async init_db uses a separate engine)
-        try:
-            from core.database import Base
-            Base.metadata.create_all(_engine)
-        except Exception as e:
-            logger.warning("sync metadata create_all failed: %s", type(e).__name__)
+        # Schema authority:
+        # - Postgres/Supabase: migrations only — never Base.metadata.create_all here
+        # - SQLite (REQUIRE_POSTGRES=false tests): create missing tables so sync
+        #   durable stores share a usable engine without async init_db on same URL
+        _dialect = (_engine.dialect.name or "").lower()
+        if _dialect.startswith("sqlite"):
+            try:
+                from core.database import Base
+                Base.metadata.create_all(_engine)
+            except Exception as e:
+                logger.warning(
+                    "sqlite test schema create_all failed: %s", type(e).__name__
+                )
         return _engine
 
 
