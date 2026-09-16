@@ -26,6 +26,7 @@ class DelegationResult:
     task_id: Optional[str] = None
     agent_id: Optional[str] = None
     persona_key: Optional[str] = None
+    plan_id: Optional[str] = None
     status: str = "unknown"
     files_changed: list = field(default_factory=list)
     evidence_refs: list = field(default_factory=list)
@@ -42,6 +43,7 @@ class DelegationResult:
             "task_id": self.task_id,
             "agent_id": self.agent_id,
             "persona_key": self.persona_key,
+            "plan_id": self.plan_id,
             "status": self.status,
             "files_changed": self.files_changed,
             "evidence_refs": self.evidence_refs,
@@ -133,14 +135,19 @@ async def run_delegated_mission(
     persona_key: Optional[str] = None,
     constraints: Optional[list] = None,
     max_rounds: Optional[int] = None,
+    plan_id: Optional[str] = None,
 ) -> DelegationResult:
     """
-    Full loop:
-      Nuha mission → task → A2A delegate → AgentRuntime → evidence
-      → Ponytail gate → accept | correct-delegate
+    Authoritative specialist execution spine:
+      Nuha mission → (optional ExecutionPlan id) → A2A delegate → AgentRuntime
+      → UCIP tools → Ponytail gate → evidence → accept | correct-delegate
+
+    ``execute_plan`` is not called here; plan_id is correlation only unless
+    a future substrate invokes the DAG engine under this mission.
     """
     max_rounds = max_rounds if max_rounds is not None else MAX_CORRECTION_ROUNDS
     persona_key = persona_key or select_persona_for_goal(goal)
+    _plan_id = plan_id
     agent = await _ensure_persona_agent(persona_key, user_id=user_id)
     agent_id = agent["id"]
     msg_ids: list[str] = []
@@ -483,6 +490,7 @@ async def run_delegated_mission(
                 logger.debug("completion identity: %s", ie)
             # Accepted — only now Nuha treats as success
             return DelegationResult(
+            plan_id=_plan_id,
                 ok=True,
                 mission_id=mission_id,
                 task_id=task_id,
@@ -531,6 +539,7 @@ async def run_delegated_mission(
         # Correction will loop — Nuha delegates again (not silent patch)
 
     return DelegationResult(
+            plan_id=_plan_id,
         ok=False,
         mission_id=mission_id,
         task_id=task_id,

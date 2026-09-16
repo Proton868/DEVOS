@@ -142,10 +142,25 @@ async def scaffold_website_artifacts(
     project_id: str = "default",
     goal: str,
 ) -> dict:
-    """Write a real static site into the user's project workspace.
+    """DEPRECATED template writer — never mission success authority.
 
-    Returns paths written. Does not grant UCIP authority beyond FileService path rules.
+    Hard-disabled in production (DEBUG=false or DEVOS_DEPLOY_MODE=production)
+    and whenever DEVOS_ALLOW_WEBSITE_SCAFFOLD_FALLBACK is not exactly "1".
     """
+    import os
+    from core.config import settings
+
+    allow = os.environ.get("DEVOS_ALLOW_WEBSITE_SCAFFOLD_FALLBACK") == "1"
+    prod = (not getattr(settings, "DEBUG", True)) or (
+        os.environ.get("DEVOS_DEPLOY_MODE", "").lower() == "production"
+    )
+    if prod or not allow:
+        return {
+            "ok": False,
+            "error": "scaffold_disabled",
+            "execution_path": "SCAFFOLD_DISABLED",
+            "files": [],
+        }
     if not _is_website_goal(goal):
         return {"ok": False, "reason": "not_website_goal", "files": []}
     brand = _brand_from_goal(goal)

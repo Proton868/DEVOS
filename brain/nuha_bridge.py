@@ -1,7 +1,7 @@
 """
 Nuha chat bridge — promote executable chat into existing orchestration.
 
-Not a second runtime. Uses create_plan / execute_plan + MemoryStore.
+Not a second runtime. Uses create_plan + run_delegated_mission + MemoryStore.
 """
 from __future__ import annotations
 
@@ -136,15 +136,20 @@ async def run_chat_orchestration(
     persona_id: str = "nuha",
     execute: bool = True,
 ) -> dict[str, Any]:
+    """Authoritative Nuha orchestration entry for non-SSE callers.
+
+    Spine: create ExecutionPlan (DAG record) → run_delegated_mission
+    (A2A → specialist → AgentRuntime → UCIP tools → Ponytail → evidence).
+
+    ``execute_plan`` is NOT invoked here — it remains available as an internal
+    substrate for plan/DAG tooling, not a competing chat-level authority.
     """
-    Invoke existing orchestration. Returns structured result for SSE/UI.
-    execute=False → plan only.
-    """
-    from brain.orchestration import create_plan, execute_plan
+    from brain.orchestration import create_plan
     from brain.personas import classify_intent_heuristic
+    from brain.delegation import run_delegated_mission, select_persona_for_goal
 
     classes = classify_intent_heuristic(goal)
-    logger.info("[nuha] intent=%s orchestrate=true execute=%s", ",".join(classes), execute)
+    logger.info("[nuha] intent=%s orchestrate=true execute=%s spine=delegated", ",".join(classes), execute)
 
     plan = await create_plan(
         user_id=user_id,
@@ -152,44 +157,58 @@ async def run_chat_orchestration(
         workspace_id=workspace_id or "default",
         persona_id=persona_id or "nuha",
     )
-    status_before = plan.status
-    if execute:
-        try:
-            plan = await execute_plan(plan)
-        except Exception as e:
-            logger.exception("[nuha] execute_plan failed")
-            return {
-                "ok": False,
-                "orchestrated": True,
-                "plan_id": plan.id,
-                "status": getattr(plan, "status", "error"),
-                "error": str(e)[:400],
-                "intent_classes": classes,
-                "plan": plan.to_dict() if hasattr(plan, "to_dict") else {},
-            }
-
     pdata = plan.to_dict() if hasattr(plan, "to_dict") else {}
     steps = pdata.get("steps") or []
     personas = pdata.get("personas") or []
-    logger.info(
-        "[nuha] mission=%s status=%s steps=%s",
-        plan.id,
-        plan.status,
-        len(steps),
+
+    if not execute:
+        return {
+            "ok": False,
+            "orchestrated": True,
+            "plan_id": plan.id,
+            "status": getattr(plan, "status", "plan_ready"),
+            "synthesis_mode": "incomplete",
+            "intent_classes": classes,
+            "plan": pdata,
+            "personas": personas,
+            "steps": steps,
+            "execution_path": "PLAN_ONLY",
+        }
+
+    dres = await run_delegated_mission(
+        user_id=user_id,
+        goal=goal,
+        workspace_id=workspace_id or "default",
+        persona_key=select_persona_for_goal(goal),
+        plan_id=getattr(plan, "id", None),
     )
-    truth = mission_truth(getattr(plan, "status", None))
+    status = dres.status or ("succeeded" if dres.ok else "failed")
+    truth = mission_truth(status, explicit_ok=dres.ok)
+    # Artifact path: Ponytail acceptance required when gate result present
+    pt = dres.ponytail or {}
+    if dres.ok and pt and pt.get("applicable") and not pt.get("passed"):
+        truth = mission_truth("failed", explicit_ok=False)
+
     return {
         "ok": truth["ok"],
         "orchestrated": True,
         "plan_id": plan.id,
-        "status": plan.status,
+        "mission_id": dres.mission_id,
+        "status": truth["status"] if truth.get("status") else status,
         "synthesis_mode": truth["synthesis_mode"],
         "intent_classes": classes,
         "plan": pdata,
         "personas": personas,
         "steps": steps,
-        "agent_task_ids": pdata.get("agent_task_ids") or [],
-        "execution_path": "MISSION_EXECUTION",
+        "agent_task_ids": [dres.task_id] if dres.task_id else [],
+        "a2a_message_ids": dres.a2a_message_ids or [],
+        "ponytail": dres.ponytail,
+        "evidence_refs": dres.evidence_refs or [],
+        "artifacts": {
+            "files": dres.files_changed or [],
+        },
+        "error": dres.error,
+        "execution_path": "A2A_DELEGATION",
     }
 
 

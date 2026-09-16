@@ -337,17 +337,19 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
         recall_for_prompt,
         format_memory_context,
     )
-    from brain.artifact_scaffold import scaffold_website_artifacts, _is_website_goal
+    from brain.artifact_scaffold import _is_website_goal
     from brain.orchestration_verify import validate_website_artifacts
-    from brain.orchestration import create_plan, execute_plan
+    from brain.orchestration import create_plan
+    from brain.delegation import run_delegated_mission, select_persona_for_goal
+    from brain.nuha_bridge import mission_truth
 
-    # IMPORTANT: do NOT run execute_plan before SSE starts (root cause of HTTP 504).
-    # Classification + durable plan creation happen inside the generator with early events.
+    # Authoritative spine: create_plan (DAG record) → run_delegated_mission only.
+    # execute_plan is NOT started from chat (no competing executor).
 
     async def sse():
         full = ""
         orch_result = None
-        scaffold_result = None
+
         try:
             # First byte immediately — keeps proxies/clients from 504'ing
             yield f"data: {json.dumps({'status': 'received', 'session_id': session.id})}\n\n"
@@ -359,8 +361,6 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
             if should_auto_orchestrate(req.message) or force_website:
                 yield f"data: {json.dumps({'status': 'planning', 'session_id': session.id})}\n\n"
                 try:
-                    # Fast durable plan first (no full execute)
-                    # Idempotent: same user+session+goal reuses non-terminal plan
                     _idem = hashlib.sha256(
                         f"{user.id}:{session.id}:{req.message.strip()}".encode()
                     ).hexdigest()[:24]
@@ -371,171 +371,98 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                         persona_id=persona_id,
                         idempotency_key=f"chat:{_idem}",
                     )
-                    yield f"data: {json.dumps({'status': 'plan_created', 'session_id': session.id, 'plan_id': plan.id, 'execution_id': plan.id, 'plan_status': plan.status})}\n\n"
-                    yield f"data: {json.dumps({'status': 'delegating', 'session_id': session.id, 'plan_id': plan.id, 'execution_id': plan.id})}\n\n"
-
-                    # Persist + background execute. Stream sequenced plan events + heartbeats.
-                    # Mission continues even if the client later disconnects (task is not cancelled on generator exit).
                     try:
                         from brain.orchestration_store import persist_plan
                         await persist_plan(plan)
                     except Exception:
                         pass
-                    plan.emit("execution.started", {"source": "chat"})
-                    last_seq = 0
-                    exec_task = asyncio.create_task(execute_plan(plan))
-                    while not exec_task.done():
-                        # Drain new sequenced events from the plan
-                        for ev in list(getattr(plan, "events", None) or []):
-                            seq = int(ev.get("sequence") or 0)
-                            if seq <= last_seq:
-                                continue
-                            last_seq = seq
-                            yield f"data: {json.dumps({'status': 'event', 'session_id': session.id, 'plan_id': plan.id, 'execution_id': plan.id, 'sequence': seq, 'type': ev.get('type'), 'payload': ev.get('payload') or ev.get('data') or {}})}\n\n"
-                        yield f"data: {json.dumps({'status': 'executing', 'session_id': session.id, 'plan_id': plan.id, 'execution_id': plan.id, 'last_seq': last_seq})}\n\n"
-                        try:
-                            await asyncio.wait_for(asyncio.shield(exec_task), timeout=2.0)
-                        except asyncio.TimeoutError:
-                            continue
-                    plan = exec_task.result()
-                    # Final event drain
-                    for ev in list(getattr(plan, "events", None) or []):
-                        seq = int(ev.get("sequence") or 0)
-                        if seq <= last_seq:
-                            continue
-                        last_seq = seq
-                        yield f"data: {json.dumps({'status': 'event', 'session_id': session.id, 'plan_id': plan.id, 'execution_id': plan.id, 'sequence': seq, 'type': ev.get('type'), 'payload': ev.get('payload') or ev.get('data') or {}})}\n\n"
-                    from brain.nuha_bridge import mission_truth
-                    _truth = mission_truth(getattr(plan, "status", None))
-                    orch_result = {
-                        "ok": _truth["ok"],
-                        "orchestrated": True,
-                        "plan_id": plan.id,
-                        "status": plan.status,
-                        "synthesis_mode": _truth["synthesis_mode"],
-                        "execution_path": "MISSION_EXECUTION",
-                        "intent_classes": [],
-                        "plan": plan.to_dict() if hasattr(plan, "to_dict") else {},
-                        "personas": getattr(plan, "personas", None) or (plan.to_dict().get("personas") if hasattr(plan, "to_dict") else []),
-                        "steps": (plan.to_dict().get("steps") if hasattr(plan, "to_dict") else []) or [],
-                        "agent_task_ids": getattr(plan, "agent_task_ids", None) or [],
-                    }
-                    yield f"data: {json.dumps({'status': 'worker_completed' if _truth['ok'] else 'failed', 'session_id': session.id, 'plan_id': plan.id, 'plan_status': plan.status, 'ok': _truth['ok'], 'execution_path': 'MISSION_EXECUTION'})}\n\n"
-                except Exception as e:
-                    orch_result = {
-                        "ok": False,
-                        "orchestrated": True,
-                        "error": str(e)[:400],
-                        "plan_id": orch_result.get("plan_id") if orch_result else None,
-                    }
-                    yield f"data: {json.dumps({'status': 'failed', 'session_id': session.id, 'error': str(e)[:200]})}\n\n"
+                    yield f"data: {json.dumps({'status': 'plan_created', 'session_id': session.id, 'plan_id': plan.id, 'execution_id': plan.id, 'plan_status': getattr(plan, 'status', None)})}\n\n"
+                    yield f"data: {json.dumps({'status': 'delegating', 'session_id': session.id, 'plan_id': plan.id, 'phase': 'a2a_delegation'})}\n\n"
 
-                # Website goals: verify real workspace artifacts — never treat scaffold as primary success
-                website_validation = None
-                if _is_website_goal(req.message):
-                    yield f"data: {json.dumps({'status': 'validation_started', 'session_id': session.id, 'plan_id': (orch_result or {}).get('plan_id')})}\n\n"
-                    try:
-                        website_validation = await validate_website_artifacts(
-                            user_id=user.id,
-                            workspace_id="default",
-                            goal=req.message,
-                        )
-                    except Exception as ve:
-                        website_validation = {"valid": False, "status": "invalid", "errors": [str(ve)[:200]]}
-                    yield f"data: {json.dumps({'status': 'validation_completed', 'session_id': session.id, 'plan_id': (orch_result or {}).get('plan_id'), 'validation': {k: website_validation.get(k) for k in ('valid','status','entry_point','structure','warnings','errors','files_checked')}})}\n\n"
-                    if orch_result is not None:
-                        orch_result["website_validation"] = website_validation
-                        if website_validation.get("valid"):
-                            orch_result["ok"] = True
-                            orch_result["artifacts"] = {
-                                "entry_point": website_validation.get("entry_point"),
-                                "files": website_validation.get("files_checked") or [],
-                                "structure": website_validation.get("structure"),
-                            }
+                    # Single authoritative executor — not execute_plan in parallel
+                    dres = await run_delegated_mission(
+                        user_id=user.id,
+                        goal=req.message,
+                        workspace_id="default",
+                        persona_key=select_persona_for_goal(req.message),
+                        plan_id=plan.id,
+                    )
+                    st = dres.status or ("succeeded" if dres.ok else "failed")
+                    truth = mission_truth(st, explicit_ok=dres.ok)
+                    pt = dres.ponytail or {}
+                    if dres.ok and pt.get("applicable") and not pt.get("passed"):
+                        truth = mission_truth("failed", explicit_ok=False)
+
+                    files = []
+                    for f in (dres.files_changed or []):
+                        if isinstance(f, dict):
+                            files.append(f.get("path") or "")
                         else:
-                            # Mission "completed" without on-disk site is not website success
-                            if orch_result.get("ok"):
-                                orch_result["ok"] = False
-                                orch_result["synthesis_mode"] = "incomplete"
-                                orch_result["error"] = (
-                                    "Mission finished but website validation failed: "
-                                    + ", ".join(website_validation.get("errors") or ["no entry file"])
-                                )
-                    # A2A delegation: Nuha orchestrates → agent executes → Ponytail validates
-                    if not (website_validation or {}).get("valid"):
-                        yield f"data: {json.dumps({'status': 'delegating', 'session_id': session.id, 'phase': 'a2a_delegation'})}\n\n"
-                        try:
-                            from brain.delegation import run_delegated_mission
-                            dres = await run_delegated_mission(
-                                user_id=user.id,
-                                goal=req.message,
-                                workspace_id="default",
-                            )
-                            if dres.ok:
-                                files = []
-                                for f in (dres.files_changed or []):
-                                    if isinstance(f, dict):
-                                        files.append(f.get("path") or "")
-                                    else:
-                                        files.append(str(f))
-                                files = [x for x in files if x]
-                                ep = "index.html" if "index.html" in files else (files[0] if files else "index.html")
-                                website_validation = {
-                                    "valid": True,
-                                    "entry_point": ep,
-                                    "files_checked": files,
-                                    "status": "valid",
-                                    "ponytail": dres.ponytail,
-                                }
-                                _art = {
-                                    "entry_point": ep,
-                                    "files": files,
-                                    "structure": "static",
-                                }
-                                if orch_result is None:
-                                    orch_result = {
-                                        "ok": True,
-                                        "orchestrated": True,
-                                        "status": "completed",
-                                        "synthesis_mode": "success",
-                                        "execution_path": "A2A_DELEGATION",
-                                        "artifacts": _art,
-                                        "website_validation": website_validation,
-                                        "mission_id": dres.mission_id,
-                                        "a2a_message_ids": dres.a2a_message_ids,
-                                    }
-                                else:
-                                    orch_result["ok"] = True
-                                    orch_result["synthesis_mode"] = "success"
-                                    orch_result["error"] = None
-                                    orch_result["execution_path"] = "A2A_DELEGATION"
-                                    orch_result["artifacts"] = _art
-                                    orch_result["website_validation"] = website_validation
-                                    orch_result["mission_id"] = dres.mission_id
-                                    orch_result["a2a_message_ids"] = dres.a2a_message_ids
-                                yield f"data: {json.dumps({'status': 'artifact_created', 'session_id': session.id, 'files': files, 'entry_point': ep, 'execution_path': 'A2A_DELEGATION', 'mission_id': dres.mission_id})}\n\n"
-                                yield f"data: {json.dumps({'status': 'validation_completed', 'session_id': session.id, 'validation': website_validation})}\n\n"
-                            else:
-                                yield f"data: {json.dumps({'status': 'failed', 'session_id': session.id, 'phase': 'a2a_delegation_failed', 'error': (dres.error or '')[:200], 'mission_id': dres.mission_id})}\n\n"
-                        except Exception as me:
-                            yield f"data: {json.dumps({'status': 'failed', 'session_id': session.id, 'phase': 'a2a_error', 'error': str(me)[:200]})}\n\n"
+                            files.append(str(f))
+                    files = [x for x in files if x]
 
-                    # Optional last-resort scaffold ONLY when mission failed and explicit env allows
-                    import os as _os
-                    if (
-                        not (website_validation or {}).get("valid")
-                        and _os.environ.get("DEVOS_ALLOW_WEBSITE_SCAFFOLD_FALLBACK") == "1"
-                    ):
+                    website_validation = None
+                    if force_website or files:
                         try:
-                            scaffold_result = await scaffold_website_artifacts(
+                            website_validation = await validate_website_artifacts(
                                 user_id=user.id,
                                 project_id="default",
                                 goal=req.message,
                             )
-                            if scaffold_result and scaffold_result.get("ok"):
-                                scaffold_result["execution_path"] = "SCAFFOLD_FALLBACK"
                         except Exception:
-                            scaffold_result = None
+                            website_validation = {
+                                "valid": bool(files),
+                                "entry_point": files[0] if files else None,
+                                "files_checked": files,
+                                "errors": [],
+                            }
+                        if website_validation and not website_validation.get("valid") and files:
+                            # files reported by agent but validator strict — still incomplete
+                            truth = mission_truth("failed", explicit_ok=False)
+
+                    ep = None
+                    if website_validation:
+                        ep = website_validation.get("entry_point")
+                    if not ep and files:
+                        ep = "index.html" if "index.html" in files else files[0]
+
+                    orch_result = {
+                        "ok": truth["ok"],
+                        "orchestrated": True,
+                        "plan_id": plan.id,
+                        "mission_id": dres.mission_id,
+                        "status": truth.get("status") or st,
+                        "synthesis_mode": truth["synthesis_mode"],
+                        "execution_path": "A2A_DELEGATION",
+                        "a2a_message_ids": dres.a2a_message_ids or [],
+                        "ponytail": dres.ponytail,
+                        "evidence_refs": dres.evidence_refs or [],
+                        "error": dres.error,
+                        "artifacts": {
+                            "entry_point": ep,
+                            "files": files,
+                            "structure": (website_validation or {}).get("structure"),
+                        } if (ep or files) else {},
+                        "website_validation": website_validation,
+                    }
+                    if truth["ok"]:
+                        yield f"data: {json.dumps({'status': 'artifact_created', 'session_id': session.id, 'files': files, 'entry_point': ep, 'execution_path': 'A2A_DELEGATION', 'mission_id': dres.mission_id, 'plan_id': plan.id})}\n\n"
+                        if website_validation:
+                            yield f"data: {json.dumps({'status': 'validation_completed', 'session_id': session.id, 'validation': website_validation})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'status': 'failed', 'session_id': session.id, 'phase': 'mission_not_accepted', 'error': (dres.error or truth.get('status') or 'failed')[:200], 'mission_id': dres.mission_id, 'plan_id': plan.id})}\n\n"
+                except Exception as me:
+                    orch_result = {
+                        "ok": False,
+                        "orchestrated": True,
+                        "status": "failed",
+                        "synthesis_mode": "failure",
+                        "execution_path": "A2A_DELEGATION",
+                        "error": str(me)[:400],
+                    }
+                    yield f"data: {json.dumps({'status': 'failed', 'session_id': session.id, 'phase': 'a2a_error', 'error': str(me)[:200]})}\n\n"
+                # Scaffold fallback is never a success authority (production or default).
+                # DEVOS_ALLOW_WEBSITE_SCAFFOLD_FALLBACK is ignored for mission truth.
             else:
                 yield f"data: {json.dumps({'status': 'responding', 'session_id': session.id})}\n\n"
 
@@ -550,12 +477,6 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                         f"Entry: `{art.get('entry_point')}` · structure: {art.get('structure')}\n"
                         f"Open IDE / Preview on the generated project (not a chat paste)."
                     )
-            if scaffold_result and scaffold_result.get("ok"):
-                files = ", ".join(scaffold_result.get("files") or [])
-                msg = scaffold_result.get("message") or f"Workspace files ready: {files}."
-                parts.append(
-                    f"**Path: SCAFFOLD_FALLBACK** (explicit fallback only — specialists did not build this)\n{msg}"
-                )
             if parts:
                 text = "\n\n".join(parts)
                 try:
@@ -654,7 +575,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
         if _is_website_goal(req.message):
             wv = (orch_result or {}).get("website_validation") or {}
             has_art = bool((orch_result or {}).get("artifacts", {}).get("entry_point"))
-            if not (wv.get("valid") or has_art or (scaffold_result and scaffold_result.get("ok"))):
+            if not (wv.get("valid") or has_art):
                 final_status = "failed"
                 if orch_result is not None:
                     orch_result["ok"] = False
@@ -680,13 +601,6 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                     k: orch_result["website_validation"].get(k)
                     for k in ("valid", "status", "entry_point", "structure", "errors", "files_checked")
                 }
-        if scaffold_result and scaffold_result.get("ok"):
-            done["scaffold"] = {
-                "ok": True,
-                "execution_path": scaffold_result.get("execution_path") or "SCAFFOLD_FALLBACK",
-                "files": scaffold_result.get("files") or [],
-                "fallback": True,
-            }
         yield f"data: {json.dumps(done)}\n\n"
 
     return StreamingResponse(
