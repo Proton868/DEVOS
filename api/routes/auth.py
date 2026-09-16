@@ -383,14 +383,14 @@ async def login(req: LoginReq, response: Response, request: Request, db: AsyncSe
     ip = _client_ip(request)
     allowed, reason = await RateLimiter().check_login(ip)
     if not allowed:
-        AuditLogger().log(AuditEventType.LOGIN_FAILURE, actor_id=req.username, tenant_id="default",
+        AuditLogger().log(AuditEventType.AUTH, actor_id=req.username, tenant_id="default",
                            action="login", outcome="rate_limited", details={"ip": ip})
         raise HTTPException(429, reason)
 
     r = await db.execute(select(User).where(User.username == req.username))
     user = r.scalar_one_or_none()
     if not user or not user.hashed_password or not check_pw(req.password, user.hashed_password):
-        AuditLogger().log(AuditEventType.LOGIN_FAILURE, actor_id=req.username, tenant_id="default",
+        AuditLogger().log(AuditEventType.AUTH, actor_id=req.username, tenant_id="default",
                            action="login", outcome="invalid_credentials", details={"ip": ip})
         raise HTTPException(401, "Invalid credentials")
 
@@ -400,7 +400,7 @@ async def login(req: LoginReq, response: Response, request: Request, db: AsyncSe
     response.set_cookie("devos_token", token, httponly=True, samesite="lax",
                         secure=not settings.DEBUG,
                         max_age=settings.JWT_EXPIRE_HOURS*3600)
-    AuditLogger().log(AuditEventType.LOGIN_SUCCESS, actor_id=user.id, tenant_id=tenant.id,
+    AuditLogger().log(AuditEventType.AUTH, actor_id=user.id, tenant_id=tenant.id,
                        action="login", outcome="success", details={"ip": ip})
     return {"token": token, "user": {"id": user.id, "username": user.username,
                                       "email": user.email, "is_admin": user.is_admin,
@@ -417,7 +417,7 @@ async def logout(response: Response, request: Request, db: AsyncSession = Depend
         if payload:
             actor_id = payload.get("sub", "unknown")
     response.delete_cookie("devos_token")
-    AuditLogger().log(AuditEventType.LOGOUT, actor_id=actor_id, tenant_id="default", action="logout", outcome="success")
+    AuditLogger().log(AuditEventType.AUTH, actor_id=actor_id, tenant_id="default", action="logout", outcome="success")
     return {"status": "ok"}
 
 
@@ -444,7 +444,7 @@ async def supabase_exchange(req: SupabaseTokenReq, response: Response, db: Async
     response.set_cookie("devos_token", local_token, httponly=True, samesite="lax",
                         secure=not settings.DEBUG,
                         max_age=settings.JWT_EXPIRE_HOURS*3600)
-    AuditLogger().log(AuditEventType.LOGIN_SUCCESS, actor_id=user.id, tenant_id="default",
+    AuditLogger().log(AuditEventType.AUTH, actor_id=user.id, tenant_id="default",
                        action="supabase_exchange", outcome="success")
     return {"token": local_token, "user": {"id": user.id, "username": user.username,
                                             "email": user.email, "is_admin": user.is_admin,
@@ -493,7 +493,7 @@ async def supabase_sync(request: Request, db: AsyncSession = Depends(get_db)):
 
     from governance.audit import AuditLogger, AuditEventType
     user = await sync_supabase_user(db, payload)
-    AuditLogger().log(AuditEventType.LOGIN_SUCCESS, actor_id=user.id, tenant_id="default",
+    AuditLogger().log(AuditEventType.AUTH, actor_id=user.id, tenant_id="default",
                        action="supabase_sync", outcome="success")
     return {"id": user.id, "username": user.username, "email": user.email,
             "is_admin": user.is_admin, "supabase_linked": True}
@@ -529,7 +529,7 @@ async def change_password(req: ChangePasswordReq, request: Request, db: AsyncSes
     await db.commit()
     from governance.audit import AuditLogger, AuditEventType
     AuditLogger().log(
-        AuditEventType.LOGIN_SUCCESS, actor_id=user.id, tenant_id="default",
+        AuditEventType.AUTH, actor_id=user.id, tenant_id="default",
         action="change_password", outcome="success",
     )
     return {"ok": True, "message": "Password updated"}
@@ -567,7 +567,7 @@ async def delete_account(req: DeleteAccountReq, response: Response, request: Req
     response.delete_cookie("devos_token")
     from governance.audit import AuditLogger, AuditEventType
     AuditLogger().log(
-        AuditEventType.LOGOUT, actor_id=user.id, tenant_id="default",
+        AuditEventType.AUTH, actor_id=user.id, tenant_id="default",
         action="delete_account", outcome="success",
     )
     return {"ok": True, "message": "Account deleted"}
