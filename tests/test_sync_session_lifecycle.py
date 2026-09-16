@@ -4,12 +4,19 @@ from __future__ import annotations
 from core import sync_session as ss
 
 
-def test_sync_engine_singleton_same_url(monkeypatch):
+def _sqlite_env(monkeypatch, path: str) -> None:
+    """Resolvers prefer os.environ over Settings — patch both."""
+    # Use sqlite:// for sync engine (aiosqlite URL is async-only)
+    if path.startswith("sqlite+aiosqlite://"):
+        path = "sqlite://" + path.split("sqlite+aiosqlite://", 1)[1]
+    monkeypatch.setenv("REQUIRE_POSTGRES", "false")
+    monkeypatch.setenv("DATABASE_URL", path)
     monkeypatch.setattr("core.config.settings.REQUIRE_POSTGRES", False)
-    monkeypatch.setattr(
-        "core.config.settings.DATABASE_URL",
-        "sqlite+aiosqlite:///./data/test_sync_lifecycle.db",
-    )
+    monkeypatch.setattr("core.config.settings.DATABASE_URL", path)
+
+
+def test_sync_engine_singleton_same_url(monkeypatch):
+    _sqlite_env(monkeypatch, "sqlite:///./data/test_sync_lifecycle.db")
     ss.dispose_sync_engine()
     e1 = ss.get_sync_engine()
     e2 = ss.get_sync_engine()
@@ -19,11 +26,7 @@ def test_sync_engine_singleton_same_url(monkeypatch):
 
 
 def test_sync_engine_replace_disposes_previous(monkeypatch):
-    monkeypatch.setattr("core.config.settings.REQUIRE_POSTGRES", False)
-    monkeypatch.setattr(
-        "core.config.settings.DATABASE_URL",
-        "sqlite+aiosqlite:///./data/test_sync_lifecycle_a.db",
-    )
+    _sqlite_env(monkeypatch, "sqlite:///./data/test_sync_lifecycle_a.db")
     ss.dispose_sync_engine()
     e1 = ss.get_sync_engine()
     disposed = {"n": 0}
@@ -34,10 +37,7 @@ def test_sync_engine_replace_disposes_previous(monkeypatch):
         return old_dispose(*a, **k)
 
     e1.dispose = _disp  # type: ignore[method-assign]
-    monkeypatch.setattr(
-        "core.config.settings.DATABASE_URL",
-        "sqlite+aiosqlite:///./data/test_sync_lifecycle_b.db",
-    )
+    _sqlite_env(monkeypatch, "sqlite:///./data/test_sync_lifecycle_b.db")
     e2 = ss.get_sync_engine()
     assert e2 is not e1
     assert disposed["n"] >= 1
@@ -45,11 +45,7 @@ def test_sync_engine_replace_disposes_previous(monkeypatch):
 
 
 def test_repeated_saga_ops_reuse_pool(monkeypatch):
-    monkeypatch.setattr("core.config.settings.REQUIRE_POSTGRES", False)
-    monkeypatch.setattr(
-        "core.config.settings.DATABASE_URL",
-        "sqlite+aiosqlite:///./data/test_saga_pool.db",
-    )
+    _sqlite_env(monkeypatch, "sqlite:///./data/test_saga_pool.db")
     ss.dispose_sync_engine()
     from core.database import Base
     eng = ss.get_sync_engine()
@@ -71,11 +67,7 @@ def test_repeated_saga_ops_reuse_pool(monkeypatch):
 
 
 def test_session_context_closes(monkeypatch):
-    monkeypatch.setattr("core.config.settings.REQUIRE_POSTGRES", False)
-    monkeypatch.setattr(
-        "core.config.settings.DATABASE_URL",
-        "sqlite+aiosqlite:///./data/test_sync_close.db",
-    )
+    _sqlite_env(monkeypatch, "sqlite:///./data/test_sync_close.db")
     ss.dispose_sync_engine()
     from sqlalchemy import text
 

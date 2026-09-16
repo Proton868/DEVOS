@@ -12,6 +12,12 @@ os.environ["DATABASE_URL"] = os.environ.get(
 )
 _Path("data").mkdir(exist_ok=True)
 
+try:
+    from core.sync_session import dispose_sync_engine as _dispose_sync
+    _dispose_sync()
+except Exception:
+    pass
+
 import asyncio
 import time
 from brain.delivery_intent import classify_delivery_intent, nuha_can_request
