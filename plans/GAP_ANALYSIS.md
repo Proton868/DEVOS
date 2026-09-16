@@ -1,3 +1,5 @@
+> **Product vision (identity & invariants):** [`plans/DEVOS_PRODUCT_VISION.md`](DEVOS_PRODUCT_VISION.md) — use before classifying gaps or proposing features.
+
 # Agency OS — Gap Analysis: Current State vs. Master Architecture
 
 ## How to read this document

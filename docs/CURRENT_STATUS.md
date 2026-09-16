@@ -1,3 +1,5 @@
+> Canonical product vision: [`plans/DEVOS_PRODUCT_VISION.md`](../plans/DEVOS_PRODUCT_VISION.md). Status labels: IMPLEMENTED / PARTIALLY IMPLEMENTED / TESTED BUT NOT LIVE-PROVEN / NOT YET IMPLEMENTED / FUTURE/RESEARCH — never claim production-ready from unit tests alone.
+
 # DevOS — current status
 
 Aligned with **Governance v1 + Reliability v1** freeze (`main` tip including chaos harness).

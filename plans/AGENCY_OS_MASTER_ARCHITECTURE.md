@@ -3,6 +3,59 @@
 
 ---
 
+## Canonical product vision (do not drift)
+
+**Durable product identity and invariants live in:**
+
+→ **[`plans/DEVOS_PRODUCT_VISION.md`](DEVOS_PRODUCT_VISION.md)**
+
+That document is the permanent source of truth for:
+
+- DevOS as an AI-native Development Operating System (unified workspace)
+- lifecycle: **BUILD → RUN → ORCHESTRATE → INSPECT → DEPLOY**
+- Nuha as executive orchestration layer (not unrestricted superuser)
+- internal delegation as the default
+- MCP as external bridge (not internal substitute)
+- governance, evidence, and verification
+- continuous learning under a governed lifecycle
+- OmniRoute as native/default model gateway
+- anti-drift rules and honest status vocabulary
+
+This file retains the **organ map**, **UCIP identity extension notes**, **LLM router notes**, **runtime profiles**, and **phased roadmap** relative to the multi-repo Agency OS composition. When this file and the product vision appear to conflict on product identity, **prefer `DEVOS_PRODUCT_VISION.md`** and update this file to match — do not silently reinterpret the product as “only an AI app builder” or “only a chatbot.”
+
+### Honest status vocabulary (apply everywhere)
+
+| Label | Meaning |
+|-------|---------|
+| IMPLEMENTED | Integrated in product path |
+| PARTIALLY IMPLEMENTED | Present but incomplete or dual-path |
+| TESTED BUT NOT LIVE-PROVEN | Tests pass; production/live proof missing |
+| NOT YET IMPLEMENTED | Planned only |
+| FUTURE / RESEARCH | Long-horizon |
+
+Do **not** claim production-ready solely because a unit or integration test exists.
+
+### High-level implementation posture (snapshot)
+
+These labels are directional for planners; see `plans/GAP_ANALYSIS.md` and `docs/CURRENT_STATUS.md` for detail. Re-audit before declaring readiness.
+
+| Area | Status |
+|------|--------|
+| Spatial / Nuha-first UI shell | PARTIALLY IMPLEMENTED |
+| Nuha chat + bridge to Mission / orchestration | PARTIALLY IMPLEMENTED / TESTED BUT NOT LIVE-PROVEN |
+| UCIP governance boundary | IMPLEMENTED (policy surface); live mission proof varies |
+| Mission / DAG / specialty policy | PARTIALLY IMPLEMENTED |
+| AgentRuntime + jobs | PARTIALLY IMPLEMENTED |
+| OmniRoute as default gateway | PARTIALLY IMPLEMENTED |
+| Evidence / Mission Truth / verification gates | PARTIALLY IMPLEMENTED / TESTED BUT NOT LIVE-PROVEN |
+| Internal specialist delegation as sole website path | PARTIALLY IMPLEMENTED (scaffold fallback risk remains a drift hazard) |
+| MCP external bridge | PARTIALLY IMPLEMENTED |
+| Continuous learning / governed skill promotion | PARTIALLY IMPLEMENTED (XP/personas); full lifecycle FUTURE / RESEARCH |
+| Self-development of system components | FUTURE / RESEARCH |
+| Full BUILD→RUN→ORCHESTRATE→INSPECT→DEPLOY consolidation | PARTIALLY IMPLEMENTED |
+
+---
+
 ## 0. Why this plan differs from the uploaded document
 
 I pulled the live README/spec/source of all seven repos before writing anything. Six of the seven behave nothing like the doc described. This matters because it changes what's actually reusable vs. what you have to build from scratch. Here's the corrected picture, repo by repo:

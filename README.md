@@ -1,5 +1,7 @@
 # DevOS — Agency Operating System
 
+**Product vision (source of truth):** [`plans/DEVOS_PRODUCT_VISION.md`](plans/DEVOS_PRODUCT_VISION.md) — unified AI-native Development OS; Nuha orchestrates; specialists execute under governance.
+
 Self-contained AI operating system for human-in-the-loop and autonomous work.
 
 Goals go through a multi-provider **Brain**, **Workers**, **sandboxed execution**, and **UCIP governance** (identity, capabilities, evidence, human-approved autonomy). Defaults use **SQLite** and a **prebuilt web UI** — no Node, Docker, Redis, or cloud DB required to start.
