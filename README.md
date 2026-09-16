@@ -10,7 +10,7 @@ Goals go through a multi-provider **Brain**, **Workers**, **sandboxed execution*
 
 ## Production VPS (Ubuntu 24.04)
 
-See **[ops/README.md](ops/README.md)** for reproducible install/update/verify:
+See **[docs/DEPLOY.md](docs/DEPLOY.md)** and **[ops/README.md](ops/README.md)** for reproducible install/update/verify:
 
 ```bash
 ./ops/install.sh          # venv, deps, migrations (edit .env first for production)

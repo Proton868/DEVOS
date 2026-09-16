@@ -32,7 +32,10 @@ jobs:
           SUPABASE_KEY: ""
           OLLAMA_HOST: "http://localhost:11434"
           JWT_SECRET: "test-secret-key-for-ci-only-32chars-long"
-          DEFAULT_PROVIDER: "ollama"
+          REQUIRE_POSTGRES: "false"
+          DEVOS_SCHEMA_CREATE_ALL: "1"
+          DATABASE_URL: "sqlite+aiosqlite:///./data/ci.db"
+          DEFAULT_PROVIDER: "omniroute"
 
   frontend:
     name: Frontend Build (Node 22)

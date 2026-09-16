@@ -26,7 +26,7 @@ else
 fi
 
 if [[ -x "$ROOT/.venv/bin/python" ]]; then
-  if PYTHONPATH="$ROOT" "$ROOT/.venv/bin/python" -c "import app, core.config, core.database, core.sync_session"; then
+  if PYTHONPATH="$ROOT" "$ROOT/.venv/bin/python" -c "import app, core.config, core.database, core.sync_session, brain.a2a, brain.nuha_bridge, execution.outbox, execution.saga"; then
     pass "imports"
   else
     fail "imports"
