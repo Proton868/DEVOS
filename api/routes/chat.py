@@ -386,6 +386,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                         workspace_id="default",
                         persona_key=select_persona_for_goal(req.message),
                         plan_id=plan.id,
+                        idempotency_key=f"chat:{_idem}",
                     )
                     st = dres.status or ("succeeded" if dres.ok else "failed")
                     from brain.mission_acceptance import evaluate_mission_acceptance

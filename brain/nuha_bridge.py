@@ -211,6 +211,7 @@ async def run_chat_orchestration(
         workspace_id=workspace_id or "default",
         persona_key=select_persona_for_goal(goal),
         plan_id=getattr(plan, "id", None),
+        idempotency_key=f"bridge:{user_id}:{getattr(plan, 'id', goal)[:64]}",
     )
     status = dres.status or ("succeeded" if dres.ok else "failed")
     from brain.mission_acceptance import evaluate_mission_acceptance

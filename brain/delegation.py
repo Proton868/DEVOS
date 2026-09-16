@@ -136,6 +136,7 @@ async def run_delegated_mission(
     constraints: Optional[list] = None,
     max_rounds: Optional[int] = None,
     plan_id: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
 ) -> DelegationResult:
     """
     Authoritative specialist execution spine:
@@ -164,14 +165,37 @@ async def run_delegated_mission(
             record_work_history,
         )
 
+        from brain.mission_durability import (
+            scoped_idempotency_key,
+            emit_mission_event,
+            begin_mission_saga,
+            a2a_message_idempotency_id,
+        )
+
+        ikey = None
+        if idempotency_key:
+            ikey = scoped_idempotency_key(user_id=user_id, client_key=idempotency_key)
         mission = await create_mission(
             user_id=user_id,
             goal=goal,
             workspace_id=workspace_id,
             actor_type="nuha",
             actor_id="nuha",
+            plan_id=plan_id,
+            idempotency_key=ikey,
+            meta={"plan_id": plan_id} if plan_id else {},
         )
         mission_id = mission["id"]
+        if mission.get("reused"):
+            logger.info("mission reused via idempotency key mission_id=%s", mission_id)
+        begin_mission_saga(mission_id=mission_id, plan_id=plan_id)
+        emit_mission_event(
+            "mission.created",
+            mission_id=mission_id,
+            user_id=user_id,
+            plan_id=plan_id,
+            payload={"goal": goal[:200], "reused": bool(mission.get("reused"))},
+        )
         task = await add_mission_task(
             mission_id=mission_id,
             description=goal,
@@ -240,10 +264,31 @@ async def run_delegated_mission(
             payload={"persona_key": persona_key, "round": round_i},
             status="queued",
         )
+        try:
+            from brain.mission_durability import a2a_message_idempotency_id, emit_mission_event
+            env.message_id = a2a_message_idempotency_id(
+                mission_id=mission_id or "",
+                task_id=task_id or "",
+                message_type=msg_type,
+                round_i=round_i,
+            )
+        except Exception:
+            pass
         await persist_message(env)
         msg_ids.append(env.message_id)
         parent_msg = env.message_id
         await update_message_status(env.message_id, "delivered")
+        try:
+            emit_mission_event(
+                "mission.delegated",
+                mission_id=mission_id or "",
+                user_id=user_id,
+                task_id=task_id,
+                plan_id=_plan_id,
+                payload={"message_id": env.message_id, "round": round_i},
+            )
+        except Exception:
+            pass
 
         # 3. Agent executes via AgentRuntime (not Nuha)
         await update_message_status(env.message_id, "processing")

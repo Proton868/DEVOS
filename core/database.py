@@ -608,6 +608,7 @@ class Mission(Base):
     actor_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     outcome: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(192), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 

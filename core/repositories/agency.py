@@ -123,9 +123,31 @@ async def create_mission(
     actor_type: str = "nuha",
     actor_id: str = "nuha",
     meta: Optional[dict] = None,
+    idempotency_key: Optional[str] = None,
 ) -> dict:
-    mid = gen_id()
+    """Create mission. If (user_id, idempotency_key) exists, return existing (owner-scoped)."""
+    from sqlalchemy import select
+
+    key = (idempotency_key or "").strip() or None
     async with AsyncSessionLocal() as db:
+        if key:
+            existing = (
+                await db.execute(
+                    select(Mission).where(
+                        Mission.user_id == user_id,
+                        Mission.idempotency_key == key,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return {
+                    "id": existing.id,
+                    "status": existing.status,
+                    "goal": existing.goal,
+                    "reused": True,
+                    "plan_id": existing.plan_id,
+                }
+        mid = gen_id()
         row = Mission(
             id=mid,
             user_id=user_id,
@@ -137,10 +159,11 @@ async def create_mission(
             actor_type=actor_type,
             actor_id=actor_id,
             meta=meta or {},
+            idempotency_key=key,
         )
         db.add(row)
         await db.commit()
-    return {"id": mid, "status": "pending", "goal": goal}
+    return {"id": mid, "status": "pending", "goal": goal, "reused": False}
 
 
 async def add_mission_task(

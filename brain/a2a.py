@@ -91,12 +91,26 @@ class A2AEnvelope:
 
 
 async def persist_message(env: A2AEnvelope) -> str:
-    """Write envelope to agent_messages (SoT). Fallback bus if DB down."""
+    """Write envelope to agent_messages (SoT). Idempotent on message_id.
+
+    Retries of the same logical delivery reuse the same message_id and do not
+    insert a second row when the primary key already exists.
+    """
     env.updated_at = _now()
     try:
         from core.database import AsyncSessionLocal, AgentMessage
 
         async with AsyncSessionLocal() as db:
+            existing = await db.get(AgentMessage, env.message_id)
+            if existing is not None:
+                # Do not reset terminal statuses on retry
+                if (existing.status or "").lower() not in (
+                    "completed", "failed", "accepted", "rejected"
+                ):
+                    existing.envelope = env.to_dict()
+                    existing.status = env.status
+                    await db.commit()
+                return env.message_id
             row = AgentMessage(
                 id=env.message_id,
                 mission_id=env.mission_id,
