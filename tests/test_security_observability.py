@@ -1,4 +1,6 @@
-import importlib
+"""Secrets normalization + observability error tracking (isolated)."""
+from __future__ import annotations
+
 from pathlib import Path
 
 from governance.observability import ObservabilityStore
@@ -13,8 +15,15 @@ def test_secret_name_normalizes_and_rejects_dangerous_values():
 
 
 def test_observability_store_tracks_errors(tmp_path, monkeypatch):
-    module = importlib.import_module("governance.observability")
-    monkeypatch.setattr(module, "OBS_DB", tmp_path / "observability.db")
+    url = f"sqlite+aiosqlite:///{tmp_path}/observability.db"
+    monkeypatch.setenv("REQUIRE_POSTGRES", "false")
+    monkeypatch.setenv("DATABASE_URL", url)
+    from core.config import settings
+    from core.sync_session import dispose_sync_engine
+
+    monkeypatch.setattr(settings, "DATABASE_URL", url)
+    monkeypatch.setattr(settings, "REQUIRE_POSTGRES", False)
+    dispose_sync_engine()
     ObservabilityStore._instance = None
     store = ObservabilityStore()
 
@@ -24,3 +33,5 @@ def test_observability_store_tracks_errors(tmp_path, monkeypatch):
 
     errors = store.list_errors(limit=5)
     assert any(item["trace_id"] == "trace-1" for item in errors)
+    dispose_sync_engine()
+    ObservabilityStore._instance = None

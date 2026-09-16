@@ -497,6 +497,35 @@ class TraceSpanRecord(Base):
     ended_at: Mapped[Optional[float]] = mapped_column(nullable=True)
 
 
+class ObservabilityErrorRecord(Base):
+    """Operational error records — observational; not authority or audit."""
+    __tablename__ = "observability_errors"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    component: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[Optional[float]] = mapped_column(nullable=True, index=True)
+
+
+class ObservabilityTraceRecord(Base):
+    """Loop/task-level trace summary — observational."""
+    __tablename__ = "observability_traces"
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # task/trace id
+    agent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    goal: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    started_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+    ended_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+
+
 class WebCrawlRecord(Base):
     __tablename__ = "web_crawls"
     crawl_id: Mapped[str] = mapped_column(String, primary_key=True)
