@@ -8,7 +8,20 @@ Goals go through a multi-provider **Brain**, **Workers**, **sandboxed execution*
 
 ---
 
+## Production VPS (Ubuntu 24.04)
+
+See **[ops/README.md](ops/README.md)** for reproducible install/update/verify:
+
+```bash
+./ops/install.sh          # venv, deps, migrations (edit .env first for production)
+./ops/update.sh           # git ff-only → deps → migrate → restart → verify
+./ops/verify.sh --production
+```
+
+Postgres/Supabase is the production database authority. Do not use SQLite in production.
+
 ## Quick start (one installer)
+
 
 ```bash
 git clone https://github.com/Proton868/DEVOS.git

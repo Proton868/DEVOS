@@ -1,0 +1,27 @@
+[Unit]
+Description=DevOS (AI-native Development Operating System)
+Documentation=https://github.com/Proton868/DEVOS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{DEVOS_USER}}
+Group={{DEVOS_GROUP}}
+WorkingDirectory={{DEVOS_ROOT}}
+EnvironmentFile=-{{DEVOS_ROOT}}/.env
+Environment=PYTHONPATH={{DEVOS_ROOT}}
+Environment=DEVOS_HOST={{DEVOS_HOST}}
+Environment=DEVOS_PORT={{DEVOS_PORT}}
+ExecStart={{DEVOS_ROOT}}/.venv/bin/uvicorn app:app --host ${DEVOS_HOST} --port ${DEVOS_PORT} --proxy-headers
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target

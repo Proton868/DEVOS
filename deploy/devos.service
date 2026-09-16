@@ -1,21 +1,29 @@
 [Unit]
-Description=DevOS v4
-After=network.target
+Description=DevOS (AI-native Development Operating System)
+Documentation=https://github.com/Proton868/DEVOS
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
+# Rendered for production by: ops/install_systemd.sh
+# Replace paths/user for your host or run ops/install_systemd.sh as root.
 User=ubuntu
+Group=ubuntu
 WorkingDirectory=/home/ubuntu/devos
+EnvironmentFile=-/home/ubuntu/devos/.env
+Environment=PYTHONPATH=/home/ubuntu/devos
 Environment=DEVOS_HOST=0.0.0.0
 Environment=DEVOS_PORT=8000
-Environment=WEB_CONCURRENCY=1
-# Prefer the venv uvicorn entrypoint (matches production).
-ExecStart=/home/ubuntu/devos/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000
+ExecStart=/home/ubuntu/devos/.venv/bin/uvicorn app:app --host ${DEVOS_HOST} --port ${DEVOS_PORT} --proxy-headers
 Restart=on-failure
-RestartSec=3
-
-# Production ownership: systemd supervises ONE Uvicorn listener.
-# Do not run `./devos start` alongside this unit on the same port.
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Install]
 WantedBy=multi-user.target
