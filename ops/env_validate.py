@@ -82,6 +82,19 @@ def validate(*, production: bool) -> Tuple[List[str], List[str]]:
     if production and not enc:
         warnings.append("ENCRYPTION_KEY not set")
 
+    # Production must not use test harnesses or scaffold success paths
+    if production and _truthy("DEVOS_ORCH_FAKE_RUNTIME", "false"):
+        errors.append("DEVOS_ORCH_FAKE_RUNTIME must not be enabled in production")
+    if production and _truthy("DEVOS_ALLOW_FAKE_RUNTIME", "false"):
+        errors.append("DEVOS_ALLOW_FAKE_RUNTIME must not be enabled in production")
+    if production and os.environ.get("DEVOS_ALLOW_WEBSITE_SCAFFOLD_FALLBACK") == "1":
+        errors.append(
+            "DEVOS_ALLOW_WEBSITE_SCAFFOLD_FALLBACK must not be 1 in production "
+            "(scaffold cannot masquerade as agent work)"
+        )
+    if production and _truthy("AUTH_ENABLED", "true") is False:
+        errors.append("AUTH_ENABLED must remain true in production")
+
     return errors, warnings
 
 

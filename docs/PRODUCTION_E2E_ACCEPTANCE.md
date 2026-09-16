@@ -135,3 +135,15 @@ sudo systemctl status devos --no-pager
 
 **Overall Phase 4 status for this environment:**  
 **PARTIAL** — architectural regressions **PASS**; full production-like E2E **UNPROVEN**.
+
+---
+
+## Operator handoff (prime)
+
+Coding-agent environments **cannot** prove live production.
+
+On host **prime**, follow:
+
+**[docs/PRODUCTION_OPERATOR_CHECKLIST.md](PRODUCTION_OPERATOR_CHECKLIST.md)**
+
+Label every gate **PASS** / **FAIL** / **UNPROVEN** from direct host evidence only.
