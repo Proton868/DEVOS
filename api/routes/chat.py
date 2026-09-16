@@ -380,14 +380,53 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                     yield f"data: {json.dumps({'status': 'delegating', 'session_id': session.id, 'plan_id': plan.id, 'phase': 'a2a_delegation'})}\n\n"
 
                     # Single authoritative executor — not execute_plan in parallel
-                    dres = await run_delegated_mission(
-                        user_id=user.id,
-                        goal=req.message,
-                        workspace_id="default",
-                        persona_key=select_persona_for_goal(req.message),
-                        plan_id=plan.id,
-                        idempotency_key=f"chat:{_idem}",
-                    )
+                    progress_q: asyncio.Queue = asyncio.Queue()
+
+                    async def _on_mission_progress(payload: dict):
+                        await progress_q.put(dict(payload or {}))
+
+                    async def _run_mission():
+                        try:
+                            result = await run_delegated_mission(
+                                user_id=user.id,
+                                goal=req.message,
+                                workspace_id="default",
+                                persona_key=select_persona_for_goal(req.message),
+                                plan_id=plan.id,
+                                idempotency_key=f"chat:{_idem}",
+                                on_progress=_on_mission_progress,
+                            )
+                            await progress_q.put({"_mission_done": True, "result": result})
+                        except Exception as _mission_exc:
+                            await progress_q.put({"_mission_error": _mission_exc})
+
+                    mission_task = asyncio.create_task(_run_mission())
+                    dres = None
+                    while True:
+                        item = await progress_q.get()
+                        if item.get("_mission_error"):
+                            await mission_task
+                            raise item["_mission_error"]
+                        if item.get("_mission_done"):
+                            dres = item["result"]
+                            break
+                        # Real lifecycle progress from delegation (not fabricated)
+                        st = item.get("status") or "agent_progress"
+                        prog = {
+                            "status": st,
+                            "session_id": session.id,
+                            "plan_id": plan.id,
+                            "mission_id": item.get("mission_id"),
+                            "task_id": item.get("task_id"),
+                            "phase": item.get("phase"),
+                            "ok": item.get("ok"),
+                            "files_count": item.get("files_count"),
+                            "round": item.get("round"),
+                            "persona_key": item.get("persona_key"),
+                        }
+                        yield f"data: {json.dumps(prog)}\n\n"
+                        await asyncio.sleep(0)
+                    await mission_task
                     st = dres.status or ("succeeded" if dres.ok else "failed")
                     from brain.mission_acceptance import evaluate_mission_acceptance
                     acceptance = evaluate_mission_acceptance(

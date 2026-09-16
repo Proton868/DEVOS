@@ -243,3 +243,18 @@ Unless the repository contains **new** operator evidence, the following remain *
 
 Language rule: **sandbox test pass ≠ production release green**.
 
+
+---
+
+## Lifecycle progress streaming (post-UI cluster)
+
+**Gap found:** After SSE `delegating`, `run_delegated_mission` ran as a blocking black box. Intermediate statuses expected by `NuhaTaskProgress` (`agent_progress`, `worker_completed`, `validation_started`) were **not** emitted, so the UI could not show real specialist progress.
+
+**Fix (repo):** Optional `on_progress` callback on `run_delegated_mission` fires only at real checkpoints (mission/task assigned, A2A sent, specialist execution result, Ponytail start). Chat streams those events over SSE via a progress queue.
+
+| Claim | Status |
+|-------|--------|
+| Progress events tied to real delegation checkpoints | LOCALLY TESTED (source + `_emit_progress` unit) |
+| End-to-end live specialist mission on Prime | STILL UNVERIFIED |
+| Artifact/evidence acceptance under load | STILL UNVERIFIED |
+

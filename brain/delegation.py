@@ -127,6 +127,18 @@ async def _run_agent_node(
     return result.to_dict()
 
 
+async def _emit_progress(on_progress, payload: dict) -> None:
+    """Best-effort progress hook for SSE; never fails the mission."""
+    if not on_progress:
+        return
+    try:
+        maybe = on_progress(payload)
+        if hasattr(maybe, "__await__"):
+            await maybe
+    except Exception as e:
+        logger.debug("on_progress ignored: %s", e)
+
+
 async def run_delegated_mission(
     *,
     user_id: str,
@@ -137,6 +149,7 @@ async def run_delegated_mission(
     max_rounds: Optional[int] = None,
     plan_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
+    on_progress=None,
 ) -> DelegationResult:
     """
     Authoritative specialist execution spine:
@@ -204,6 +217,14 @@ async def run_delegated_mission(
             sequence_no=1,
         )
         task_id = task["id"]
+        await _emit_progress(on_progress, {
+            "status": "agent_progress",
+            "phase": "mission_task_assigned",
+            "mission_id": mission_id,
+            "task_id": task_id,
+            "plan_id": plan_id,
+            "persona_key": persona_key,
+        })
         await record_delegation(
             mission_id=mission_id,
             task_id=task_id,
@@ -275,6 +296,15 @@ async def run_delegated_mission(
         except Exception:
             pass
         await persist_message(env)
+        await _emit_progress(on_progress, {
+            "status": "agent_progress",
+            "phase": "a2a_delegate_sent",
+            "mission_id": mission_id,
+            "task_id": task_id,
+            "plan_id": plan_id,
+            "a2a_message_id": env.message_id,
+            "round": round_i,
+        })
         msg_ids.append(env.message_id)
         parent_msg = env.message_id
         await update_message_status(env.message_id, "delivered")
@@ -381,12 +411,30 @@ async def run_delegated_mission(
         await persist_message(reply)
         msg_ids.append(reply.message_id)
 
+        await _emit_progress(on_progress, {
+            "status": "worker_completed" if agent_ok else "agent_progress",
+            "phase": "specialist_execution",
+            "mission_id": mission_id,
+            "task_id": task_id,
+            "plan_id": plan_id,
+            "ok": bool(agent_ok),
+            "files_count": len(files) if files else 0,
+            "round": round_i,
+        })
         if not agent_ok:
             last_error = exec_result.get("error") or agent_status
             await update_message_status(env.message_id, "failed", error=last_error)
             continue
 
         # 4. Agent → Ponytail
+        await _emit_progress(on_progress, {
+            "status": "validation_started",
+            "phase": "ponytail",
+            "mission_id": mission_id,
+            "task_id": task_id,
+            "plan_id": plan_id,
+            "round": round_i,
+        })
         pt_req = A2AEnvelope.create(
             mission_id=mission_id,
             task_id=task_id,
