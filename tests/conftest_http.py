@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import os
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -16,29 +14,29 @@ os.environ.setdefault("DEVOS_JOB_WORKER", "0")
 def app_client():
     from fastapi.testclient import TestClient
     from app import app
+
     with TestClient(app) as client:
         yield client
 
 
-async def await _make_user(client, username: str, password: str = "TestPass123!"):
-    """Register via local login admin path or direct DB — prefer login if admin exists."""
-    # Try login first (admin may exist from startup)
+def _make_user(client, username: str, password: str = "TestPass123!"):
+    """Register or login a test user; returns (user_dict, token)."""
     r = client.post("/api/auth/login", json={"username": username, "password": password})
     if r.status_code == 200:
         data = r.json()
         token = data.get("token") or data.get("access_token")
         return data.get("user") or data, token
-    # Create via internal helpers
+
     import asyncio
     from core.database import AsyncSessionLocal, User, init_db
     from api.routes.auth import hash_pw, make_jwt
+    from sqlalchemy import select
 
     async def _create():
         await init_db()
         async with AsyncSessionLocal() as db:
-            from sqlalchemy import select
-            r = await db.execute(select(User).where(User.username == username))
-            u = r.scalar_one_or_none()
+            res = await db.execute(select(User).where(User.username == username))
+            u = res.scalar_one_or_none()
             if not u:
                 u = User(
                     username=username,
@@ -58,4 +56,4 @@ async def await _make_user(client, username: str, password: str = "TestPass123!"
                 "is_admin": u.is_admin,
             }, token
 
-    return await _create()
+    return asyncio.run(_create())
