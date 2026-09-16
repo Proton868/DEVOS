@@ -10,8 +10,9 @@ def init_store() -> None:
     return
 
 
-def new_id() -> str:
-    return str(uuid.uuid4())
+def new_id(prefix: str = "") -> str:
+    """Generate a durable identifier, optionally with a caller-defined prefix."""
+    return f"{prefix}{uuid.uuid4()}"
 
 
 def upsert_runtime(**fields) -> str:

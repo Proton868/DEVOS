@@ -39,6 +39,10 @@ def _resolve_database_url() -> str:
 engine = create_async_engine(
     _resolve_database_url(),
     echo=bool(getattr(settings, "SQL_ECHO", False)),
+    pool_size=3,
+    max_overflow=0,
+    pool_timeout=30,
+    pool_pre_ping=True,
 )
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -299,6 +303,9 @@ class OutboxEvent(Base):
     event_type: Mapped[str] = mapped_column(String(64), index=True)
     aggregate_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(
+        String(192), nullable=True, unique=True, index=True
+    )
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
@@ -707,6 +714,12 @@ async def init_db():
         await _migrate_missing_columns(conn)
 
 async def _migrate_missing_columns(conn):
+    # PostgreSQL/Supabase is the production schema authority.
+    # Legacy ALTER TABLE migration is retained only for SQLite.
+    dialect = getattr(getattr(conn, "dialect", None), "name", None) or engine.dialect.name
+    if dialect == "postgresql":
+        return
+
     """Base.metadata.create_all only creates missing TABLES, never ALTERs
     existing ones -- so columns added to a model after the table already
     exists on disk (e.g. Script.retry_policy, added for G9; User.supabase_id,
@@ -776,7 +789,7 @@ async def _migrate_missing_columns(conn):
     )
     await _add_column_if_missing(
         "workflow_records", "enabled",
-        "ALTER TABLE workflow_records ADD COLUMN enabled BOOLEAN DEFAULT 1",
+        "ALTER TABLE workflow_records ADD COLUMN enabled BOOLEAN DEFAULT TRUE",
     )
     await _add_column_if_missing(
         "workflow_records", "version",
@@ -804,11 +817,11 @@ async def _migrate_missing_columns(conn):
     )
     await _add_column_if_missing(
         "execution_jobs", "locked_at",
-        "ALTER TABLE execution_jobs ADD COLUMN locked_at DATETIME",
+        "ALTER TABLE execution_jobs ADD COLUMN locked_at TIMESTAMP WITH TIME ZONE",
     )
     await _add_column_if_missing(
         "execution_jobs", "lease_expires_at",
-        "ALTER TABLE execution_jobs ADD COLUMN lease_expires_at DATETIME",
+        "ALTER TABLE execution_jobs ADD COLUMN lease_expires_at TIMESTAMP WITH TIME ZONE",
     )
     await _add_column_if_missing(
         "execution_jobs", "idempotency_key",
@@ -832,7 +845,7 @@ async def _migrate_missing_columns(conn):
     )
     await _add_column_if_missing(
         "agent_tasks", "recovery_lease_expires_at",
-        "ALTER TABLE agent_tasks ADD COLUMN recovery_lease_expires_at DATETIME",
+        "ALTER TABLE agent_tasks ADD COLUMN recovery_lease_expires_at TIMESTAMP WITH TIME ZONE",
     )
     await _add_column_if_missing(
         "evidence_records", "operation_id",
@@ -876,7 +889,7 @@ async def _migrate_missing_columns(conn):
     )
     await _add_column_if_missing(
         "worker_trust_records", "promotion_expires_at",
-        "ALTER TABLE worker_trust_records ADD COLUMN promotion_expires_at DATETIME",
+        "ALTER TABLE worker_trust_records ADD COLUMN promotion_expires_at TIMESTAMP WITH TIME ZONE",
     )
     await _add_column_if_missing(
         "worker_trust_records", "approved_by",
@@ -884,7 +897,7 @@ async def _migrate_missing_columns(conn):
     )
     await _add_column_if_missing(
         "worker_trust_records", "approved_at",
-        "ALTER TABLE worker_trust_records ADD COLUMN approved_at DATETIME",
+        "ALTER TABLE worker_trust_records ADD COLUMN approved_at TIMESTAMP WITH TIME ZONE",
     )
 
 async def get_db():

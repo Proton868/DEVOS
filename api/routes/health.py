@@ -22,8 +22,7 @@ def _db_backend() -> str:
         return "unknown"
 
 
-@router.get("/health")
-@router.get("/api/health")
+@router.get("")
 async def health():
     from memory.store import MemoryStore
     from core.database import engine

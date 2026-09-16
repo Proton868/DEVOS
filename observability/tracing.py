@@ -121,7 +121,18 @@ def _persist_span(
 
 
 @contextmanager
-def start_span(name: str, attrs: Optional[dict] = None) -> Generator[TraceContext, None, None]:
+def start_span(
+    name: str,
+    attrs: Optional[dict] = None,
+    *,
+    kind: Optional[str] = None,
+    attributes: Optional[dict] = None,
+) -> Generator[TraceContext, None, None]:
+    merged_attrs = dict(attrs or {})
+    merged_attrs.update(attributes or {})
+    if kind is not None:
+        merged_attrs.setdefault("kind", kind)
+
     parent = get_current_trace()
     ctx = parent.child() if parent else new_trace()
     token = _trace_ctx.set(ctx)
@@ -139,7 +150,7 @@ def start_span(name: str, attrs: Optional[dict] = None) -> Generator[TraceContex
             parent_span_id=ctx.parent_span_id,
             name=name,
             status=status,
-            attrs=_sanitize_attrs(attrs),
+            attrs=_sanitize_attrs(merged_attrs),
             started_at=started,
             ended_at=time.time(),
         )
@@ -167,7 +178,7 @@ def get_trace_spans(trace_id: str, limit: int = 100) -> list[dict]:
                 "span_id": r.span_id,
                 "name": r.name,
                 "status": r.status,
-                "attrs": r.attrs,
+                "attributes": __import__("json").dumps(r.attrs or {}),
             }
             for r in rows
         ]
@@ -176,4 +187,8 @@ def get_trace_spans(trace_id: str, limit: int = 100) -> list[dict]:
 def tracing_health() -> dict:
     from core.sync_session import store_backend
 
-    return {"backend": store_backend(), "role": "observational"}
+    return {
+        "tracing_enabled": True,
+        "backend": store_backend(),
+        "role": "observational",
+    }

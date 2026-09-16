@@ -22,24 +22,48 @@ def init_outbox() -> None:
 
 def enqueue(
     event_type: str,
-    payload: dict,
+    payload: Optional[dict] = None,
     *,
+    aggregate_type: Optional[str] = None,
     aggregate_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
 ) -> str:
     from core.sync_session import get_sync_session
     from core.database import OutboxEvent, gen_id, utcnow_naive
+    from sqlalchemy import select
 
-    eid = gen_id()
-    now = utcnow_naive()
+    event_payload = dict(payload or {})
+
+    if aggregate_type is not None:
+        event_payload.setdefault("aggregate_type", aggregate_type)
+
+    if trace_id is not None:
+        event_payload.setdefault("trace_id", trace_id)
+
     with get_sync_session() as s:
+        if idempotency_key:
+            existing = s.execute(
+                select(OutboxEvent.id).where(
+                    OutboxEvent.idempotency_key == idempotency_key
+                )
+            ).scalar_one_or_none()
+
+            if existing:
+                return str(existing)
+
+        eid = gen_id()
+        now = utcnow_naive()
+
         s.add(
             OutboxEvent(
                 id=eid,
                 event_type=event_type,
                 aggregate_id=aggregate_id,
                 user_id=user_id,
-                payload=payload or {},
+                idempotency_key=idempotency_key,
+                payload=event_payload,
                 status="pending",
                 attempts=0,
                 available_at=now,
@@ -48,8 +72,8 @@ def enqueue(
             )
         )
         s.commit()
-    return eid
 
+    return eid
 
 def claim_pending(limit: int = 20) -> list[dict]:
     from core.sync_session import get_sync_session

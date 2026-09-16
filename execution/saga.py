@@ -26,6 +26,21 @@ STEP_STATUSES = (
     "COMPENSATED", "SKIPPED", "MANUAL_REMEDIATION",
 )
 
+# Saga compensation boundary phases.
+SAGA_PHASE_COMPENSABLE = "compensable"
+SAGA_PHASE_PIVOT = "pivot"
+SAGA_PHASE_POST_PIVOT = "post_pivot"
+
+# Irreversible/external side-effect actions.
+# Once one completes, automatic compensation must not cross the boundary.
+_PIVOT_ACTIONS = frozenset({
+    "github_push",
+    "deploy_vercel",
+    "deploy_cloudflare",
+    "deploy",
+    "publish",
+})
+
 
 
 def init_saga_db() -> None:
@@ -252,41 +267,6 @@ def create_saga(*, plan_id: Optional[str] = None, mission_id: Optional[str] = No
         trace_id=trace_id,
     )
     _save_saga_row(s)
-    return s
-
-
-def load_saga(saga_id: str) -> Optional[Saga]:
-    with _LOCK:
-        c = _conn()
-        try:
-            row = c.execute("SELECT * FROM sagas WHERE saga_id=?", (saga_id,)).fetchone()
-            if not row:
-                return None
-            steps = c.execute(
-                "SELECT * FROM saga_steps WHERE saga_id=? ORDER BY created_at ASC", (saga_id,)
-            ).fetchall()
-        finally:
-            c.close()
-    s = Saga(
-        saga_id=row["saga_id"], plan_id=row["plan_id"], mission_id=row["mission_id"],
-        status=row["status"], created_at=row["created_at"], updated_at=row["updated_at"],
-        started_at=row["started_at"], completed_at=row["completed_at"],
-        failure=row["failure"], trace_id=row["trace_id"],
-        pivot_reached=bool(row["pivot_reached"] if "pivot_reached" in row.keys() else 0),
-        pivot_step_id=row["pivot_step_id"] if "pivot_step_id" in row.keys() else None,
-        pivot_action=row["pivot_action"] if "pivot_action" in row.keys() else None,
-        pivot_at=row["pivot_at"] if "pivot_at" in row.keys() else None,
-    )
-    for r in steps:
-        s.steps.append(SagaStep(
-            step_id=r["step_id"], saga_id=r["saga_id"], node_id=r["node_id"] or "",
-            action=r["action"] or "", status=r["status"],
-            compensation_policy=json.loads(r["compensation_policy"] or "{}"),
-            evidence_id=r["evidence_id"], trace_id=r["trace_id"], span_id=r["span_id"],
-            created_at=r["created_at"], updated_at=r["updated_at"],
-            started_at=r["started_at"], completed_at=r["completed_at"],
-            error=r["error"], meta=json.loads(r["meta_json"] or "{}"),
-        ))
     return s
 
 

@@ -141,7 +141,7 @@ def _validate_startup_env():
                             "in .env before running in production, or leave it unset to auto-generate one.",
                             weak_reason)
     logger.info("[startup] AUTH_ENABLED=%s has_supabase=%s ALLOWED_ORIGINS=%s",
-                settings.AUTH_ENABLED, settings.has_supabase, settings.ALLOWED_ORIGINS)
+                settings.AUTH_ENABLED, settings.has_supabase(), settings.ALLOWED_ORIGINS)
 
 
 @asynccontextmanager
