@@ -50,3 +50,19 @@ def test_production_rejects_debug(monkeypatch):
     monkeypatch.setenv("DEBUG", "true")
     errors, _ = validate(production=True)
     assert any("DEBUG" in e for e in errors)
+
+
+def test_production_empty_admin_password_warns_not_errors(monkeypatch):
+    """Empty ADMIN_PASSWORD is allowed — first boot auto-generates."""
+    _base_prod_env(monkeypatch)
+    monkeypatch.setenv("ADMIN_PASSWORD", "")
+    errors, warnings = validate(production=True)
+    assert errors == [], errors
+    assert any("ADMIN_PASSWORD empty" in w for w in warnings)
+
+
+def test_production_rejects_weak_explicit_admin_password(monkeypatch):
+    _base_prod_env(monkeypatch)
+    monkeypatch.setenv("ADMIN_PASSWORD", "admin")
+    errors, _ = validate(production=True)
+    assert any("ADMIN_PASSWORD" in e for e in errors)

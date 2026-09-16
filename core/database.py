@@ -12,14 +12,24 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy import String, Text, Boolean, Integer, DateTime, JSON, ForeignKey
 from core.config import settings
 
+def _require_postgres_flag() -> bool:
+    """Prefer process env so pytest can isolate without reloading Settings."""
+    import os
+    v = os.environ.get("REQUIRE_POSTGRES")
+    if v is not None and str(v).strip() != "":
+        return str(v).strip().lower() in ("1", "true", "yes", "on")
+    return bool(getattr(settings, "REQUIRE_POSTGRES", True))
+
+
 def _resolve_database_url() -> str:
     """Fail closed: Supabase/Postgres is the only application SoT.
 
     SQLite is forbidden when REQUIRE_POSTGRES=true (default).
     Tests may set REQUIRE_POSTGRES=false with an explicit sqlite URL.
     """
-    url = (settings.DATABASE_URL or "").strip()
-    require_pg = bool(getattr(settings, "REQUIRE_POSTGRES", True))
+    import os
+    url = (os.environ.get("DATABASE_URL") or settings.DATABASE_URL or "").strip()
+    require_pg = _require_postgres_flag()
     low = url.lower()
     is_sqlite = low.startswith("sqlite") or ":memory:" in low
     is_pg = low.startswith("postgres") or low.startswith("postgresql")

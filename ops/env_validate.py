@@ -74,9 +74,24 @@ def validate(*, production: bool) -> Tuple[List[str], List[str]]:
     if provider != "omniroute":
         warnings.append("DEFAULT_PROVIDER=%s (canonical default is omniroute)" % provider)
 
+    # Empty ADMIN_PASSWORD is allowed in production: first boot auto-generates
+    # a strong password (see app lifespan). Weak *explicit* values are rejected.
     admin_pw = (os.environ.get("ADMIN_PASSWORD") or "").strip()
-    if production and admin_pw in ("", "admin", "password", "123456", "123456.."):
-        errors.append("ADMIN_PASSWORD must not be weak/default in production")
+    if production:
+        weak = {
+            "admin", "password", "123456", "123456..", "changeme",
+            "admin123", "password1", "letmein", "welcome", "devos", "devosadmin",
+        }
+        if admin_pw and (admin_pw.lower() in weak or len(admin_pw) < 8):
+            errors.append(
+                "ADMIN_PASSWORD must not be weak/default in production "
+                "(or leave empty for secure first-boot auto-generation)"
+            )
+        elif not admin_pw:
+            warnings.append(
+                "ADMIN_PASSWORD empty — first boot will auto-generate a strong "
+                "password and print it once; set an explicit strong password if preferred"
+            )
 
     enc = (os.environ.get("ENCRYPTION_KEY") or "").strip()
     if production and not enc:

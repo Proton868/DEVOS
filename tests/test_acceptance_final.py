@@ -1,4 +1,17 @@
 """Final backend acceptance: pivot durability, outbox, UCIP deny, Nuha intents, security."""
+from __future__ import annotations
+
+import os
+from pathlib import Path as _Path
+
+# Isolated SQLite durability (test-only). Production keeps REQUIRE_POSTGRES=true.
+os.environ["REQUIRE_POSTGRES"] = "false"
+os.environ["DATABASE_URL"] = os.environ.get(
+    "DEVOS_TEST_DATABASE_URL",
+    "sqlite+aiosqlite:///./data/test_acceptance_final.db",
+)
+_Path("data").mkdir(exist_ok=True)
+
 import asyncio
 import time
 from brain.delivery_intent import classify_delivery_intent, nuha_can_request

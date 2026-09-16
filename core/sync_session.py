@@ -55,8 +55,13 @@ def get_sync_engine() -> Engine:
     global _engine, _Session, _engine_url
     from core.config import settings
 
-    url = _sync_url(settings.DATABASE_URL or "")
-    require_pg = bool(getattr(settings, "REQUIRE_POSTGRES", True))
+    import os
+    url = _sync_url(os.environ.get("DATABASE_URL") or settings.DATABASE_URL or "")
+    v = os.environ.get("REQUIRE_POSTGRES")
+    if v is not None and str(v).strip() != "":
+        require_pg = str(v).strip().lower() in ("1", "true", "yes", "on")
+    else:
+        require_pg = bool(getattr(settings, "REQUIRE_POSTGRES", True))
     low = url.lower()
 
     if require_pg and (low.startswith("sqlite") or not low.startswith("postgres")):

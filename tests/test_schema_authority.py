@@ -52,20 +52,14 @@ def test_no_unconditional_create_all_in_production_modules():
     assert offenders == [], offenders
 
 
-def test_require_postgres_rejects_sqlite_url():
+def test_require_postgres_rejects_sqlite_url(monkeypatch):
     from ops.env_validate import validate
-    import os
 
-    old = dict(os.environ)
-    try:
-        os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./data/x.db"
-        os.environ["REQUIRE_POSTGRES"] = "true"
-        os.environ["JWT_SECRET"] = "x" * 40
-        os.environ["DEBUG"] = "false"
-        os.environ["ADMIN_PASSWORD"] = "strong-password-not-default-99"
-        os.environ["DEFAULT_PROVIDER"] = "omniroute"
-        errors, _ = validate(production=True)
-        assert any("SQLite" in e or "Postgres" in e for e in errors)
-    finally:
-        os.environ.clear()
-        os.environ.update(old)
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///./data/x.db")
+    monkeypatch.setenv("REQUIRE_POSTGRES", "true")
+    monkeypatch.setenv("JWT_SECRET", "x" * 40)
+    monkeypatch.setenv("DEBUG", "false")
+    monkeypatch.setenv("ADMIN_PASSWORD", "strong-password-not-default-99")
+    monkeypatch.setenv("DEFAULT_PROVIDER", "omniroute")
+    errors, _ = validate(production=True)
+    assert any("SQLite" in e or "Postgres" in e for e in errors)
