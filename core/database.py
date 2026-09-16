@@ -39,12 +39,43 @@ def _resolve_database_url() -> str:
 engine = create_async_engine(
     _resolve_database_url(),
     echo=bool(getattr(settings, "SQL_ECHO", False)),
-    pool_size=3,
+    pool_size=2,
     max_overflow=0,
     pool_timeout=30,
     pool_pre_ping=True,
+    pool_recycle=300,
 )
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+def dispose_async_engine() -> None:
+    """Dispose the process-wide async engine (tests / controlled shutdown)."""
+    global engine, AsyncSessionLocal
+    eng = engine
+    try:
+        # dispose is sync on AsyncEngine in SQLAlchemy 2
+        eng.dispose()
+    except Exception:
+        pass
+
+
+def replace_async_engine(url: str, **kwargs):
+    """Replace the process-wide async engine, disposing the previous pool first.
+
+    Tests that need an alternate DATABASE_URL must call this instead of
+    assigning ``database.engine = create_async_engine(...)`` without dispose.
+    """
+    global engine, AsyncSessionLocal
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+
+    old = engine
+    engine = create_async_engine(url, echo=kwargs.get("echo", False), **{k: v for k, v in kwargs.items() if k != "echo"})
+    AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        old.dispose()
+    except Exception:
+        pass
+    return engine
+
 
 def gen_id(): return str(uuid.uuid4())
 
