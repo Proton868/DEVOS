@@ -82,3 +82,8 @@ python scripts/live_production_proof.py
 ```
 
 Public `/api/health` MUST return JSON with `"service": "devos"`. Fix nginx upstream if PyRunner is served.
+
+## Operator-verified (Prime) — snapshot
+
+See **docs/CURRENT_STATUS.md** for the full table. Auth E2E and `/api/health` were operator-verified at commit `aa15b22`. Cluster 12 is **not** release-green. Isolation remains `network_only` / not suitable for untrusted code.
+

@@ -3,6 +3,7 @@
  * Real backend: /api/chat/send (SSE via api.streamChat) with persona_id.
  */
 import NuhaEdgeControls from "./NuhaEdgeControls";
+import NuhaTaskProgress from "./NuhaTaskProgress";
 import React, { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -31,6 +32,7 @@ export default function AICopilot({ floating = false }) {
     copilot, closeCopilot, nodes, editor, chatMode, toggleChatMode,
     activePersonaId, setActivePersona, openPersonaProfile,
     nuhaMode, setActivePlanId, setOrchestrationStatus, applyOrchestrationPlan,
+    orchestrationStatus,
   } = useOsStore();
   const [pos, setPos] = useState({ x: null, y: null });
   const nuhaHostRef = useRef(null);
@@ -41,6 +43,10 @@ export default function AICopilot({ floating = false }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [taskStartedAt, setTaskStartedAt] = useState(null);
+  const [seenStatuses, setSeenStatuses] = useState([]);
+  const [taskDetail, setTaskDetail] = useState(null);
+  const [taskHeadline, setTaskHeadline] = useState(null);
   const [personaMeta, setPersonaMeta] = useState({ name: "Nuha", id: "nuha" });
   const [error, setError] = useState(null);
   const bodyRef = useRef(null);
@@ -119,6 +125,10 @@ export default function AICopilot({ floating = false }) {
     const next = [...messages.filter((m) => m.role !== "system-note"), { role: "user", content: text }];
     setMessages([...next, { role: "assistant", content: "" }]);
     setStreaming(true);
+    setTaskStartedAt(Date.now());
+    setSeenStatuses([]);
+    setTaskDetail(null);
+    setTaskHeadline(text.length > 120 ? `${text.slice(0, 120)}…` : text);
     try {
       if (nuhaMode === "plan" || nuhaMode === "action") {
         setOrchestrationStatus(nuhaMode === "plan" ? "planning…" : "executing…");
@@ -199,8 +209,9 @@ export default function AICopilot({ floating = false }) {
           } catch (_) { /* store optional */ }
         }
         // Truthful lifecycle + artifact → IDE/Preview
-        if (evt.status && ["planning","plan_created","delegating","worker_completed","validation_started","validation_completed","artifact_created","agent_progress","failed"].includes(evt.status)) {
+        if (evt.status && ["planning","plan_created","delegating","worker_completed","validation_started","validation_completed","artifact_created","agent_progress","failed","cancelled"].includes(evt.status)) {
           try {
+            setSeenStatuses((prev) => (prev.includes(evt.status) ? prev : [...prev, evt.status]));
             if (evt.plan_id) {
               setActivePlanId(evt.plan_id);
               setOrchestrationStatus(evt.status);
@@ -218,6 +229,7 @@ export default function AICopilot({ floating = false }) {
               failed: evt.error ? `Failed: ${evt.error}` : "Mission failed.",
             };
             const note = phaseNotes[evt.status];
+            if (note) setTaskDetail(note);
             if (note && ["planning","plan_created","delegating","validation_started","validation_completed","artifact_created","agent_progress","failed"].includes(evt.status)) {
               setMessages((ms) => {
                 const last = ms[ms.length - 1];
@@ -357,7 +369,16 @@ export default function AICopilot({ floating = false }) {
           )
         )}
         {error && <div className="sp-copilot-error">{error}</div>}
-        {streaming && (
+        <NuhaTaskProgress
+          currentStatus={orchestrationStatus}
+          seenStatuses={seenStatuses}
+          active={streaming}
+          startedAt={taskStartedAt}
+          personaName={personaMeta.name}
+          headline={taskHeadline}
+          detail={taskDetail}
+        />
+        {streaming && seenStatuses.length === 0 && (
           <div className="sp-copilot-thinking" aria-live="polite">
             <span className="sp-think-glow" />
             {personaMeta.name} is thinking…

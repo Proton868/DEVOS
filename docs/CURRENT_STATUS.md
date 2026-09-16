@@ -143,3 +143,103 @@ MCP filesystem-style presets are not the preferred architecture when a native ca
 Local install scripts may still default to SQLite for convenience. That does **not** redefine production architecture. Production deployments should use Postgres/Supabase as SoT and verify health, auth, and mission gates on the live host.
 
 See also: [PRODUCTION_GATES.md](PRODUCTION_GATES.md), [NUHA_RUNTIME.md](NUHA_RUNTIME.md), [plans/GAP_ANALYSIS.md](../plans/GAP_ANALYSIS.md).
+
+
+---
+
+## Security / architecture cluster history (repo commits)
+
+| Cluster | Commit | Summary | Sandbox tests (reported) |
+|---------|--------|---------|---------------------------|
+| 3 | `81b44c1` | web_intel durable Postgres persistence | — |
+| 4 | `5f6f57c` | Canonical AuditLogger / ObservabilityStore / tracing | 5 passed |
+| 5 | `588ee2b` | Unified redaction; EvidenceChain scrub on save | 40 passed |
+| 6 | `c9243ee` | UCIP before side effects; ownership; capability clamp | 22 passed |
+| 7 | `d0680ee` | Resource lifecycle (tasks, subprocess, SSE, pool) | 5 passed |
+| 8 | `99fc866` | Evidence/graph/trace/memory ownership APIs | 4 passed |
+| 9 | `c554669` | Provider reliability; fail-closed exhaustion; OmniRoute | 22 passed |
+| 10 | `060e70f` | Workspace path / artifact extraction security | 24 passed |
+| 11 | `7d0ca87` | E2E governance-chain architecture tests | 36 passed |
+| 12 | _(no code commit)_ | Sandbox release-gate review only | 58 focused passed; **not** release-green |
+
+Cluster 11 explicitly left several **live** production gates **UNVERIFIED**.
+
+Cluster 12 is a **sandbox** release-gate review only. Full async provider suite was limited by the test environment. **Do not treat Cluster 12 as production-green.**
+
+---
+
+## Production verification on Prime (operator-verified)
+
+These facts were verified by the operator on the production VPS **prime**. They are **not** claims from the coding sandbox.
+
+### Auth (commit `aa15b22` / `aa15b2260414d68a87dd68bdb3bbd68e17500aba`)
+
+End-to-end auth path **PASS**:
+
+```text
+Supabase password authentication
+  → Supabase access token
+  → POST /api/auth/supabase/exchange
+  → DevOS local JWT
+  → authenticated GET /api/auth/me
+```
+
+Verified account (email only): `caraiagency@gmail.com`
+
+Audit fix: successful login events use canonical **`AuditEventType.AUTH`** (not a nonexistent `LOGIN_SUCCESS` enum member).
+
+### Health (`GET /api/health` after `aa15b22`)
+
+Operator-verified values:
+
+| Field | Value |
+|-------|--------|
+| service | devos |
+| status | ok |
+| db | ok |
+| db_backend | postgres |
+| memory | ok |
+| memory_backend | postgres |
+| default_provider | omniroute |
+| execution_store_backend | postgres |
+| outbox_backend | postgres |
+| saga_backend | postgres |
+| audit_backend | postgres |
+| governance | v1-frozen |
+| ucip | ok |
+| orchestration_store | ok |
+| mission_runtime.agent_runtime | import_ok |
+| mission_runtime.fake_runtime_env | false |
+
+Isolation (reported): `backend=unshare`, `strength=network_only`, `suitable_for_untrusted_code=false`.
+
+**Do not interpret this isolation result as production-safe untrusted-code execution.**
+
+### Tenant model alignment (repo)
+
+Migration restored in repository:
+
+- File: `supabase/migrations/20260916171447_tenant_model_alignment.sql`
+- Commit: `cbad97808c09b9c85be31f3cfe786a4d616a2df4`
+- Adds: `tier`, `is_active`, `metadata`
+
+Remote Supabase already had this migration version applied separately. The repo file was restored for **reproducibility**. Coding agents did **not** apply this migration remotely in the sandbox.
+
+---
+
+## Still requires live verification
+
+Unless the repository contains **new** operator evidence, the following remain **UNVERIFIED** on production:
+
+- Full production deploy/reload under load
+- Complete migration/RLS matrix on live DB
+- Full OmniRoute live multi-model behavior
+- Artifact + provenance end-to-end under real missions
+- Audit/trace persistence under real missions
+- Resource lifecycle under sustained workload
+- Deployment pipeline execution
+- Cross-user IDOR against the live environment
+- Any gate not listed above as operator-verified
+
+Language rule: **sandbox test pass ≠ production release green**.
+
