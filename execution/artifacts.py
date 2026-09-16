@@ -157,7 +157,18 @@ def _safe_member_name(name: str) -> str:
     return "/".join(parts)
 
 
+def _safe_dest_prefix(dest_prefix: str) -> str:
+    p = (dest_prefix or "").replace("\\", "/").strip("/")
+    if not p:
+        return ""
+    parts = [x for x in p.split("/") if x and x != "."]
+    if any(x == ".." for x in parts):
+        raise ArtifactError("ARCHIVE_UNSAFE", f"dest_prefix traversal refused: {dest_prefix!r}")
+    return "/".join(parts)
+
+
 def extract_zip(fs: FileService, data: bytes, dest_prefix: str = "") -> list[ArtifactMeta]:
+    dest_prefix = _safe_dest_prefix(dest_prefix)
     if len(data) > MAX_ARCHIVE_SIZE:
         raise ArtifactError("ARCHIVE_UNSAFE", f"Archive exceeds {MAX_ARCHIVE_SIZE} bytes")
     out: list[ArtifactMeta] = []
@@ -192,6 +203,7 @@ def extract_zip(fs: FileService, data: bytes, dest_prefix: str = "") -> list[Art
 
 
 def extract_tar(fs: FileService, data: bytes, dest_prefix: str = "", mode: str = "r:*") -> list[ArtifactMeta]:
+    dest_prefix = _safe_dest_prefix(dest_prefix)
     if len(data) > MAX_ARCHIVE_SIZE:
         raise ArtifactError("ARCHIVE_UNSAFE", f"Archive exceeds {MAX_ARCHIVE_SIZE} bytes")
     out: list[ArtifactMeta] = []

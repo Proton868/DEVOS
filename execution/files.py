@@ -27,9 +27,46 @@ class PathViolation(Exception):
     """Raised when a requested path would escape the project root."""
 
 
+def _safe_scope_segment(value: str, *, label: str) -> str:
+    """Sanitize user_id / project_id path segments.
+
+    Never trust client-supplied identifiers as path components. Reject empty,
+    traversal, separators, and null bytes so PROJECTS_DIR / user / project
+    cannot escape the projects root via project_id="../other_user".
+    """
+    v = (value or "").strip()
+    if not v:
+        raise PathViolation(f"Empty {label}")
+    if "\x00" in v or "\n" in v or "\r" in v:
+        raise PathViolation(f"Invalid {label}")
+    if "/" in v or "\\" in v:
+        raise PathViolation(f"Invalid {label}: path separators refused")
+    if v in (".", "..") or ".." in v:
+        raise PathViolation(f"Invalid {label}: traversal refused")
+    if v.startswith("/") or (len(v) > 1 and v[1] == ":"):
+        raise PathViolation(f"Invalid {label}")
+    return v
+
+
+def _projects_base() -> Path:
+    return PROJECTS_DIR.resolve()
+
+
 class FileService:
     def __init__(self, user_id: str, project_id: str):
-        self.root = (PROJECTS_DIR / user_id / project_id).resolve()
+        uid = _safe_scope_segment(user_id, label="user_id")
+        pid = _safe_scope_segment(project_id, label="project_id")
+        base = _projects_base()
+        root = (base / uid / pid).resolve()
+        try:
+            root.relative_to(base)
+        except ValueError as e:
+            raise PathViolation(
+                f"Project root escapes projects directory: user_id={uid!r} project_id={pid!r}"
+            ) from e
+        self.user_id = uid
+        self.project_id = pid
+        self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _resolve(self, rel_path: str) -> Path:
@@ -39,7 +76,6 @@ class FileService:
         we verify the final target still lives under the project root.
         """
         raw = (rel_path or "").replace("\\", "/")
-        # Reject absolute and null-byte paths BEFORE stripping leading slashes
         if "\x00" in raw:
             raise PathViolation(f"Invalid path: {raw!r}")
         if raw.startswith("/") or (len(raw) > 1 and raw[1] == ":"):
@@ -47,12 +83,27 @@ class FileService:
         rel_path = raw.lstrip("/")
         if not rel_path:
             return self.root
-        candidate = (self.root / rel_path).resolve()
+        parts = [p for p in rel_path.split("/") if p not in ("", ".")]
+        if any(p == ".." for p in parts):
+            raise PathViolation(f"Path traversal refused: {rel_path!r}")
+        candidate = self.root.joinpath(*parts).resolve()
         try:
             candidate.relative_to(self.root)
         except ValueError:
             raise PathViolation(f"Path escapes project root: {rel_path}")
         return candidate
+
+    @staticmethod
+    def _reject_secret_basename(rel_path: str) -> None:
+        """Refuse writing well-known credential filenames via FileService."""
+        try:
+            from execution.artifacts import is_secret_path
+            if is_secret_path(rel_path or ""):
+                raise PathViolation(f"Refused write to secret path: {rel_path!r}")
+        except ImportError:
+            name = (rel_path or "").replace("\\", "/").split("/")[-1].lower()
+            if name in {".env", "id_rsa", "id_ed25519"} or name.startswith(".env"):
+                raise PathViolation(f"Refused write to secret path: {rel_path!r}")
 
     def tree(self, max_depth: int | None = None) -> list[dict]:
         """Hierarchical tree under the project root.
@@ -158,6 +209,7 @@ class FileService:
         if len(encoded) > MAX_READ_BYTES:
             raise ValueError(f"Content too large to write inline ({len(encoded)} bytes, "
                               f"max {MAX_READ_BYTES})")
+        self._reject_secret_basename(rel_path)
         p = self._resolve(rel_path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(encoded)
@@ -167,6 +219,7 @@ class FileService:
     def write_bytes(self, rel_path: str, data: bytes) -> dict:
         if len(data) > MAX_READ_BYTES:
             raise ValueError(f"Content too large ({len(data)} bytes)")
+        self._reject_secret_basename(rel_path)
         p = self._resolve(rel_path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(data)
