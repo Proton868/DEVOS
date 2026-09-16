@@ -1,4 +1,23 @@
 > **Product vision (identity & invariants):** [`plans/DEVOS_PRODUCT_VISION.md`](DEVOS_PRODUCT_VISION.md) — use before classifying gaps or proposing features.
+>
+> **Audit overlay (documentation alignment):** Historical tables below may still show checkmarks that reflect *code presence*. Those marks are **not** automatic proof of live production success. Prefer the status vocabulary in the product vision. Where the Architecture Conflict + Drift Audit (2026-09) disagrees with a checkmark, treat the audit posture as more current until re-proven.
+
+### Cross-cutting posture (post-audit)
+
+| Area | Posture |
+|------|---------|
+| Unified BUILD→RUN→ORCHESTRATE→INSPECT→DEPLOY | PARTIALLY IMPLEMENTED |
+| Nuha → mission → UCIP → AgentRuntime | PARTIALLY IMPLEMENTED / TESTED BUT NOT LIVE-PROVEN |
+| Website specialist execution (live) | TESTED BUT NOT LIVE-PROVEN; scaffold = emergency-only |
+| Production deployment lifecycle | PARTIALLY IMPLEMENTED / largely NOT LIVE-PROVEN |
+| Saga / outbox / idempotency | PARTIALLY IMPLEMENTED / TESTED BUT NOT LIVE-PROVEN on Postgres |
+| Supabase/Postgres production proof | BLOCKED without real SoT host verification |
+| Cancellation / HITL durability | PARTIALLY IMPLEMENTED / TESTED BUT NOT LIVE-PROVEN |
+| OmniRoute end-to-end | PARTIALLY IMPLEMENTED |
+| Specialist-agent live execution (fleet) | PARTIALLY IMPLEMENTED |
+| Continuous learning promote lifecycle | FUTURE / RESEARCH |
+
+---
 
 # Agency OS — Gap Analysis: Current State vs. Master Architecture
 

@@ -4,7 +4,7 @@
 
 Self-contained AI operating system for human-in-the-loop and autonomous work.
 
-Goals go through a multi-provider **Brain**, **Workers**, **sandboxed execution**, and **UCIP governance** (identity, capabilities, evidence, human-approved autonomy). Defaults use **SQLite** and a **prebuilt web UI** — no Node, Docker, Redis, or cloud DB required to start.
+Goals go through a multi-provider **Brain**, **Workers**, **sandboxed execution**, and **UCIP governance** (identity, capabilities, evidence, human-approved autonomy) in a **unified development workspace**. **Postgres/Supabase is the intended production source of truth.** Local/dev install may use SQLite for constrained scenarios only. A prebuilt web UI is included — Node is not required at runtime after install.
 
 ---
 
@@ -40,7 +40,9 @@ After installation, Node/npm are **not** required to run `./devos start`.
 | **Python** | **3.11+** (3.12 / 3.13 recommended) |
 | **Node** | Not required at runtime (install.sh provisions Node 22 only to build the UI) |
 | **Docker** | Optional |
-| **Redis / Postgres** | Optional (multi-node / enterprise) |
+| **Postgres / Supabase** | **Production SoT** (required for production-grade deployments) |
+| **SQLite** | Limited local/dev only — not production architecture |
+| **Redis** | Optional (multi-node / enterprise) |
 
 LLM: **OmniRoute** gateway (default, `http://127.0.0.1:3000`) routes to configured upstream models. Ollama is optional.
 
@@ -48,23 +50,20 @@ LLM: **OmniRoute** gateway (default, `http://127.0.0.1:3000`) routes to configur
 
 ## What you get
 
-### Governance (v1 — frozen)
+### Governance and reliability (architecture in code)
 
 ```
 Identity → UCI/UCIP capability → PathClass → Isolation
-         → ExecutionJob (durable) → Evidence → Learning / trust
+         → ExecutionJob (durable) → Evidence → Learning signals (non-authoritative)
 ```
 
-- Workers earn autonomy via competency; **humans approve** promotions  
-- Dangerous caps stay human-gated (`shell`, secrets, financial, etc.)  
-- Fail-closed trust load and durable job creation  
-
-### Reliability (v1 — frozen)
-
-- Idempotent jobs, lease recovery, secret scrubbing  
-- External side effects: **SUCCEEDED / FAILED / UNKNOWN** (no blind retry on UNKNOWN)  
+- UCIP capability evaluation and human-gated high-risk operations are **IMPLEMENTED** in code  
+- Workers/personas and earned-autonomy hooks exist; **promotion is not unconstrained self-authorization**  
+- Job durability, leases, and side-effect status classes are **PARTIALLY IMPLEMENTED** / **TESTED BUT NOT LIVE-PROVEN** on many deployments  
 - Chaos pure-logic drills: `python scripts/run_chaos_drills.py`  
 - Staging matrix: [docs/STAGING_DRILLS.md](docs/STAGING_DRILLS.md)  
+- Live production proof is tracked in [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) and [docs/PRODUCTION_GATES.md](docs/PRODUCTION_GATES.md) — unit tests alone are not production success  
+
 
 ### Product surfaces
 

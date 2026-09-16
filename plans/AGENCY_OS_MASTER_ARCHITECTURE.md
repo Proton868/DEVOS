@@ -23,6 +23,14 @@ That document is the permanent source of truth for:
 
 This file retains the **organ map**, **UCIP identity extension notes**, **LLM router notes**, **runtime profiles**, and **phased roadmap** relative to the multi-repo Agency OS composition. When this file and the product vision appear to conflict on product identity, **prefer `DEVOS_PRODUCT_VISION.md`** and update this file to match — do not silently reinterpret the product as “only an AI app builder” or “only a chatbot.”
 
+### Human IDE path vs agent mission path
+
+Human IDE operations (files, terminal, IDE assist) are legitimate and **not** agent missions.  
+Agent missions follow Nuha → plan → specialist → capability → UCIP → runtime → evidence → verification.  
+Keep both **attributable and distinguishable**. See `DEVOS_PRODUCT_VISION.md` §15.
+
+Website scaffold fallback is **DEPRECATED / EMERGENCY-ONLY** and is not specialist success.
+
 ### Honest status vocabulary (apply everywhere)
 
 | Label | Meaning |
