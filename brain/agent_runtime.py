@@ -544,7 +544,14 @@ class AgentRuntime:
                 })
 
                 try:
-                    text = await brain.stream_chat(messages)
+                    try:
+                        text = await brain.stream_chat(messages)
+                    except Exception as _prov_exc:
+                        from brain.llm import ProviderExhaustedError
+                        if isinstance(_prov_exc, ProviderExhaustedError) or "All providers failed" in str(_prov_exc):
+                            text = f"All providers failed. {_prov_exc}"
+                        else:
+                            raise
                 except Exception as e:
                     task.status = AgentTaskStatus.FAILED
                     task.error = str(e)
@@ -560,7 +567,7 @@ class AgentRuntime:
                     yield _emit(task, "agent.error", {"message": task.error})
                     return
 
-                if str(text).startswith("All providers failed"):
+                if str(text).startswith("All providers failed") or str(text).startswith("ProviderExhausted"):
                     task.status = AgentTaskStatus.FAILED
                     task.error = text
                     task.completed_at = datetime.now(timezone.utc).isoformat()

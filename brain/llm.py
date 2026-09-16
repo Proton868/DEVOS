@@ -14,6 +14,35 @@ from core.config import settings
 logger = logging.getLogger("devos.brain")
 
 
+class ProviderExhaustedError(RuntimeError):
+    """All configured providers failed. Not a successful model response.
+
+    Callers must treat this as execution failure — never as assistant content
+    that grants capabilities or completes a mission.
+    """
+
+    def __init__(self, message: str, *, last_error: str | None = None, providers_tried: list | None = None):
+        super().__init__(message)
+        self.last_error = last_error
+        self.providers_tried = list(providers_tried or [])
+
+
+def _redact_provider_error_text(text: str, *, max_len: int = 200) -> str:
+    """Strip bearer tokens / key-like substrings from upstream error bodies."""
+    if not text:
+        return ""
+    import re
+    out = text
+    out = re.sub(r"(?i)(bearer\s+)[a-z0-9._\-]+", r"\1***", out)
+    out = re.sub(r"(?i)(api[_-]?key[\"\s:=]+)[a-z0-9._\-]{8,}", r"\1***", out)
+    out = re.sub(r"sk-[a-zA-Z0-9]{10,}", "sk-***", out)
+    return out[:max_len]
+
+
+# Max bounded retries for pure LLM HTTP calls (no tool side effects).
+_LLM_HTTP_MAX_ATTEMPTS = 2
+
+
 # Map provider id -> settings attribute for API key / host
 _PROVIDER_KEY_ATTR = {
     "omniroute": "OMNIROUTE_API_KEY",
@@ -407,7 +436,11 @@ class BrainLLM:
             code = e.response.status_code if e.response is not None else "?"
             body = ""
             try:
-                body = (e.response.text or "")[:200]
+                body = _redact_provider_error_text(
+                    getattr(e, "_devos_redacted_body", None)
+                    or (e.response.text if e.response is not None else "")
+                    or ""
+                )
             except Exception:
                 pass
             if code in (400, 404):
@@ -435,24 +468,57 @@ class BrainLLM:
             headers["Authorization"] = f"Bearer {api_key}"
         if extra_headers:
             headers.update(extra_headers)
-        try:
-            r = await self._http.post(
-                f"{base_url.rstrip('/')}/chat/completions",
-                json={"model": model, "messages": messages, "temperature": 0.1},
-                headers=headers,
-                timeout=timeout,
-            )
-            r.raise_for_status()
-        except httpx.HTTPStatusError:
-            raise
-        try:
-            data = r.json()
-        except Exception as e:
-            raise RuntimeError(f"Malformed provider response (non-JSON): {e}") from e
-        try:
-            return data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as e:
-            raise RuntimeError(f"Malformed provider response (missing choices): {e}") from e
+        last_exc: Exception | None = None
+        attempts = max(1, int(_LLM_HTTP_MAX_ATTEMPTS))
+        for attempt in range(1, attempts + 1):
+            try:
+                r = await self._http.post(
+                    f"{base_url.rstrip('/')}/chat/completions",
+                    json={"model": model, "messages": messages, "temperature": 0.1},
+                    headers=headers,
+                    timeout=timeout,
+                )
+                r.raise_for_status()
+                try:
+                    data = r.json()
+                except Exception as e:
+                    raise RuntimeError(f"Malformed provider response (non-JSON): {e}") from e
+                try:
+                    content = data["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError) as e:
+                    raise RuntimeError(f"Malformed provider response (missing choices): {e}") from e
+                if content is None or (isinstance(content, str) and not content.strip()):
+                    raise RuntimeError("Empty provider response (no message content)")
+                return content if isinstance(content, str) else str(content)
+            except httpx.HTTPStatusError as e:
+                # Do not retry auth/client errors
+                code = e.response.status_code if e.response is not None else 0
+                body = ""
+                try:
+                    body = _redact_provider_error_text(e.response.text or "")
+                except Exception:
+                    pass
+                if code in (401, 403, 400, 404, 422):
+                    e._devos_redacted_body = body  # type: ignore[attr-defined]
+                    raise
+                last_exc = e
+                if attempt >= attempts:
+                    e._devos_redacted_body = body  # type: ignore[attr-defined]
+                    raise
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                last_exc = e
+                if attempt >= attempts:
+                    raise
+                logger.warning("LLM HTTP attempt %s/%s failed (%s); retrying", attempt, attempts, type(e).__name__)
+            except RuntimeError:
+                raise
+            except Exception as e:
+                last_exc = e
+                if attempt >= attempts:
+                    raise
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("LLM HTTP call failed with no response")
 
     async def _gemini(self, messages: list[dict]) -> str:
         if not self._key_for("gemini"):
@@ -496,27 +562,37 @@ class BrainLLM:
             return json.loads(raw[start:end])
         except (ValueError, json.JSONDecodeError):
             pass
-        logger.warning(f"Brain response not parseable, treating as answer: {raw[:200]}")
-        return {"thought": "Could not parse structured response",
-                "action": "mark_complete", "action_input": raw,
-                "description": "Unstructured response treated as final answer"}
+        logger.warning("Brain response not parseable (refusing mark_complete): %s", raw[:200])
+        # Never grant completion/capability from an unparseable model blob.
+        return None
 
-    async def stream_chat(self, messages: list[dict]) -> str:
-        providers = [self.provider] + [
-            p for p in self._all_providers() if p != self.provider
-        ]
+    async def stream_chat(self, messages: list[dict], *, allow_fallback: bool = True) -> str:
+        """Call the configured provider (and optionally fall back).
+
+        On total failure raises ProviderExhaustedError — never returns a
+        synthetic "All providers failed" assistant message that callers might
+        treat as successful model content.
+        """
+        primary = self.provider
+        providers = [primary]
+        if allow_fallback:
+            providers = [primary] + [p for p in self._all_providers() if p != primary]
         last_error = None
+        tried: list[str] = []
         for provider in providers:
+            tried.append(provider)
             try:
                 return await self._call(provider, messages)
             except Exception as e:
-                last_error = f"{provider}: {e}"
+                # Never log raw secrets; exception messages are already redacted upstream where possible
+                last_error = f"{provider}: {type(e).__name__}: {e}"
                 self.last_error = last_error
-                logger.warning(f"Chat provider {provider} failed: {e}")
+                logger.warning("Chat provider %s failed: %s", provider, type(e).__name__)
         detail = last_error or "no providers attempted"
-        return (
-            "All providers failed. Check your API keys, endpoints, and Ollama connection. "
-            f"Last error: {detail}"
+        raise ProviderExhaustedError(
+            f"All providers failed. Last error: {detail}",
+            last_error=detail,
+            providers_tried=tried,
         )
 
     async def list_models(self, provider: Optional[str] = None) -> list[dict]:
