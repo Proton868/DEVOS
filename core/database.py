@@ -509,6 +509,31 @@ class WebCrawlRecord(Base):
     updated_at: Mapped[Optional[float]] = mapped_column(nullable=True)
 
 
+class WebCrawlPage(Base):
+    """Durable page records for web intelligence crawls."""
+    __tablename__ = "web_crawl_pages"
+    page_id: Mapped[str] = mapped_column(String, primary_key=True)
+    crawl_id: Mapped[str] = mapped_column(String, index=True)
+    url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    normalized_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True, index=True)
+    depth: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    parent_page_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+    updated_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+
+
+class WebCrawlEvent(Base):
+    """Durable crawl lifecycle events."""
+    __tablename__ = "web_crawl_events"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    crawl_id: Mapped[str] = mapped_column(String, index=True)
+    event_type: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[Optional[float]] = mapped_column(nullable=True)
+
+
 class CaraiVoiceSession(Base):
     __tablename__ = "carai_voice_sessions"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)

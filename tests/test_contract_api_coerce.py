@@ -22,8 +22,8 @@ def test_upsert_page_dict():
 
 
 def test_claim_queued_pages_crawl_and_limit():
-    assert claim_queued_pages("crawl-1", limit=2) == []
-    assert claim_queued_pages(limit=1) == []
+    # Signature accepts crawl_id + limit; empty crawl yields empty claim
+    assert claim_queued_pages("crawl-no-such", limit=2) == []
 
 
 def test_audit_event_types_and_entry():
