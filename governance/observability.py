@@ -45,14 +45,31 @@ def _new_id() -> str:
 
 
 def _redact(text: Optional[str], limit: int = 500) -> str:
+    """Scrub secret-like strings before durable observability write."""
     if not text:
         return ""
-    s = str(text)
-    lower = s.lower()
-    for marker in ("api_key", "authorization", "bearer ", "password=", "secret=", "token="):
-        if marker in lower:
-            return "[REDACTED]"
+    try:
+        from governance.reliability import scrub_secrets
+        cleaned = scrub_secrets(str(text))
+        s = cleaned if isinstance(cleaned, str) else str(cleaned)
+    except Exception:
+        s = str(text)
+        lower = s.lower()
+        for marker in ("api_key", "authorization", "bearer ", "password=", "secret=", "token="):
+            if marker in lower:
+                return "[REDACTED]"
     return s[:limit]
+
+
+def _scrub_meta(meta: Optional[dict]) -> dict:
+    if not meta:
+        return {}
+    try:
+        from governance.reliability import scrub_secrets
+        out = scrub_secrets(dict(meta))
+        return out if isinstance(out, dict) else {}
+    except Exception:
+        return {k: v for k, v in meta.items() if k.lower() not in ("password", "token", "secret", "api_key")}
 
 
 class ObservabilityStore:
@@ -121,7 +138,7 @@ class ObservabilityStore:
             "user_id": user_id or "",
             "status_code": status_code,
             "created_at": time.time(),
-            "meta": {k: v for k, v in meta.items() if k not in ("password", "token", "secret")},
+            "meta": _scrub_meta(meta),
         }
         try:
             from core.sync_session import get_sync_session

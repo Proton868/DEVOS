@@ -182,13 +182,25 @@ class EvidenceChain:
         return [n for n in self.nodes.values() if not n.predecessor_ids]
 
     def save(self):
-        """Persist the entire chain to disk."""
+        """Persist the entire chain to disk (secrets scrubbed before write)."""
+        try:
+            from governance.reliability import scrub_secrets
+            identity = scrub_secrets(dict(self.identity_context or {}))
+            nodes = {
+                nid: scrub_secrets(node.to_dict())
+                for nid, node in self.nodes.items()
+            }
+            goal = scrub_secrets(self.goal) if isinstance(self.goal, str) else self.goal
+        except Exception:
+            identity = dict(self.identity_context or {})
+            nodes = {nid: node.to_dict() for nid, node in self.nodes.items()}
+            goal = self.goal
         data = {
             "chain_id": self.chain_id,
-            "goal": self.goal,
-            "identity_context": self.identity_context,
+            "goal": goal,
+            "identity_context": identity,
             "root_id": self._root_id,
-            "nodes": {nid: node.to_dict() for nid, node in self.nodes.items()},
+            "nodes": nodes,
         }
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, default=str, indent=2))

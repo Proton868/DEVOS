@@ -70,16 +70,30 @@ def from_headers(headers: dict) -> Optional[TraceContext]:
 
 
 def _sanitize_attrs(attrs: Optional[dict]) -> dict:
-    out = {}
-    for k, v in (attrs or {}).items():
-        ks = str(k).lower()
-        if any(x in ks for x in ("token", "secret", "password", "authorization", "api_key", "jwt")):
-            continue
-        s = str(v)
-        if _SECRET_RE.search(s):
-            s = "[REDACTED]"
-        out[str(k)] = s[:500]
-    return out
+    """Redact secret-like keys/values before span persistence (observational)."""
+    try:
+        from governance.reliability import scrub_secrets
+        cleaned = scrub_secrets(dict(attrs or {}))
+        if not isinstance(cleaned, dict):
+            return {}
+        out = {}
+        for k, v in cleaned.items():
+            if isinstance(v, (dict, list)):
+                out[str(k)] = v
+            else:
+                out[str(k)] = str(v)[:500]
+        return out
+    except Exception:
+        out = {}
+        for k, v in (attrs or {}).items():
+            ks = str(k).lower()
+            if any(x in ks for x in ("token", "secret", "password", "authorization", "api_key", "jwt")):
+                continue
+            s = str(v)
+            if _SECRET_RE.search(s):
+                s = "[REDACTED]"
+            out[str(k)] = s[:500]
+        return out
 
 
 def init_tracing_db() -> None:

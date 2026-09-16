@@ -8,11 +8,17 @@ _URL_CREDS = re.compile(
     r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s:]+):([^@/\s]+)@",
 )
 
+# KEY=value including OPENROUTER_API_KEY / JWT_SECRET style names
 _KEY_ASSIGN = re.compile(
-    r"(?i)\b(password|passwd|secret|api[_-]?key|token|authorization|jwt_secret|encryption_key|database_url|bearer)\b(\s*[=:]\s*)([^\s,;]+)",
+    r"(?i)\b([A-Z0-9_]*(?:password|passwd|secret|api[_-]?key|token|authorization|jwt[_-]?secret|encryption[_-]?key|database_url|bearer)[A-Z0-9_]*)(\s*[=:]\s*)([^\s,;]+)",
 )
 
-_BEARER = re.compile(r"(?i)\b(bearer)\s+([A-Za-z0-9._\-]+)")
+_BEARER = re.compile(r"(?i)\b(bearer)\s+([A-Za-z0-9._\-+/=]+)")
+
+# Raw secret material (sk-, ghp_, JWT segments)
+_SECRET_MATERIAL = re.compile(
+    r"(?i)\b(sk-[A-Za-z0-9_\-]{8,}|ghp_[A-Za-z0-9]{20,}|eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+)"
+)
 
 _SENSITIVE_ENV = {
     "PASSWORD", "SECRET", "TOKEN", "API_KEY", "JWT", "ENCRYPTION", "DATABASE_URL", "SUPABASE_KEY",
@@ -26,6 +32,7 @@ def redact_text(value: str) -> str:
     s = _URL_CREDS.sub(r"\1***:***@", s)
     s = _KEY_ASSIGN.sub(r"\1\2***", s)
     s = _BEARER.sub(r"\1 ***", s)
+    s = _SECRET_MATERIAL.sub("***", s)
     return s
 
 

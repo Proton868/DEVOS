@@ -107,6 +107,17 @@ class AuditLogger:
         det = dict(details or {})
         if trace_id:
             det.setdefault("trace_id", trace_id)
+        try:
+            from governance.reliability import scrub_secrets
+            det = scrub_secrets(det) if isinstance(det, dict) else det
+            if evidence:
+                evidence = scrub_secrets(evidence) if not isinstance(evidence, str) else (
+                    scrub_secrets({"_": evidence})["_"] if evidence else evidence
+                )
+        except Exception:
+            pass  # never block audit write due to redaction failure; prefer empty details
+            if not isinstance(det, dict):
+                det = {}
         eid = gen_id()
         with get_sync_session() as s:
             s.add(
@@ -172,6 +183,9 @@ class AuditLogger:
                         "tenant_id": r.tenant_id,
                         "action": r.action,
                         "resource": r.resource,
+                        "resource_id": r.resource_id,
+                        "mission_id": r.mission_id,
+                        "task_id": r.task_id,
                         "result": r.result,
                         "details": det,
                         "trace_id": det.get("trace_id", ""),
