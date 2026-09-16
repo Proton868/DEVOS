@@ -173,9 +173,26 @@ class ApplicationRuntime:
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                await proc.wait()
+            except Exception:
+                pass
             return -1, "", f"timeout after {timeout}s"
+        except Exception:
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await proc.wait()
+                except Exception:
+                    pass
+            raise
         out = stdout.decode(errors="replace")
         err = stderr.decode(errors="replace")
         self._log_buf.append(out)

@@ -51,5 +51,11 @@ async def subscribe(runtime_id: str) -> AsyncIterator[dict]:
             except asyncio.TimeoutError:
                 yield {"ts": time.time(), "stream": "system", "line": "", "keepalive": True}
     finally:
-        if q in _SUBS[runtime_id]:
-            _SUBS[runtime_id].remove(q)
+        # Ownership: this generator owns the subscriber queue entry.
+        try:
+            if q in _SUBS.get(runtime_id, []):
+                _SUBS[runtime_id].remove(q)
+            if runtime_id in _SUBS and not _SUBS[runtime_id]:
+                del _SUBS[runtime_id]
+        except Exception:
+            pass

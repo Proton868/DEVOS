@@ -173,6 +173,15 @@ class AgentTask:
 # In-process task store (hot path). Durable mirror is AgentTaskRecord via agent_task_store.
 # ExecutionJob remains the durable work unit for scripts/workflows — do not conflate.
 _TASKS: dict[str, AgentTask] = {}
+_MAX_LIVE_TASKS = 256
+_TERMINAL_TASK_STATUSES = frozenset({
+    AgentTaskStatus.SUCCEEDED,
+    AgentTaskStatus.FAILED,
+    AgentTaskStatus.CANCELLED,
+    AgentTaskStatus.BLOCKED,
+})
+_MIRROR_TASKS: set = set()  # background durable-event mirrors (weak lifecycle)
+
 _TASK_EVENTS: dict[str, list[dict]] = {}
 _CANCEL_FLAGS: dict[str, asyncio.Event] = {}
 _EVENT_SEQ: dict[str, int] = {}
@@ -193,6 +202,47 @@ def list_tasks_for_user(user_id: str, limit: int = 20) -> list[dict]:
     items = [t for t in _TASKS.values() if t.user_id == user_id]
     items.sort(key=lambda t: t.started_at or "", reverse=True)
     return [t.to_dict() for t in items[:limit]]
+
+
+
+def _prune_task_registry() -> None:
+    """Drop terminal in-memory tasks when the live registry grows too large.
+
+    Durable AgentTask records remain authoritative; this only bounds process memory.
+    Ownership: AgentRuntime / this module owns _TASKS.
+    """
+    if len(_TASKS) <= _MAX_LIVE_TASKS:
+        return
+    terminal = [
+        tid for tid, task in _TASKS.items()
+        if getattr(task, "status", None) in _TERMINAL_TASK_STATUSES
+    ]
+    # Prefer pruning oldest terminal first
+    terminal.sort(key=lambda tid: getattr(_TASKS[tid], "completed_at", None) or "")
+    overflow = len(_TASKS) - _MAX_LIVE_TASKS
+    for tid in terminal[: max(0, overflow + 32)]:
+        _TASKS.pop(tid, None)
+        _CANCEL_FLAGS.pop(tid, None)
+
+
+def _track_mirror_task(coro) -> None:
+    """Schedule a fire-and-forget mirror without unbounded task growth.
+
+    Observability/persistence failures must never block the caller.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    # Drop finished mirrors
+    done = {t for t in _MIRROR_TASKS if t.done()}
+    _MIRROR_TASKS.difference_update(done)
+    if len(_MIRROR_TASKS) > 128:
+        # refuse to schedule more mirrors under pressure — durable path is best-effort
+        return
+    task = loop.create_task(coro)
+    _MIRROR_TASKS.add(task)
+    task.add_done_callback(lambda fut: _MIRROR_TASKS.discard(fut))
 
 
 def request_cancel(task_id: str) -> bool:
@@ -268,7 +318,7 @@ def _emit(task: AgentTask, event_type: str, data: Optional[dict] = None) -> dict
                 evt["durable"] = False
                 logger.debug("event mirror failed", exc_info=True)
 
-        loop.create_task(_mirror())
+        _track_mirror_task(_mirror())
     except RuntimeError:
         pass
     return evt
@@ -406,6 +456,7 @@ class AgentRuntime:
             started_at=datetime.now(timezone.utc).isoformat(),
         )
         _TASKS[task.id] = task
+        _prune_task_registry()
         _CANCEL_FLAGS[task.id] = asyncio.Event()
         try:
             from brain.agent_task_store import persist_task
@@ -1385,6 +1436,11 @@ class AgentRuntime:
         }
 
     async def _subprocess(self, cmd: str, timeout: int) -> dict:
+        """Run shell command under project root with cancel/timeout kill ownership.
+
+        Lifecycle owner: this method owns the child process until wait()/kill completes.
+        Observability must never be required for cleanup.
+        """
         from execution.files import PROJECTS_DIR
         root = (PROJECTS_DIR / self.user_id / self.project_id).resolve()
         root.mkdir(parents=True, exist_ok=True)
@@ -1394,8 +1450,8 @@ class AgentRuntime:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        # Track for cancellation; poll cancel flag while waiting
         task = getattr(self, "_current_task", None)
+        result: dict = {"exit_code": -1, "stdout": "", "stderr": "aborted"}
         try:
             deadline = asyncio.get_event_loop().time() + max(1, int(timeout or 60))
             while True:
@@ -1403,22 +1459,16 @@ class AgentRuntime:
                     getattr(task, "cancel_requested", False)
                     or (_CANCEL_FLAGS.get(task.id) and _CANCEL_FLAGS[task.id].is_set())
                 ):
-                    try:
-                        proc.kill()
-                    except ProcessLookupError:
-                        pass
-                    await proc.wait()
-                    return {"exit_code": -1, "stdout": "", "stderr": "cancelled", "cancelled": True}
+                    result = {"exit_code": -1, "stdout": "", "stderr": "cancelled", "cancelled": True}
+                    break
                 remaining = deadline - asyncio.get_event_loop().time()
                 if remaining <= 0:
-                    try:
-                        proc.kill()
-                    except ProcessLookupError:
-                        pass
-                    await proc.wait()
-                    return {"exit_code": -1, "stdout": "", "stderr": "command timed out"}
+                    result = {"exit_code": -1, "stdout": "", "stderr": "command timed out"}
+                    break
                 try:
-                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=min(1.0, remaining))
+                    stdout, stderr = await asyncio.wait_for(
+                        proc.communicate(), timeout=min(1.0, remaining)
+                    )
                     return {
                         "exit_code": proc.returncode,
                         "stdout": stdout.decode(errors="replace"),
@@ -1426,19 +1476,31 @@ class AgentRuntime:
                     }
                 except asyncio.TimeoutError:
                     if proc.returncode is not None:
-                        stdout, stderr = await proc.communicate()
+                        try:
+                            stdout, stderr = await proc.communicate()
+                        except Exception:
+                            stdout, stderr = b"", b""
                         return {
                             "exit_code": proc.returncode,
                             "stdout": (stdout or b"").decode(errors="replace"),
                             "stderr": (stderr or b"").decode(errors="replace"),
                         }
                     continue
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            return {"exit_code": -1, "stdout": "", "stderr": "command timed out"}
+        finally:
+            # Always release the child if still running (cancel/timeout/exception)
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=3.0)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+        return result
 
     async def _git(self, name: str, args: dict) -> dict:
         git = self._git_svc()
