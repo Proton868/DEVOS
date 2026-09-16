@@ -21,6 +21,31 @@ def _require_postgres_flag() -> bool:
     return bool(getattr(settings, "REQUIRE_POSTGRES", True))
 
 
+
+def _is_sqlite_url(url: str) -> bool:
+    low = (url or "").lower()
+    return low.startswith("sqlite") or ":memory:" in low
+
+
+def _async_engine_kwargs(url: str, *, echo: bool = False) -> dict:
+    """Dialect-aware async engine kwargs.
+
+    Postgres/Supabase: bounded QueuePool (production connection protection).
+    SQLite (tests only): NullPool-compatible — no pool_size/max_overflow/pool_timeout.
+    """
+    kw: dict = {"echo": echo}
+    if _is_sqlite_url(url):
+        # aiosqlite uses NullPool; QueuePool args are rejected
+        return kw
+    kw.update(
+        pool_size=2,
+        max_overflow=0,
+        pool_timeout=30,
+        pool_pre_ping=True,
+        pool_recycle=300,
+    )
+    return kw
+
 def _resolve_database_url() -> str:
     """Fail closed: Supabase/Postgres is the only application SoT.
 
@@ -54,14 +79,10 @@ def _resolve_database_url() -> str:
         )
     return url
 
+_db_url = _resolve_database_url()
 engine = create_async_engine(
-    _resolve_database_url(),
-    echo=bool(getattr(settings, "SQL_ECHO", False)),
-    pool_size=2,
-    max_overflow=0,
-    pool_timeout=30,
-    pool_pre_ping=True,
-    pool_recycle=300,
+    _db_url,
+    **_async_engine_kwargs(_db_url, echo=bool(getattr(settings, "SQL_ECHO", False))),
 )
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -70,8 +91,13 @@ def dispose_async_engine() -> None:
     global engine, AsyncSessionLocal
     eng = engine
     try:
-        # dispose is sync on AsyncEngine in SQLAlchemy 2
-        eng.dispose()
+        # AsyncEngine.dispose() is async in some SQLAlchemy versions;
+        # dispose the underlying sync engine synchronously for tests.
+        sync = getattr(eng, "sync_engine", None)
+        if sync is not None:
+            sync.dispose()
+        else:
+            eng.dispose()
     except Exception:
         pass
 
@@ -86,10 +112,21 @@ def replace_async_engine(url: str, **kwargs):
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
     old = engine
-    engine = create_async_engine(url, echo=kwargs.get("echo", False), **{k: v for k, v in kwargs.items() if k != "echo"})
+    echo = kwargs.pop("echo", False)
+    # Caller kwargs override defaults; still strip QueuePool args for sqlite
+    base = _async_engine_kwargs(url, echo=echo)
+    base.update(kwargs)
+    if _is_sqlite_url(url):
+        for k in ("pool_size", "max_overflow", "pool_timeout", "pool_recycle"):
+            base.pop(k, None)
+    engine = create_async_engine(url, **base)
     AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
     try:
-        old.dispose()
+        sync = getattr(old, "sync_engine", None)
+        if sync is not None:
+            sync.dispose()
+        else:
+            old.dispose()
     except Exception:
         pass
     return engine

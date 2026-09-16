@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from typing import Generator, Optional
 
 from sqlalchemy import create_engine
+from sqlalchemy.pool import NullPool
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -34,6 +35,25 @@ def _sync_url(url: str) -> str:
         .replace("sqlite+aiosqlite://", "sqlite://")
     )
 
+
+
+def _is_sqlite_url(url: str) -> bool:
+    low = (url or "").lower()
+    return low.startswith("sqlite") or ":memory:" in low
+
+
+def _sync_engine_kwargs(url: str) -> dict:
+    """Dialect-aware sync engine kwargs (mirror async policy)."""
+    if _is_sqlite_url(url):
+        return {"future": True, "poolclass": NullPool}
+    return {
+        "future": True,
+        "pool_size": 2,
+        "max_overflow": 0,
+        "pool_timeout": 30,
+        "pool_pre_ping": True,
+        "pool_recycle": 300,
+    }
 
 def dispose_sync_engine() -> None:
     """Dispose the process-wide sync engine and clear factories (tests / URL change)."""
@@ -84,15 +104,7 @@ def get_sync_engine() -> Engine:
             _Session = None
             _engine_url = None
 
-        _engine = create_engine(
-            url,
-            future=True,
-            pool_size=2,
-            max_overflow=0,
-            pool_timeout=30,
-            pool_pre_ping=True,
-            pool_recycle=300,
-        )
+        _engine = create_engine(url, **_sync_engine_kwargs(url))
         _Session = sessionmaker(_engine, expire_on_commit=False, autoflush=False)
         _engine_url = url
         # Schema authority:
