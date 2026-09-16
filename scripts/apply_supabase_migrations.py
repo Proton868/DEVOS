@@ -57,7 +57,7 @@ async def _ensure_tracking(conn) -> None:
     ))
 
 
-async def main() -> int:
+def main() -> int:
     url = (os.environ.get("DATABASE_URL") or "").strip()
     if not url:
         print("ERROR: DATABASE_URL required", file=sys.stderr)
