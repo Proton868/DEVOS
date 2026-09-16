@@ -5,7 +5,7 @@
 | Field | Value |
 |-------|--------|
 | **Tested commit (Phase 3 baseline)** | `528754d749d044fd65bbf066c95b0f2ae38ef359` |
-| **Document commit** | *(set at push time)* |
+| **Document commit** | `6cef3820736027e81554781f122090aa45a9f92d` |
 | **Environment type** | Coding-agent sandbox (not production VPS `prime`) |
 | **Date/time (UTC)** | 2026-09-16 13:45:17 UTC |
 | **Architecture under test** | Phase 1 spine + Phase 2 fail-closed acceptance + Phase 3 durability |
