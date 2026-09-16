@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Idempotent Agency OS schema migration for deploy."""
+"""Agency OS post-migration steps (capability seed).
+
+Production schema is applied by scripts/apply_supabase_migrations.py.
+init_db() does not create_all on Postgres unless DEVOS_SCHEMA_CREATE_ALL=1.
+"""
 import asyncio, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
