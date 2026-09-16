@@ -942,6 +942,10 @@ async def _migrate_missing_columns(conn):
         "ALTER TABLE chat_sessions ADD COLUMN workflow_id VARCHAR",
     )
     await _add_column_if_missing(
+        "messages", "metadata",
+        "ALTER TABLE messages ADD COLUMN metadata JSON",
+    )
+    await _add_column_if_missing(
         "users", "default_tenant_id",
         "ALTER TABLE users ADD COLUMN default_tenant_id VARCHAR",
     )
