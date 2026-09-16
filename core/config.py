@@ -1,9 +1,9 @@
 """DevOS Core Config"""
 import os
 import secrets
-from typing import Annotated, List
+from typing import List, Union
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, NoDecode
+from pydantic_settings import BaseSettings
 
 # Persisted secret file for JWT_SECRET — if the user doesn't set JWT_SECRET
 # in .env, we generate one once and write it here so restarts don't silently
@@ -12,6 +12,7 @@ from pydantic_settings import BaseSettings, NoDecode
 # module's directory, so it ends up in core/ alongside this file.
 _SECRET_PERSIST_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                      ".devos_secret")
+
 
 def _get_or_create_persisted_secret() -> str:
     """Read JWT_SECRET from the persisted file if it exists; otherwise
@@ -29,6 +30,29 @@ def _get_or_create_persisted_secret() -> str:
     return secret
 
 
+def _parse_allowed_origins(v):
+    """Accept JSON arrays or comma-separated origin lists from env.
+
+    Compatible with pydantic-settings 2.3.0 (declared in requirements.txt).
+    Union[str, list] lets JSON decode fail open so comma-separated values
+    reach this parser as raw strings.
+    """
+    if v is None or v == "":
+        return ["http://localhost:8000"]
+    if isinstance(v, (list, tuple)):
+        return [str(x).strip() for x in v if str(x).strip()]
+    if isinstance(v, str):
+        s = v.strip()
+        if s.startswith("["):
+            import json
+            data = json.loads(s)
+            if not isinstance(data, list):
+                raise ValueError("ALLOWED_ORIGINS JSON must be an array")
+            return [str(x).strip() for x in data if str(x).strip()]
+        return [part.strip() for part in s.split(",") if part.strip()]
+    return v
+
+
 class Settings(BaseSettings):
     APP_NAME: str = "DevOS"
     SECRET_KEY: str = ""  # unused; kept for backward-compat
@@ -37,26 +61,15 @@ class Settings(BaseSettings):
     # production can run with DEBUG tools without flooding journald with SQL.
     # Set SQL_ECHO=true in .env only when intentionally tracing queries.
     SQL_ECHO: bool = False
-    ALLOWED_ORIGINS: Annotated[List[str], NoDecode] = ["http://localhost:8000"]
+    # Union[str, List[str]]: pydantic-settings 2.3 JSON-decodes complex env
+    # values; a Union that includes str allows decode failure so comma-separated
+    # ALLOWED_ORIGINS still work. The before-validator always returns List[str].
+    ALLOWED_ORIGINS: Union[str, List[str]] = ["http://localhost:8000"]
 
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod
-    def _parse_allowed_origins(cls, v):
-        """Accept JSON arrays or comma-separated origin lists from env."""
-        if v is None or v == "":
-            return ["http://localhost:8000"]
-        if isinstance(v, (list, tuple)):
-            return [str(x).strip() for x in v if str(x).strip()]
-        if isinstance(v, str):
-            s = v.strip()
-            if s.startswith("["):
-                import json
-                data = json.loads(s)
-                if not isinstance(data, list):
-                    raise ValueError("ALLOWED_ORIGINS JSON must be an array")
-                return [str(x).strip() for x in data if str(x).strip()]
-            return [part.strip() for part in s.split(",") if part.strip()]
-        return v
+    def _parse_allowed_origins_field(cls, v):
+        return _parse_allowed_origins(v)
 
     # Authoritative store is Postgres (Supabase). SQLite is legacy-only for offline unit tests.
     # Production: postgresql+psycopg://postgres.[ref]:[password]@...pooler.supabase.com:6543/postgres
