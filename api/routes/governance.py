@@ -78,7 +78,10 @@ async def list_traces(request: Request, limit: int = 50, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from governance.observability import ObservabilityStore
-    traces = ObservabilityStore().list_traces(task_id=None, limit=limit)
+    # Scope to authenticated user — never return cross-tenant telemetry
+    traces = ObservabilityStore().list_traces(
+        task_id=None, limit=limit, user_id=str(user.id)
+    )
     return {"traces": traces}
 
 
@@ -87,7 +90,20 @@ async def get_trace(trace_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from governance.observability import ObservabilityStore
-    return ObservabilityStore().replay_trace(trace_id)
+    store = ObservabilityStore()
+    payload = store.replay_trace(trace_id)
+    tr = (payload or {}).get("trace") or {}
+    owner = str(tr.get("user_id") or "")
+    if owner and owner != str(user.id):
+        from fastapi import HTTPException
+        raise HTTPException(404, "trace not found")
+    if not tr or tr.get("status") == "unknown":
+        # no durable summary — do not leak span existence across users
+        spans = (payload or {}).get("spans") or []
+        if spans:
+            # spans may exist without user_id on summary; deny cross-user by default
+            raise HTTPException(404, "trace not found")
+    return payload
 
 
 @router.get("/metrics")

@@ -285,12 +285,29 @@ class EvidenceChainManager:
         return EvidenceChain.load(chain_id)
 
     @staticmethod
-    def list_recent(limit: int = 50) -> list[dict]:
-        """List recent chains with summary stats."""
+    def list_recent(limit: int = 50, user_id: Optional[str] = None) -> list[dict]:
+        """List recent chains with summary stats.
+
+        When user_id is provided, only chains whose identity_context
+        actor/user matches are returned (authorization boundary).
+        """
         chains = []
         for f in sorted(EVIDENCE_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
             try:
                 data = json.loads(f.read_text())
+                if user_id:
+                    ctx = data.get("identity_context") or {}
+                    owner = str(
+                        ctx.get("user_id")
+                        or ctx.get("actor_id")
+                        or ctx.get("owner_id")
+                        or ""
+                    )
+                    if owner and owner != str(user_id):
+                        continue
+                    if not owner:
+                        # Fail closed: unscoped chains are not listed to other users
+                        continue
                 nodes = data.get("nodes", {})
                 chain = {
                     "chain_id": data.get("chain_id"),
@@ -304,6 +321,14 @@ class EvidenceChainManager:
             except Exception:
                 pass
         return chains
+
+    @staticmethod
+    def owned_by(chain: "EvidenceChain", user_id: str) -> bool:
+        ctx = chain.identity_context or {}
+        owner = str(
+            ctx.get("user_id") or ctx.get("actor_id") or ctx.get("owner_id") or ""
+        )
+        return bool(owner) and owner == str(user_id)
 
     @staticmethod
     def replay(chain_id: str) -> Optional[dict]:

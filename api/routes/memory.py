@@ -80,17 +80,19 @@ async def add_entity(req: AddEntityReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from memory.graph import KnowledgeGraph
-    entity_id = KnowledgeGraph().add_entity(user.id, req.entity_type, req.name, req.properties)
-    return KnowledgeGraph().get_entity(entity_id)
+    kg = KnowledgeGraph()
+    entity_id = await kg.add_entity(str(user.id), req.name, req.entity_type, req.properties)
+    entity = await kg.get_entity(entity_id, str(user.id))
+    return entity
 
 @router.get("/graph/entity/{entity_id}")
 async def get_entity(entity_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from memory.graph import KnowledgeGraph
-    entity = KnowledgeGraph().get_entity(entity_id)
+    entity = await KnowledgeGraph().get_entity(entity_id, str(user.id))
     if not entity:
-        raise HTTPException(404, f"No entity '{entity_id}'")
+        raise HTTPException(404, "entity not found")
     return entity
 
 @router.get("/graph/entities")
@@ -99,7 +101,10 @@ async def find_entities(entity_type: Optional[str] = None, name_contains: Option
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from memory.graph import KnowledgeGraph
-    return {"entities": KnowledgeGraph().find_entities(user.id, entity_type, name_contains)}
+    ents = await KnowledgeGraph().find_entities(
+        str(user.id), entity_type, name_contains
+    )
+    return {"entities": ents}
 
 @router.post("/graph/relationship")
 async def add_relationship(req: AddRelationshipReq, request: Request, db=Depends(get_db)):
@@ -107,10 +112,12 @@ async def add_relationship(req: AddRelationshipReq, request: Request, db=Depends
     await ensure_personal_tenant(db, user)
     from memory.graph import KnowledgeGraph
     try:
-        rel_id = KnowledgeGraph().add_relationship(
-            user.id, req.from_entity_id, req.to_entity_id, req.relation_type, req.properties)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+        rel_id = await KnowledgeGraph().add_relationship(
+            str(user.id), req.from_entity_id, req.to_entity_id,
+            req.relation_type, req.properties,
+        )
+    except (ValueError, PermissionError) as e:
+        raise HTTPException(404 if isinstance(e, PermissionError) else 400, str(e))
     return {"id": rel_id}
 
 @router.get("/graph/related/{entity_id}")
@@ -120,11 +127,14 @@ async def get_related(entity_id: str, relation_type: Optional[str] = None,
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from memory.graph import KnowledgeGraph
-    return {"related": KnowledgeGraph().get_related(entity_id, relation_type, direction, depth)}
+    related = await KnowledgeGraph().get_related(
+        entity_id, str(user.id), relation_type, direction, depth
+    )
+    return {"related": related}
 
 @router.get("/graph/stats")
 async def graph_stats(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     from memory.graph import KnowledgeGraph
-    return KnowledgeGraph().stats(user.id)
+    return await KnowledgeGraph().stats(str(user.id))
