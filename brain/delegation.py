@@ -394,6 +394,10 @@ async def run_delegated_mission(
         msg_ids.append(pt_res.message_id)
 
         if gate.passed:
+            if not getattr(gate, "evidence_id", None):
+                last_error = "ponytail_passed_without_durable_evidence"
+                logger.warning(last_error)
+                continue
             try:
                 assert_accepted(gate)
             except PermissionError as pe:

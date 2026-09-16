@@ -388,10 +388,19 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                         plan_id=plan.id,
                     )
                     st = dres.status or ("succeeded" if dres.ok else "failed")
-                    truth = mission_truth(st, explicit_ok=dres.ok)
-                    pt = dres.ponytail or {}
-                    if dres.ok and pt.get("applicable") and not pt.get("passed"):
-                        truth = mission_truth("failed", explicit_ok=False)
+                    from brain.mission_acceptance import evaluate_mission_acceptance
+                    acceptance = evaluate_mission_acceptance(
+                        execution_ok=bool(dres.ok),
+                        status=st,
+                        files_changed=dres.files_changed,
+                        ponytail=dres.ponytail,
+                        evidence_refs=dres.evidence_refs,
+                        user_id=user.id,
+                        mission_id=dres.mission_id,
+                        expected_user_id=user.id,
+                        expected_mission_id=dres.mission_id,
+                    )
+                    truth = mission_truth(st, acceptance=acceptance)
 
                     files = []
                     for f in (dres.files_changed or []):
@@ -417,8 +426,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                                 "errors": [],
                             }
                         if website_validation and not website_validation.get("valid") and files:
-                            # files reported by agent but validator strict — still incomplete
-                            truth = mission_truth("failed", explicit_ok=False)
+                            truth = mission_truth("failed", acceptance={"ok": False, "reason": "website_validation_failed", "synthesis_mode": "failure"})
 
                     ep = None
                     if website_validation:

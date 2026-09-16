@@ -675,15 +675,11 @@ async def authorize_plan_execution(plan: OrchestrationPlan) -> tuple[bool, str]:
         })
         return True, "authorized"
     except Exception as e:
-        # If UCIP import shape differs, fail closed on critical only
-        if plan.risk_level == RiskLevel.CRITICAL.value:
-            plan.set_status(OrchStatus.DENIED)
-            plan.emit("authorization.denied", {"reason": str(e)[:200]})
-            plan.set_status(OrchStatus.BLOCKED)
-            return False, str(e)
-        plan.set_status(OrchStatus.AUTHORIZED)
-        plan.emit("authorization.granted", {"note": f"soft-path: {e}"[:200]})
-        return True, "authorized_soft"
+        # Phase 2: UCIP failures fail closed for all risk levels
+        plan.set_status(OrchStatus.DENIED)
+        plan.emit("authorization.denied", {"reason": str(e)[:200]})
+        plan.set_status(OrchStatus.BLOCKED)
+        return False, f"ucip_unavailable:{type(e).__name__}"
 
 
 async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:

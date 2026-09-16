@@ -35,18 +35,27 @@ _FAILURE_STATUSES = frozenset({
     "cancellation_requested", "cancelling", "canceled",
 })
 _SUCCESS_STATUSES = frozenset({
-    "completed", "succeeded", "success", "verified", "plan_ready", "idle",
+    "completed", "succeeded", "success", "verified", "accepted", "plan_ready", "idle",
 })
 _WAITING_STATUSES = frozenset({
     "waiting_for_user", "awaiting_approval", "waiting_for_tool", "hitl",
 })
 
 
-def mission_truth(status: str | None, *, explicit_ok: bool | None = None) -> dict:
+def mission_truth(
+    status: str | None,
+    *,
+    explicit_ok: bool | None = None,
+    acceptance: dict | None = None,
+) -> dict:
     """Machine-readable mission truth for synthesis and SSE.
 
-    Status failure/waiting always wins over a bad ok=True.
-    Never treat failed/cancelled/blocked as success.
+    Fail-closed:
+    - Failure/waiting statuses never become success.
+    - ``explicit_ok=True`` alone NEVER grants success (Phase 2).
+    - When ``acceptance`` is provided, it is the sole success authority.
+    - Success statuses without acceptance remain provisional success only for
+      non-artifact terminal states already accepted upstream.
     """
     st = (status or "unknown").lower().strip()
     if st in _FAILURE_STATUSES:
@@ -55,9 +64,30 @@ def mission_truth(status: str | None, *, explicit_ok: bool | None = None) -> dic
         return {"ok": False, "status": st, "synthesis_mode": "waiting"}
     if explicit_ok is False:
         return {"ok": False, "status": st, "synthesis_mode": "failure"}
-    if st in _SUCCESS_STATUSES or explicit_ok is True:
+    if acceptance is not None:
+        if acceptance.get("ok"):
+            return {
+                "ok": True,
+                "status": acceptance.get("status") or st,
+                "synthesis_mode": acceptance.get("synthesis_mode") or "success",
+                "reason": acceptance.get("reason"),
+            }
+        return {
+            "ok": False,
+            "status": acceptance.get("status") or st or "failed",
+            "synthesis_mode": acceptance.get("synthesis_mode") or "failure",
+            "reason": acceptance.get("reason"),
+        }
+    # explicit_ok=True is insufficient without acceptance
+    if explicit_ok is True and st not in _SUCCESS_STATUSES:
+        return {
+            "ok": False,
+            "status": st or "unknown",
+            "synthesis_mode": "incomplete",
+            "reason": "explicit_ok_insufficient",
+        }
+    if st in _SUCCESS_STATUSES:
         return {"ok": True, "status": st, "synthesis_mode": "success"}
-    # Unknown / running / intermediate: not a claimed success
     return {"ok": False, "status": st or "unknown", "synthesis_mode": "incomplete"}
 
 
@@ -183,11 +213,20 @@ async def run_chat_orchestration(
         plan_id=getattr(plan, "id", None),
     )
     status = dres.status or ("succeeded" if dres.ok else "failed")
-    truth = mission_truth(status, explicit_ok=dres.ok)
-    # Artifact path: Ponytail acceptance required when gate result present
-    pt = dres.ponytail or {}
-    if dres.ok and pt and pt.get("applicable") and not pt.get("passed"):
-        truth = mission_truth("failed", explicit_ok=False)
+    from brain.mission_acceptance import evaluate_mission_acceptance
+
+    acceptance = evaluate_mission_acceptance(
+        execution_ok=bool(dres.ok),
+        status=status,
+        files_changed=dres.files_changed,
+        ponytail=dres.ponytail,
+        evidence_refs=dres.evidence_refs,
+        user_id=user_id,
+        mission_id=dres.mission_id,
+        expected_user_id=user_id,
+        expected_mission_id=dres.mission_id,
+    )
+    truth = mission_truth(status, acceptance=acceptance)
 
     return {
         "ok": truth["ok"],
