@@ -1,8 +1,9 @@
 """DevOS Core Config"""
 import os
 import secrets
-from typing import List
-from pydantic_settings import BaseSettings
+from typing import Annotated, List
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode
 
 # Persisted secret file for JWT_SECRET — if the user doesn't set JWT_SECRET
 # in .env, we generate one once and write it here so restarts don't silently
@@ -36,7 +37,26 @@ class Settings(BaseSettings):
     # production can run with DEBUG tools without flooding journald with SQL.
     # Set SQL_ECHO=true in .env only when intentionally tracing queries.
     SQL_ECHO: bool = False
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:8000"]
+    ALLOWED_ORIGINS: Annotated[List[str], NoDecode] = ["http://localhost:8000"]
+
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def _parse_allowed_origins(cls, v):
+        """Accept JSON arrays or comma-separated origin lists from env."""
+        if v is None or v == "":
+            return ["http://localhost:8000"]
+        if isinstance(v, (list, tuple)):
+            return [str(x).strip() for x in v if str(x).strip()]
+        if isinstance(v, str):
+            s = v.strip()
+            if s.startswith("["):
+                import json
+                data = json.loads(s)
+                if not isinstance(data, list):
+                    raise ValueError("ALLOWED_ORIGINS JSON must be an array")
+                return [str(x).strip() for x in data if str(x).strip()]
+            return [part.strip() for part in s.split(",") if part.strip()]
+        return v
 
     # Authoritative store is Postgres (Supabase). SQLite is legacy-only for offline unit tests.
     # Production: postgresql+psycopg://postgres.[ref]:[password]@...pooler.supabase.com:6543/postgres

@@ -71,17 +71,33 @@ def dispose_sync_engine() -> None:
 
 
 def get_sync_engine() -> Engine:
-    """Return the shared sync engine, creating it if needed."""
-    global _engine, _Session, _engine_url
-    from core.config import settings
+    """Return the shared sync engine, creating it if needed.
 
+    Prefer process env (DATABASE_URL / REQUIRE_POSTGRES) so tooling such as
+    scripts/apply_supabase_migrations.py can open Postgres without loading the
+    full application Settings model (which may fail on unrelated env parsing).
+    Settings is only consulted when DATABASE_URL is absent from the environment.
+    """
+    global _engine, _Session, _engine_url
     import os
-    url = _sync_url(os.environ.get("DATABASE_URL") or settings.DATABASE_URL or "")
-    v = os.environ.get("REQUIRE_POSTGRES")
-    if v is not None and str(v).strip() != "":
-        require_pg = str(v).strip().lower() in ("1", "true", "yes", "on")
+
+    env_url = (os.environ.get("DATABASE_URL") or "").strip()
+    if env_url:
+        url = _sync_url(env_url)
+        v = os.environ.get("REQUIRE_POSTGRES")
+        if v is not None and str(v).strip() != "":
+            require_pg = str(v).strip().lower() in ("1", "true", "yes", "on")
+        else:
+            # Default safe: require Postgres when only env URL is used
+            require_pg = True
     else:
-        require_pg = bool(getattr(settings, "REQUIRE_POSTGRES", True))
+        from core.config import settings
+        url = _sync_url(settings.DATABASE_URL or "")
+        v = os.environ.get("REQUIRE_POSTGRES")
+        if v is not None and str(v).strip() != "":
+            require_pg = str(v).strip().lower() in ("1", "true", "yes", "on")
+        else:
+            require_pg = bool(getattr(settings, "REQUIRE_POSTGRES", True))
     low = url.lower()
 
     if require_pg and (low.startswith("sqlite") or not low.startswith("postgres")):
