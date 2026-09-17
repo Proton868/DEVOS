@@ -157,6 +157,10 @@ class Settings(BaseSettings):
     # _decode_supabase_jwt(). Deliberately NOT in EDITABLE_PROVIDER_KEYS
     # below (security-sensitive, same treatment as JWT_SECRET).
     SUPABASE_JWT_SECRET: str = ""
+    # Canonical public origin for OAuth redirects (e.g. https://dev.carai.agency).
+    # Optional; browser still prefers window.location.origin when present.
+    PUBLIC_APP_URL: str = ""
+    DEVOS_PUBLIC_URL: str = ""  # alias accepted via model_post_init
 
     # LLMs
     OLLAMA_HOST: str = "https://ollama.carai.agency"
@@ -258,6 +262,13 @@ class Settings(BaseSettings):
                 val = (os.environ.get(name) or "").strip()
                 if val:
                     object.__setattr__(self, "SUPABASE_ANON_KEY", val)
+                    break
+        if not (self.PUBLIC_APP_URL or "").strip():
+            import os
+            for name in ("PUBLIC_APP_URL", "DEVOS_PUBLIC_URL"):
+                val = (os.environ.get(name) or "").strip().rstrip("/")
+                if val:
+                    object.__setattr__(self, "PUBLIC_APP_URL", val)
                     break
 
     @property

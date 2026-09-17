@@ -193,6 +193,16 @@ def _validate_startup_env():
             logger.warning(msg)
         elif not str(settings.SUPABASE_URL).startswith("https://"):
             logger.warning("[startup] SUPABASE_URL should use https://")
+        # Browser Supabase Auth needs the publishable anon key separately from
+        # SUPABASE_KEY (server). URL alone is not enough for public-config.
+        anon = (getattr(settings, "SUPABASE_ANON_KEY", None) or "").strip()
+        if (settings.SUPABASE_URL or "").strip() and not anon:
+            logger.warning(
+                "[startup] SUPABASE_URL is set but SUPABASE_ANON_KEY is missing — "
+                "GET /api/auth/public-config will report supabase_configured=false. "
+                "Set SUPABASE_ANON_KEY to the Supabase publishable/anon key "
+                "(never put the service_role key in SUPABASE_ANON_KEY)."
+            )
 
     if not getattr(settings, "AUTH_ENABLED", True) and strict:
         raise RuntimeError("[startup] AUTH_ENABLED must remain true in production")
@@ -201,7 +211,7 @@ def _validate_startup_env():
         "[startup] AUTH_ENABLED=%s AUTH_MODE=%s has_supabase=%s origins_count=%s",
         settings.AUTH_ENABLED,
         auth_mode,
-        settings.has_supabase(),
+        bool(settings.has_supabase),
         len(origins),
     )
 

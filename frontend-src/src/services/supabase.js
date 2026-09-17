@@ -5,6 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 let _client = null;
+let _publicAppUrl = "";
 let _initPromise = null;
 
 function clientFrom(url, anon) {
@@ -40,6 +41,9 @@ export async function ensureSupabase() {
       const r = await fetch("/api/auth/public-config", { credentials: "same-origin" });
       if (!r.ok) return null;
       const cfg = await r.json();
+      if (cfg.public_app_url) {
+        _publicAppUrl = String(cfg.public_app_url).replace(/\/$/, "");
+      }
       if (cfg.supabase_url && cfg.supabase_anon_key) {
         _client = clientFrom(cfg.supabase_url, cfg.supabase_anon_key);
       }
@@ -77,12 +81,19 @@ export async function signInWithPassword(email, password) {
   return client.auth.signInWithPassword({ email: email.trim(), password });
 }
 
+
 export async function signInWithGoogle() {
   const client = (await ensureSupabase()) || _client;
   if (!client) return { error: new Error("Supabase not configured") };
+  const origin =
+    (_publicAppUrl && _publicAppUrl.replace(/\/$/, "")) ||
+    (typeof window !== "undefined" ? window.location.origin : "");
+  const path =
+    typeof window !== "undefined" ? window.location.pathname || "/" : "/";
+  const redirectTo = origin ? `${origin}${path}` : undefined;
   return client.auth.signInWithOAuth({
     provider: "google",
-    options: { redirectTo: window.location.origin + window.location.pathname },
+    options: redirectTo ? { redirectTo } : {},
   });
 }
 

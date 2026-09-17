@@ -21,32 +21,46 @@ def test_public_config_never_exposes_secrets():
     settings.SUPABASE_KEY = "service-role-SECRET-must-not-leak"
     settings.SUPABASE_ANON_KEY = "anon-publishable-ok"
     settings.AUTH_MODE = "dual"
+    settings.PUBLIC_APP_URL = "https://app.example.com"
 
     async def _run():
         return await auth_mod.auth_public_config()
 
-    cfg = asyncio.get_event_loop().run_until_complete(_run())
+    cfg = asyncio.run(_run())
+    assert cfg["supabase_configured"] is True
+    assert cfg["supabase_config_status"] == "ok"
+    assert cfg["supabase_url_present"] is True
+    assert cfg["supabase_anon_key_present"] is True
     assert cfg["supabase_url"] == "https://example.supabase.co"
     assert cfg["supabase_anon_key"] == "anon-publishable-ok"
+    assert cfg["public_app_url"] == "https://app.example.com"
+    assert cfg["local_login_available"] is True
     blob = str(cfg)
     assert "service-role" not in blob
     assert "SECRET" not in blob
     assert "JWT_SECRET" not in blob
 
 
-def test_public_config_hides_url_without_anon():
+def test_public_config_url_set_but_anon_missing():
+    """Matches production symptom: SUPABASE_URL set, anon key not loaded."""
     from core.config import settings
     from api.routes import auth as auth_mod
     import asyncio
 
     settings.SUPABASE_URL = "https://example.supabase.co"
     settings.SUPABASE_ANON_KEY = ""
-    settings.SUPABASE_KEY = "server-only"
+    settings.SUPABASE_KEY = "server-only-must-not-become-anon"
+    settings.AUTH_MODE = "dual"
 
-    cfg = asyncio.get_event_loop().run_until_complete(auth_mod.auth_public_config())
-    assert cfg["supabase_anon_key"] == ""
-    assert cfg["supabase_url"] == ""
+    cfg = asyncio.run(auth_mod.auth_public_config())
     assert cfg["supabase_configured"] is False
+    assert cfg["supabase_url_present"] is True
+    assert cfg["supabase_anon_key_present"] is False
+    assert cfg["supabase_config_status"] == "missing_supabase_anon_key"
+    assert cfg["supabase_url"] == ""
+    assert cfg["supabase_anon_key"] == ""
+    assert cfg["local_login_available"] is True
+    assert "server-only" not in str(cfg)
 
 
 def test_frontend_bundle_sources_have_no_service_role():
@@ -102,7 +116,7 @@ def test_sync_supabase_user_links_by_supabase_id_first():
         async def rollback(self):
             pass
 
-    user = asyncio.get_event_loop().run_until_complete(
+    user = asyncio.run(
         sync_supabase_user(FakeDb(), {"sub": "sub-abc", "email": "a@example.com"})
     )
     assert user.id == "devos-user-1"

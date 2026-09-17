@@ -457,16 +457,45 @@ async def auth_public_config():
     """Browser-safe auth configuration. Never includes service_role, JWT secrets,
     or database credentials. Used by the SPA to initialize Supabase Auth when
     REACT_APP_* was not baked in at build time.
+
+    supabase_configured requires BOTH:
+      - SUPABASE_URL
+      - SUPABASE_ANON_KEY (publishable; never SUPABASE_KEY / service_role)
+
+    Diagnostic booleans report presence without leaking secret values.
     """
     anon = (getattr(settings, "SUPABASE_ANON_KEY", None) or "").strip()
     url = (settings.SUPABASE_URL or "").strip()
     # Never fall back to SUPABASE_KEY — it may be a privileged key.
+    url_ok = bool(url)
+    anon_ok = bool(anon)
+    configured = url_ok and anon_ok
+    if not configured:
+        if not url_ok and not anon_ok:
+            reason = "missing_supabase_url_and_anon_key"
+        elif not url_ok:
+            reason = "missing_supabase_url"
+        else:
+            reason = "missing_supabase_anon_key"
+    else:
+        reason = "ok"
+    # App origin for OAuth redirect (optional). Never invent localhost in production.
+    public_app_url = (
+        getattr(settings, "PUBLIC_APP_URL", None)
+        or getattr(settings, "DEVOS_PUBLIC_URL", None)
+        or ""
+    ).strip().rstrip("/")
     return {
         "auth_mode": settings.AUTH_MODE,
         "auth_enabled": bool(settings.AUTH_ENABLED),
-        "supabase_configured": bool(url and anon),
-        "supabase_url": url if anon else "",
-        "supabase_anon_key": anon,
+        "supabase_configured": configured,
+        "supabase_url_present": url_ok,
+        "supabase_anon_key_present": anon_ok,
+        "supabase_config_status": reason,
+        # Only expose URL/anon when fully configured for browser client init.
+        "supabase_url": url if configured else "",
+        "supabase_anon_key": anon if configured else "",
+        "public_app_url": public_app_url,
         "local_login_available": settings.AUTH_MODE in ("dual", "local"),
     }
 
