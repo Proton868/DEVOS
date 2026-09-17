@@ -60,8 +60,12 @@ def detect_application(fs: FileService) -> dict[str, Any]:
 
     pkg_raw = _read_text(fs, "package.json")
     if not pkg_raw:
-        if _exists(fs, "requirements.txt") or _exists(fs, "pyproject.toml"):
-            result.update(kind="PYTHON_APP", framework="python", confidence=0.6)
+        if _exists(fs, "requirements.txt") or _exists(fs, "pyproject.toml") or _exists(fs, "setup.py"):
+            result.update(kind="PYTHON_APP", framework="python", confidence=0.7)
+            return result
+        if _exists(fs, "Makefile") or _exists(fs, "makefile") or _exists(fs, "build.sh"):
+            result.update(kind="SHELL_BUILD", framework="shell", confidence=0.55)
+            return result
         return result
 
     try:
@@ -95,8 +99,16 @@ def detect_application(fs: FileService) -> dict[str, Any]:
     if "vite" in deps_l or any(_exists(fs, c) for c in ("vite.config.js", "vite.config.ts", "vite.config.mjs")):
         result.update(kind="VITE_APP", framework="vite", confidence=0.9)
         return result
+    if "@angular/core" in deps_l or any(
+        _exists(fs, c) for c in ("angular.json", "angular.json")
+    ):
+        result.update(kind="ANGULAR_APP", framework="angular", confidence=0.92)
+        return result
     if "react" in deps_l and ("react-scripts" in deps_l or "react-dom" in deps_l):
         result.update(kind="REACT_APP", framework="react", confidence=0.75)
+        return result
+    if "typescript" in deps_l or _exists(fs, "tsconfig.json"):
+        result.update(kind="TYPESCRIPT_APP", framework="typescript", confidence=0.7)
         return result
     if deps:
         result.update(kind="NODE_APP", framework="node", confidence=0.6)

@@ -1674,26 +1674,20 @@ class AgentRuntime:
         files = [i for i in tree if i.get("type") == "file"]
 
         if name == "get_project_metadata":
+            from brain.coding_foundation import inspect_workspace, coding_system_guidance
+            inspection = inspect_workspace(self._fs())
             langs = {}
-            configs = []
             for f in files:
                 path = f["path"]
                 base = path.split("/")[-1].lower()
                 ext = base.rsplit(".", 1)[-1] if "." in base else ""
                 if ext:
                     langs[ext] = langs.get(ext, 0) + 1
-                if base in (
-                    "package.json", "pyproject.toml", "requirements.txt", "setup.py",
-                    "cargo.toml", "go.mod", "makefile", "dockerfile", "pom.xml",
-                    "tsconfig.json", "vite.config.ts", "vite.config.js",
-                ):
-                    configs.append(path)
-            return {
-                "ok": True,
-                "file_count": len(files),
-                "languages": dict(sorted(langs.items(), key=lambda x: -x[1])[:20]),
-                "config_files": configs[:50],
-            }
+            meta = inspection.to_dict()
+            meta["languages"] = langs
+            meta["file_count"] = len(files)
+            meta["guidance"] = coding_system_guidance(inspection)
+            return {"ok": True, **meta}
 
         if name == "get_test_files":
             max_r = int(args.get("max_results") or 50)
