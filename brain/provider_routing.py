@@ -22,7 +22,9 @@ logger = logging.getLogger("devos.provider_routing")
 
 # Bounded waits (seconds) after 429 / 5xx for the *same* candidate before skipping.
 _RETRY_AFTER_DEFAULT = 1.0
-_MAX_SAME_CANDIDATE_RETRIES = 1  # one short retry, then alternate
+_BACKOFF_BASE_S = 1.0
+_BACKOFF_CAP_S = 30.0
+_MAX_SAME_CANDIDATE_RETRIES = 2  # at most 2 same-candidate retries, then rotate
 
 
 @dataclass
@@ -114,6 +116,25 @@ class ProviderAttemptState:
                 at=float(a.get("at") or time.time()),
             ))
         return st
+
+
+
+def _retry_after_seconds(exc: BaseException) -> float | None:
+    """Honor Retry-After header when present (seconds or HTTP-date not parsed as date)."""
+    resp = getattr(exc, "response", None)
+    if resp is None:
+        return None
+    headers = getattr(resp, "headers", None) or {}
+    try:
+        raw = headers.get("Retry-After") or headers.get("retry-after")
+    except Exception:
+        raw = None
+    if raw is None:
+        return None
+    try:
+        return min(float(str(raw).strip()), _BACKOFF_CAP_S)
+    except Exception:
+        return None
 
 
 def classify_provider_failure(
@@ -330,26 +351,30 @@ async def route_chat_with_fallback(
                         break
 
                     if fc.category == "rate_limited":
-                        state.mark_rate_limited(provider, model)
-                        wait = fc.retry_after_s if fc.retry_after_s is not None else _RETRY_AFTER_DEFAULT
+                        wait = fc.retry_after_s
+                        if wait is None:
+                            wait = min(_BACKOFF_CAP_S, _BACKOFF_BASE_S * (2 ** same_retries))
+                        wait = min(float(wait), _BACKOFF_CAP_S)
                         if same_retries < _MAX_SAME_CANDIDATE_RETRIES and wait > 0:
                             same_retries += 1
                             logger.warning(
-                                "rate-limited %s; brief backoff %.1fs then alternate",
-                                label, wait,
+                                "rate-limited %s; backoff %.1fs (attempt %s) then retry/rotate",
+                                label, wait, same_retries,
                             )
-                            await asyncio.sleep(min(wait, 2.0))
-                            # After one retry, force alternate (mark exhausted)
-                            state.mark_rate_limited(provider, model)
-                            break
-                        logger.warning("rate-limited %s; trying next candidate", label)
+                            await asyncio.sleep(wait)
+                            continue  # bounded same-candidate retry
+                        state.mark_rate_limited(provider, model)
+                        logger.warning("rate-limited %s; rotating to next candidate", label)
                         break
 
                     if fc.retryable and same_retries < _MAX_SAME_CANDIDATE_RETRIES and fc.category in (
                         "server", "timeout", "connection",
                     ):
                         same_retries += 1
-                        await asyncio.sleep(min(fc.retry_after_s or 0.5, 2.0))
+                        wait = fc.retry_after_s
+                        if wait is None:
+                            wait = min(_BACKOFF_CAP_S, _BACKOFF_BASE_S * (2 ** (same_retries - 1)))
+                        await asyncio.sleep(min(float(wait), _BACKOFF_CAP_S))
                         continue
 
                     # Non-retryable client / model_unavailable / policy → next model

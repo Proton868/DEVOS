@@ -150,6 +150,7 @@ export default function CosmicSidebar() {
         >
           <MenorahLogo size={20} id="rail" />
         </button>
+        <OmniRouteRailButton setOmniOpen={setOmniOpen} setOverlay={setOverlay} />
         {railItems.map((r) => (
           <button
             key={r.key}
@@ -310,5 +311,49 @@ export default function CosmicSidebar() {
         </div>
       )}
     </div>
+  );
+}
+
+function OmniRouteRailButton({ setOmniOpen, setOverlay }) {
+  const [st, setSt] = React.useState({ state: "unknown" });
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { api } = await import("../../services/api");
+        let next = { state: "disconnected" };
+        try {
+          const r = await api.testProviderConnection("omniroute");
+          if (r?.ok) next = { state: "connected" };
+          else if (r?.error) next = { state: "error" };
+        } catch (_) {
+          const cfg = await api.getProviderConfig().catch(() => null);
+          if (cfg?.OMNIROUTE_BASE_URL) next = { state: "configured", endpoint: cfg.OMNIROUTE_BASE_URL };
+        }
+        if (!cancelled) setSt(next);
+      } catch {
+        if (!cancelled) setSt({ state: "disconnected" });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const cls =
+    st.state === "connected" ? "connected" :
+    st.state === "error" ? "error" :
+    st.state === "configured" ? "configured" : "disconnected";
+  return (
+    <button
+      type="button"
+      className={`sp-rail-btn sp-omniroute-btn ${cls}`}
+      title="Open OmniRoute"
+      aria-label="Open OmniRoute"
+      onClick={() => {
+        if (setOverlay) setOverlay(null);
+        if (setOmniOpen) setOmniOpen(true);
+      }}
+    >
+      <span className={`sp-omniroute-pulse ${cls}`} aria-hidden="true" />
+      <span className="sp-omniroute-glyph" aria-hidden="true">OR</span>
+    </button>
   );
 }

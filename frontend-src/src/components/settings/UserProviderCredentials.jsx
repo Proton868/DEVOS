@@ -4,14 +4,13 @@ import { api } from "../../services/api";
 
 /** Providers a normal user may attach their own credentials to. */
 const USER_PROVIDERS = [
-  { id: "omniroute", label: "OmniRoute (gateway)", needsKey: false },
+  { id: "omniroute", label: "OmniRoute (native gateway)", needsKey: false },
   { id: "openrouter", label: "OpenRouter", needsKey: true },
   { id: "openai", label: "OpenAI", needsKey: true },
   { id: "deepseek", label: "DeepSeek", needsKey: true },
   { id: "gemini", label: "Gemini", needsKey: true },
   { id: "huggingface", label: "Hugging Face", needsKey: true },
   { id: "nararouter", label: "NaraRouter", needsKey: true },
-  { id: "ollama", label: "Ollama (local)", needsKey: false },
 ];
 
 /**

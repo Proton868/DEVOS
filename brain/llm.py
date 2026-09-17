@@ -288,6 +288,7 @@ class BrainLLM:
                  api_keys: Optional[dict] = None):
         self.provider = provider or settings.DEFAULT_PROVIDER
         self.user_id = user_id
+        self.last_call_metrics: dict = {}
         self.purpose = purpose  # chat | coding | reasoning | fast | vision
         # Explicit model wins; otherwise fall back to this user's preference,
         # then leave None so provider-specific system defaults apply.

@@ -2208,3 +2208,42 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
 .sp-coding-mission-grid .err { color: #ff8a8a; }
 .sp-coding-file-list { margin: 0; padding-left: 1.1em; }
 .sp-coding-mission-log { margin: 8px 0 0; max-height: 120px; overflow: auto; padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.35); font-size: 11px; color: rgba(255,255,255,0.7); }
+
+/* OmniRoute rail control — subtle pulse; state-driven color */
+.sp-omniroute-btn {
+  position: relative;
+  flex-direction: column;
+  gap: 2px;
+}
+.sp-omniroute-glyph {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+.sp-omniroute-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.55);
+  box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.35);
+}
+.sp-omniroute-btn.connected .sp-omniroute-pulse {
+  background: var(--sp-good, #4ade80);
+  animation: sp-omniroute-pulse-anim 2.2s ease-out infinite;
+}
+.sp-omniroute-btn.configured .sp-omniroute-pulse {
+  background: var(--sp-accent, #22d3ee);
+  animation: sp-omniroute-pulse-anim 2.8s ease-out infinite;
+}
+.sp-omniroute-btn.error .sp-omniroute-pulse {
+  background: var(--sp-bad, #f87171);
+}
+.sp-omniroute-btn.disconnected .sp-omniroute-pulse {
+  background: rgba(148, 163, 184, 0.4);
+}
+@keyframes sp-omniroute-pulse-anim {
+  0% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(34, 211, 238, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); }
+}

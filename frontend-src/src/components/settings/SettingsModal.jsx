@@ -24,10 +24,6 @@ const PROVIDER_CONFIG_GROUPS = [
     { key: "OMNIROUTE_API_KEY", label: "Internal API Key (optional)", placeholder: "leave empty for local VPS", secret: true },
     { key: "OMNIROUTE_DEFAULT_MODEL", label: "Default Model", placeholder: "from OmniRoute catalog" },
   ], testable: true, testId: "omniroute" },
-  { id: "ollama", label: "🦙 Ollama (optional local)", fields: [
-    { key: "OLLAMA_HOST", label: "Host", placeholder: "http://localhost:11434" },
-    { key: "OLLAMA_DEFAULT_MODEL", label: "Default Model", placeholder: "llama3" },
-  ], testable: true, testId: "ollama" },
   { id: "openrouter", label: "🌐 OpenRouter", fields: [
     { key: "OPENROUTER_API_KEY", label: "API Key", secret: true },
     { key: "OPENROUTER_BASE_URL", label: "Base URL", placeholder: "https://openrouter.ai/api/v1" },
@@ -741,12 +737,14 @@ export default function SettingsModal({ embedded = false, onClose = null }) {
             )}
             {tab === "providers" && (
               <div>
-                <p className="settings-hint">Select the active provider/model below. Your personal API keys are stored encrypted per account.</p>
+                <p className="settings-hint">
+                  One entry per gateway or provider. OmniRoute is the native DevOS gateway; OpenRouter remains available.
+                  Personal credentials and active selection are below; system defaults are separate.
+                </p>
                 <UserProviderCredentials />
-                <h4 className="settings-section-title" style={{ marginTop: 20 }}>System provider configuration</h4>
-                <p className="settings-hint">Server-wide defaults (admin). Changing these does not replace other users&apos; personal credentials.</p>
-                <div className="provider-list">
-                  {Object.entries(providers).map(([id, p]) => (
+                <h4 className="settings-section-title" style={{ marginTop: 16 }}>Active provider and model</h4>
+                <div className="provider-list provider-list-deduped">
+                  {Object.entries(providers).filter(([id]) => id !== "ollama").map(([id, p]) => (
                     <div key={id}
                       className={`provider-card ${selectedProvider===id?"selected":""} ${!p.configured?"unconfigured":""}`}
                       onClick={() => p.configured && setProvider(id)}>

@@ -551,6 +551,8 @@ class AgentRuntime:
         ]
 
         from brain.llm import BrainLLM
+        from brain.context_budget import budget_for, enforce_input_budget, compact_tool_result
+        _budget = budget_for(getattr(self, "purpose", None) or "coding")
         brain = BrainLLM(
             provider=self.provider,
             model=self.model,
@@ -573,6 +575,7 @@ class AgentRuntime:
 
                 try:
                     try:
+                        messages = enforce_input_budget(messages, _budget)
                         text = await brain.stream_chat(messages)
                     except Exception as _prov_exc:
                         from brain.llm import ProviderExhaustedError
