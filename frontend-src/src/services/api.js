@@ -445,6 +445,8 @@ const governanceApi = {
   ucipTraces: (params = {}) => req(`/api/governance/traces?${new URLSearchParams(params)}`),
   ucipCapabilities: (trustLevel = "OPERATOR") => req(`/api/governance/ucip/capabilities/${trustLevel}`),
   ucipIdentity: (sessionId) => req(`/api/governance/ucip/identity?session_id=${encodeURIComponent(sessionId)}`),
+  getFlutterToolchain: () => req(`/api/toolchain/flutter`),
+  provisionFlutterSdk: (body) => req(`/api/toolchain/flutter/provision`, { method: "POST", body: JSON.stringify(body || {}) }),
   getPendingHitl: () => req(`/api/governance/hitl/pending`),
   approveHitl: (requestId) => req(`/api/governance/hitl/${requestId}/approve`, { method: "POST" }),
   denyHitl: (requestId) => req(`/api/governance/hitl/${requestId}/deny`, { method: "POST" }),

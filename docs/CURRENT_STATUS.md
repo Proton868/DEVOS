@@ -205,3 +205,13 @@ Never trust browser-supplied user_id / tenant_id / role for authorization.
 | Prime deploy | **NOT VERIFIED** in this pass |
 | https://dev.carai.agency live login | **NOT VERIFIED** in this pass |
 
+
+## 2026-09-17 security & toolchain (landed on main)
+
+- **Isolation:** mandatory strong/restricted for untrusted (`59421a1`); governed_exec env scrub + argv preference (`f0d281a`).
+- **Tenant RLS:** ORM owner_id alignment + RLS completion migrations; memories auth.uid fix (`db19b8e`).
+- **Flutter:** ToolchainProfile + HITL-gated SDK provision under `data/toolchains/flutter`; API `/api/toolchain/flutter`.
+- **Results doc:** `docs/AUDIT_AND_TOOLCHAIN_RESULTS_2026-09-17.md`.
+- **Isolation evidence:** attached on project commands and coding progress SSE when present.
+
+Deferred (optional): dedicated Flutter provision button in UI (HITL queue already surfaces any pending grant); production checksum pins; docker/bwrap on prod hosts for strong isolation.

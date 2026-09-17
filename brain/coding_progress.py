@@ -48,6 +48,7 @@ def build_coding_progress(
     error: Optional[str] = None,
     acceptance: Optional[dict] = None,
     evidence_id: Optional[str] = None,
+    isolation_evidence: Optional[dict] = None,
 ) -> dict[str, Any]:
     """Structured coding progress for SSE. Truthful only — no success invention."""
     files: list[str] = []
@@ -91,6 +92,7 @@ def build_coding_progress(
         "error": _scrub(error or "", 400) if error else None,
         "acceptance": _public_acceptance(acc),
         "evidence_id": evidence_id,
+        "isolation_evidence": isolation_evidence if isinstance(isolation_evidence, dict) else None,
         "at": datetime.now(timezone.utc).isoformat(),
         # UI must not treat presence of this object as success.
         # Final success only when authoritative acceptance.ok AND lifecycle completed.

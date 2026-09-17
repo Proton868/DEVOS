@@ -1742,6 +1742,7 @@ class AgentRuntime:
                 files_changed=files,
                 command=cmd,
                 command_exit_code=result.get("exit_code"),
+                isolation_evidence=result.get("isolation_evidence"),
                 command_ok=ok,
                 command_stdout_tail=(result.get("stdout") or "")[-500:],
                 command_stderr_tail=(result.get("stderr") or "")[-500:],
