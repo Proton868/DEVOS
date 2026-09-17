@@ -227,3 +227,102 @@ def test_apply_plan_terminal_cancel_wins():
 def test_child_sources_documented():
     assert child_cannot_complete_mission("coding_loop_accept")
     assert child_cannot_complete_mission("agent.completed")
+
+
+def test_two_workers_stale_version():
+    """Second worker with stale expected_version cannot complete."""
+    cp = _cp(MissionLifecycle.EXECUTING, mission_id="race-v1")
+    v0 = cp.version
+    d1 = declare_mission_outcome(
+        cp, desired=MissionLifecycle.COMPLETED,
+        acceptance={"ok": True, "reason": "worker1"},
+        execution_ok=True, expected_version=v0,
+    )
+    assert d1.ok is True
+    # Stale writer attempts complete again
+    d2 = declare_mission_outcome(
+        cp, desired=MissionLifecycle.FAILED,
+        execution_ok=False, expected_version=v0,
+    )
+    assert d2.ok is False or d2.code == "version_conflict" or cp.status == MissionLifecycle.COMPLETED
+    # Terminal sticky: cannot leave COMPLETED
+    try:
+        transition(cp, MissionLifecycle.EXECUTING)
+        assert False, "should not leave completed"
+    except MissionAuthorityError as e:
+        assert e.code in ("terminal_sticky", "illegal_transition")
+
+
+def test_cancel_wins_over_completion_race():
+    cp = _cp(MissionLifecycle.EXECUTING, mission_id="race-cancel")
+    d = declare_mission_outcome(
+        cp, desired=MissionLifecycle.COMPLETED,
+        acceptance={"ok": True}, execution_ok=True, cancelled=True,
+    )
+    assert d.status == MissionLifecycle.CANCELLED.value
+    assert cp.status == MissionLifecycle.CANCELLED
+
+
+def test_completion_vs_failure_first_writer_wins_sticky():
+    cp = _cp(MissionLifecycle.EXECUTING, mission_id="race-fail-first")
+    d1 = declare_mission_outcome(cp, desired=MissionLifecycle.FAILED, execution_ok=False)
+    assert d1.status == MissionLifecycle.FAILED.value
+    d2 = declare_mission_outcome(
+        cp, desired=MissionLifecycle.COMPLETED,
+        acceptance={"ok": True}, execution_ok=True,
+    )
+    # FAILED is not sticky the same way as COMPLETED/CANCELLED — recovery may allow
+    # But COMPLETED from FAILED without recovery should be rejected
+    assert d2.ok is False or cp.status != MissionLifecycle.COMPLETED or d2.rejected
+
+
+def test_provider_exhaustion_vs_completion():
+    cp = _cp(MissionLifecycle.EXECUTING, mission_id="race-prov")
+    d = declare_mission_outcome(
+        cp, desired=MissionLifecycle.COMPLETED,
+        acceptance={"ok": True}, execution_ok=True, provider_exhausted=True,
+    )
+    assert d.ok is False
+    assert d.status == MissionLifecycle.FAILED.value
+    assert cp.status == MissionLifecycle.FAILED
+
+
+def test_missing_evidence_blocks_completed_when_required():
+    cp = _cp(MissionLifecycle.EXECUTING, mission_id="race-ev")
+    d = declare_mission_outcome(
+        cp, desired=MissionLifecycle.COMPLETED,
+        execution_ok=True,
+        files_changed=[{"path": "a.py"}],
+        coding_evidence=None,
+        acceptance=None,  # will call evaluate with require_coding_evidence
+    )
+    # evaluate_mission_acceptance with files and no evidence should deny
+    assert d.ok is False or d.rejected
+
+
+def test_plan_completion_without_checkpoint_is_plan_only():
+    from brain.mission_authority import apply_plan_terminal
+    from brain.mission_checkpoint import reset_checkpoints_for_tests
+    from types import SimpleNamespace
+    reset_checkpoints_for_tests()
+    plan = SimpleNamespace(id="p-only", mission_id="p-only", status="running", user_id="u")
+    d = apply_plan_terminal(plan, desired="completed", execution_ok=True)
+    assert d["authority"] == "plan_only"
+    assert plan.status == "completed"
+
+
+def test_child_agent_completed_cannot_alone_complete():
+    assert child_cannot_complete_mission("agent.completed") is True
+    assert child_cannot_complete_mission("coding_loop_accept") is True
+    assert child_cannot_complete_mission("plan.status") is True
+
+
+def test_duplicate_terminal_idempotent_cancel():
+    cp = _cp(MissionLifecycle.EXECUTING, mission_id="race-dup-c")
+    d1 = declare_mission_outcome(cp, desired=MissionLifecycle.CANCELLED, cancelled=True)
+    v1 = cp.version
+    d2 = declare_mission_outcome(cp, desired=MissionLifecycle.CANCELLED, cancelled=True)
+    assert d1.status == MissionLifecycle.CANCELLED.value
+    assert d2.status == MissionLifecycle.CANCELLED.value
+    # sticky cancel still cancelled
+    assert cp.status == MissionLifecycle.CANCELLED

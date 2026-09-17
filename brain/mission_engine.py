@@ -708,10 +708,29 @@ async def run_mission_parallel(plan, max_parallel: Optional[int] = None) -> obje
                         "plan_id": plan.id,
                         "authority": decision.get("authority"),
                         "status": decision.get("status"),
+                        "ok": decision.get("ok"),
                     })
+                    # If authority rejected COMPLETED, do not claim orchestration success
+                    if decision.get("rejected") or decision.get("ok") is False:
+                        if (decision.get("status") or "").lower() not in ("completed",):
+                            plan.emit("orchestration.terminal_rejected", {
+                                "plan_id": plan.id,
+                                "status": decision.get("status"),
+                                "reason": decision.get("reason"),
+                            })
                 except Exception:
-                    plan.status = "completed"
-                    plan.emit("orchestration.completed", {"plan_id": plan.id})
+                    # Fail closed: never invent completed without declare_mission_outcome
+                    try:
+                        from brain.mission_authority import apply_plan_terminal
+                        apply_plan_terminal(
+                            plan, desired="failed",
+                            mission_id=getattr(plan, "mission_id", None) or plan.id,
+                            execution_ok=False,
+                            user_id=getattr(plan, "user_id", None),
+                        )
+                    except Exception:
+                        plan.status = "failed"
+                    plan.emit("orchestration.failed", {"plan_id": plan.id, "reason": "terminal_authority_error"})
                 await persist_plan(plan)
                 return plan
             # blocked waiting

@@ -506,6 +506,10 @@ def child_cannot_complete_mission(source: str) -> bool:
         "frontend_infer",
         "node_execution_result",
         "execution_job",
+        "plan.status",
+        "plan_completed",
+        "child_task",
+        "mission.meta",
     }
 
 

@@ -499,15 +499,23 @@ def resume_plan(cp: MissionCheckpoint) -> dict:
 
 
 def complete_mission(cp: MissionCheckpoint, *, verified: bool = True) -> MissionCheckpoint:
+    """Prefer mission_authority.declare_mission_outcome for coding COMPLETED.
+
+    This helper remains for checkpoint-only tests; when verified=True it routes
+    through declare_mission_outcome so acceptance cannot be skipped.
+    """
+    from brain.mission_authority import declare_mission_outcome
     if not verified:
-        if can_transition(cp.status, MissionLifecycle.FAILED):
-            transition_status(cp, MissionLifecycle.FAILED)
+        declare_mission_outcome(
+            cp, desired=MissionLifecycle.FAILED, execution_ok=False,
+        )
         return cp
-    if cp.status != MissionLifecycle.VALIDATING:
-        if can_transition(cp.status, MissionLifecycle.VALIDATING):
-            transition_status(cp, MissionLifecycle.VALIDATING)
-    if can_transition(cp.status, MissionLifecycle.COMPLETED):
-        transition_status(cp, MissionLifecycle.COMPLETED)
+    declare_mission_outcome(
+        cp,
+        desired=MissionLifecycle.COMPLETED,
+        acceptance={"ok": True, "reason": "complete_mission_verified"},
+        execution_ok=True,
+    )
     return cp
 
 
