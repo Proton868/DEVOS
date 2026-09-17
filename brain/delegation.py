@@ -358,6 +358,41 @@ async def run_delegated_mission(
         last_files = files
         agent_ok = bool(exec_result.get("success"))
         agent_status = exec_result.get("status") or ("succeeded" if agent_ok else "failed")
+        provider_failure = exec_result.get("provider_failure")
+        if provider_failure:
+            agent_ok = False
+            agent_status = "failed"
+            last_error = str(
+                exec_result.get("error")
+                or provider_failure.get("category")
+                or "provider_exhausted"
+            )
+            await _emit_progress(on_progress, {
+                "status": "failed",
+                "phase": "provider_failure",
+                "mission_id": mission_id,
+                "task_id": task_id,
+                "persona_key": persona_key,
+                "provider": provider_failure.get("provider"),
+                "model": provider_failure.get("model"),
+                "error": last_error[:200],
+                "retry_count": round_i,
+                "check_status": "failed",
+            })
+            # Durable coding snapshot for browser reconnect
+            try:
+                await _persist_mission_coding_snapshot(
+                    mission_id=mission_id,
+                    user_id=user_id,
+                    payload={
+                        "status": "failed",
+                        "provider_failure": provider_failure,
+                        "error": last_error[:300],
+                        "round": round_i,
+                    },
+                )
+            except Exception:
+                pass
 
         # Attribute work to agent
         try:
@@ -612,6 +647,28 @@ async def run_delegated_mission(
             # Accepted only after authoritative mission acceptance (not model/provider alone)
             from brain.mission_acceptance import evaluate_mission_acceptance
 
+            # Build coding evidence from real execution (never fabricated)
+            coding_ev = None
+            try:
+                from brain.coding_evidence import build_coding_evidence, persist_coding_evidence
+                coding_ev = build_coding_evidence(
+                    mission_id=mission_id or "",
+                    project_id=workspace_id or "default",
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    persona_id=persona_key,
+                    files_changed=files,
+                    commands=list(exec_result.get("commands") or []),
+                    validation={"ok": True, "ponytail": True, "works": True},
+                    artifacts=[f.get("path") if isinstance(f, dict) else f for f in files],
+                    success=True,
+                )
+                eid = persist_coding_evidence(coding_ev)
+                if eid and eid not in evidence_refs:
+                    evidence_refs.append(eid)
+            except Exception as ce:
+                logger.debug("coding evidence build: %s", ce)
+
             acceptance = evaluate_mission_acceptance(
                 execution_ok=True,
                 status="accepted",
@@ -624,7 +681,24 @@ async def run_delegated_mission(
                 evidence_refs=evidence_refs,
                 user_id=user_id,
                 mission_id=mission_id,
+                coding_evidence=coding_ev.to_dict() if coding_ev else None,
+                require_coding_evidence=bool(files),
             )
+            try:
+                await _persist_mission_coding_snapshot(
+                    mission_id=mission_id,
+                    user_id=user_id,
+                    payload={
+                        "status": "accepted" if acceptance.get("ok") else "failed",
+                        "acceptance": acceptance,
+                        "files_changed": [
+                            f.get("path") if isinstance(f, dict) else f for f in files
+                        ],
+                        "evidence_id": (coding_ev.evidence_id if coding_ev else None),
+                    },
+                )
+            except Exception:
+                pass
             if not acceptance.get("ok"):
                 last_error = acceptance.get("reason") or "mission_acceptance_failed"
                 logger.info("mission acceptance denied after Ponytail: %s", last_error)

@@ -47,6 +47,8 @@ class NodeExecutionResult:
     error: Optional[str] = None
     events_seen: list[str] = field(default_factory=list)
     raw_terminal: Optional[dict] = None
+    provider_failure: Optional[dict] = None
+    commands: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -58,6 +60,8 @@ class NodeExecutionResult:
             "tools_used": list(self.tools_used or []),
             "error": self.error,
             "events_seen": list(self.events_seen or []),
+            "provider_failure": self.provider_failure,
+            "commands": list(self.commands or []),
         }
 
 
@@ -184,11 +188,51 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
             if et:
                 result.events_seen.append(et)
             if et == "agent.completed":
-                result.success = data.get("success") is not False
-                result.status = "succeeded" if result.success else "failed"
+                # Provider exhaustion must never count as success
+                pf = data.get("provider_failure")
+                if pf:
+                    result.provider_failure = dict(pf) if isinstance(pf, dict) else {"detail": str(pf)}
+                    result.success = False
+                    result.status = "failed"
+                    result.error = str(
+                        data.get("summary") or data.get("message") or "provider_exhausted"
+                    )[:500]
+                else:
+                    result.success = data.get("success") is not False
+                    result.status = "succeeded" if result.success else "failed"
                 result.summary = str(data.get("summary") or "")[:2000]
-                result.files_changed = list(data.get("files_changed") or [])
+                if data.get("files_changed"):
+                    result.files_changed = list(data.get("files_changed") or [])
+                if data.get("tools_used"):
+                    for tool in data.get("tools_used") or []:
+                        if tool not in result.tools_used:
+                            result.tools_used.append(tool)
                 result.raw_terminal = event
+            elif et in ("agent.tool_result", "agent.test_result", "agent.command_output"):
+                tool = data.get("tool") or data.get("name")
+                if tool and tool not in result.tools_used:
+                    result.tools_used.append(str(tool))
+                if data.get("files_changed"):
+                    result.files_changed = list(data.get("files_changed") or result.files_changed)
+                if data.get("command") or data.get("exit_code") is not None:
+                    result.commands.append({
+                        "command": data.get("command"),
+                        "exit_code": data.get("exit_code"),
+                        "ok": data.get("ok"),
+                        "stdout": (data.get("stdout") or "")[-500:],
+                        "stderr": (data.get("stderr") or "")[-500:],
+                        "kind": "test" if et == "agent.test_result" else "command",
+                    })
+                if data.get("coding") and data["coding"].get("command"):
+                    c = data["coding"]
+                    result.commands.append({
+                        "command": c.get("command"),
+                        "exit_code": c.get("command_exit_code"),
+                        "ok": c.get("command_ok"),
+                        "stdout": c.get("command_stdout_tail") or "",
+                        "stderr": c.get("command_stderr_tail") or "",
+                        "kind": c.get("check_kind") or "command",
+                    })
             elif et == "agent.cancelled":
                 result.success = False
                 result.status = "cancelled"
@@ -197,6 +241,8 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
                 result.success = False
                 result.status = "blocked" if "blocked" in et else "failed"
                 result.error = str(data.get("message") or data.get("summary") or et)[:500]
+                if data.get("provider_failure"):
+                    result.provider_failure = dict(data["provider_failure"])
                 result.raw_terminal = event
     except Exception as e:
         logger.exception("agent runtime node execution failed")
