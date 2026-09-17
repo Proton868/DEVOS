@@ -324,16 +324,20 @@ async def run_isolated(
     it never means 'run bare on the host'.
     """
     t0 = time.monotonic()
-    safe_keys = ("PATH", "HOME", "LANG", "LC_ALL", "TERM", "PYTHONPATH",
-                 "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED", "NODE_ENV", "TMPDIR")
+    safe_keys = ("PATH", "HOME", "LANG", "LC_ALL", "TERM",
+                 "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED", "NODE_ENV", "TMPDIR",
+                 "FLUTTER_ROOT", "PUB_CACHE", "DART_SDK", "JAVA_HOME")
     base_env = env or {}
-    env = {
-        k: v for k, v in base_env.items()
-        if k in safe_keys or k.startswith("SECRET_")  # only explicitly injected secrets
-    }
-    env.setdefault("PATH", "/usr/bin:/bin")
-
     pol = normalize_policy(policy)
+    # Untrusted: no SECRET_* / PYTHONPATH injection from callers.
+    if pol == POLICY_UNTRUSTED:
+        env = {k: v for k, v in base_env.items() if k in safe_keys}
+    else:
+        env = {
+            k: v for k, v in base_env.items()
+            if k in safe_keys or k.startswith("SECRET_") or k == "PYTHONPATH"
+        }
+    env.setdefault("PATH", "/usr/bin:/bin")
     backend, strength = select_backend(allow_network=allow_network)
     ok, reason = policy_allows_execution(pol, strength)
     if not ok:

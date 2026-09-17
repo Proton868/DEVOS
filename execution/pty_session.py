@@ -117,9 +117,20 @@ class PtySession:
             # and made us a session leader with the PTY as controlling tty.
             os.chdir(str(self.root))
 
-            env = os.environ.copy()
-            env["TERM"] = "xterm-256color"
-            env["HOME"] = str(self.root)
+            try:
+                from execution.governed_exec import scrub_env
+                env = scrub_env(extra={
+                    "TERM": "xterm-256color",
+                    "HOME": str(self.root),
+                    "PWD": str(self.root),
+                })
+            except Exception:
+                env = {
+                    "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                    "HOME": str(self.root),
+                    "TERM": "xterm-256color",
+                    "LANG": "C.UTF-8",
+                }
             env["PS1"] = "\\[\\e[32m\\]\\w\\[\\e[0m\\] $ "
 
             os.execvpe("bash", ["bash", "--norc", "--noprofile"], env)

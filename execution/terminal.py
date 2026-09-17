@@ -20,9 +20,9 @@ Trust model: this is direct human action inside a project the human
 already owns/controls, not an autonomous Brain-invoked shell action —
 so it is NOT queued through HITL per command (that would make an
 interactive terminal unusable). It IS still denylist-checked for
-catastrophic patterns, output-capped, and timeout-capped. Autonomous
-agent-invoked shell execution continues to go through write_bash +
-existing HITL gating, unchanged.
+catastrophic patterns, output-capped, and timeout-capped. Agent-invoked commands MUST go through AgentRuntime → run_command_in_project
+→ run_governed → run_isolated (untrusted isolation). This module is NEVER
+the agent command path.
 """
 import asyncio
 import logging

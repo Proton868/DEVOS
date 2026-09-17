@@ -30,14 +30,24 @@ logger = logging.getLogger("devos.governed_exec")
 _SECRET_ENV_DENY = re.compile(
     r"(?i)^(.*(SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|CREDENTIAL|"
     r"AUTH|AWS_|AZURE_|GCP_|OPENAI_|ANTHROPIC_|SUPABASE_|DATABASE_URL|"
-    r"REDIS_URL|SMTP_|JWT_|SESSION_|COOKIE|SSH_|GPG_).*)|"
-    r"^(GITHUB_TOKEN|GH_TOKEN|NPM_TOKEN|HF_TOKEN|HUGGINGFACE_HUB_TOKEN)$"
+    r"REDIS_URL|SMTP_|JWT_|SESSION_|COOKIE|SSH_|GPG_|SERVICE_ROLE|"
+    r"DEVOS_|REQUIRE_POSTGRES).*)|"
+    r"^(GITHUB_TOKEN|GH_TOKEN|NPM_TOKEN|HF_TOKEN|HUGGINGFACE_HUB_TOKEN|"
+    r"DATABASE_URL|SUPABASE_SERVICE_KEY|SUPABASE_SERVICE_ROLE_KEY)$"
 )
+
+# Loader / shell injection vectors — never pass through for untrusted work
+_DANGEROUS_ENV = frozenset({
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
+    "PYTHONSTARTUP", "BASH_ENV", "ENV", "IFS",
+    "PROMPT_COMMAND", "SHELLOPTS",
+})
 
 _SAFE_ENV_ALLOW = frozenset({
     "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "TMP", "TEMP",
     "USER", "LOGNAME", "SHELL", "PWD",
-    "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED", "PYTHONPATH", "PYTHONIOENCODING",
+    "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED", "PYTHONIOENCODING",
+    # PYTHONPATH only via explicit extra for trusted/privileged toolchains
     "NODE_ENV", "NODE_OPTIONS", "NPM_CONFIG_CACHE",
     "CI", "DEBIAN_FRONTEND",
     "FLUTTER_ROOT", "FLUTTER_STORAGE_BASE_URL", "PUB_CACHE", "DART_SDK",
@@ -85,10 +95,13 @@ def scrub_env(
     *,
     extra: Optional[dict] = None,
     allow_secret_prefix: bool = False,
+    allow_pythonpath: bool = False,
 ) -> dict:
     """Build a subprocess environment without host secrets/credentials.
 
-    Only allowlisted keys + optional explicit SECRET_* injections pass through.
+    Fail-closed: only allowlisted keys + optional explicit SECRET_* pass.
+    Dangerous loader vars (LD_PRELOAD, BASH_ENV, …) are always dropped.
+    PYTHONPATH is omitted unless allow_pythonpath=True (trusted toolchains).
     """
     src = dict(base or {})
     out: dict[str, str] = {}
@@ -96,6 +109,10 @@ def scrub_env(
         if v is None:
             continue
         key = str(k)
+        if key in _DANGEROUS_ENV:
+            continue
+        if key == "PYTHONPATH" and not allow_pythonpath:
+            continue
         if key in _SAFE_ENV_ALLOW:
             out[key] = str(v)
             continue
@@ -105,7 +122,7 @@ def scrub_env(
         if _SECRET_ENV_DENY.match(key):
             continue
         # Drop everything else by default (fail closed on unknown secrets)
-    # Minimal defaults
+    # Minimal defaults — never inherit host secrets via os.environ.copy()
     out.setdefault("PATH", os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"))
     out.setdefault("HOME", os.environ.get("HOME", "/tmp"))
     out.setdefault("LANG", os.environ.get("LANG", "C.UTF-8"))
@@ -117,6 +134,11 @@ def scrub_env(
             if v is None:
                 continue
             key = str(k)
+            if key in _DANGEROUS_ENV:
+                logger.warning("scrub_env refused dangerous key: %s", key)
+                continue
+            if key == "PYTHONPATH" and not allow_pythonpath:
+                continue
             if _SECRET_ENV_DENY.match(key) and not (
                 allow_secret_prefix and key.startswith("SECRET_")
             ):
@@ -346,8 +368,13 @@ async def run_governed(
 
 # Secret patterns for output scrubbing (best-effort; primary control is env scrub)
 _OUTPUT_SECRET_RE = re.compile(
-    r"(?i)(api[_-]?key|token|password|secret)\s*[:=]\s*['\"]?[^\s'\"]{8,}"
+    r"(?i)((?:api[_-]?key|token|password|secret)\s*[:=]\s*['\"]?[^\s'\"]{8,}"
+    r"|Bearer\s+[A-Za-z0-9._\-]{12,}"
+    r"|ghp_[A-Za-z0-9]{20,}"
+    r"|sk-[A-Za-z0-9]{20,}"
+    r"|postgres(?:ql)?://[^\s]+)"
 )
+
 
 
 def scrub_output(text: str) -> str:

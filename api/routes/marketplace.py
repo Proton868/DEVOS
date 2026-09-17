@@ -491,10 +491,12 @@ async def install_packages(req: InstallReq, request: Request, db=Depends(get_db)
             node_dir = _P("data/node_modules") / script.id
             node_dir.mkdir(parents=True, exist_ok=True)
             # Isolated-ish: no audit/fund; cwd scoped to script dir
+            from execution.governed_exec import scrub_env
             proc = await asyncio.create_subprocess_exec(
                 "npm", "install", "--no-audit", "--no-fund", *packages,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 cwd=str(node_dir),
+                env=scrub_env(),
             )
             stdout, stderr = await proc.communicate()
             output = (stdout + stderr).decode(errors="replace")[:2000]

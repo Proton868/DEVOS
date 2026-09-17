@@ -85,9 +85,11 @@ async def import_repo(body: ImportReq, request: Request, db=Depends(get_db)):
         args = ["clone", "--branch", body.branch, body.clone_url, "."]
     # use git via process — workspace must be empty-ish
     import asyncio
+    from execution.governed_exec import scrub_env
     proc = await asyncio.create_subprocess_exec(
         "git", *args, cwd=str(gs.root),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env=scrub_env(),
     )
     out, err = await proc.communicate()
     if proc.returncode != 0:

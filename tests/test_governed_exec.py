@@ -263,3 +263,52 @@ def test_runner_rejects_trusted_policy_spoof():
             ev = r.get("isolation_evidence") or {}
             assert ev.get("trust_level") == "untrusted" or r["ok"] is False
     asyncio.run(_go())
+
+
+def test_scrub_env_blocks_ld_preload():
+    clean = scrub_env(extra={"LD_PRELOAD": "/tmp/evil.so", "OPENAI_API_KEY": "sk-x", "PATH": "/usr/bin"})
+    assert "LD_PRELOAD" not in clean
+    assert "OPENAI_API_KEY" not in clean
+    assert clean.get("PATH")
+
+
+def test_scrub_env_blocks_database_url_and_devos():
+    clean = scrub_env(base={"DATABASE_URL": "postgres://x", "DEVOS_SECRET": "y", "PATH": "/bin"})
+    assert "DATABASE_URL" not in clean
+    assert "DEVOS_SECRET" not in clean
+
+
+def test_scrub_env_no_pythonpath_by_default():
+    clean = scrub_env(extra={"PYTHONPATH": "/evil"})
+    assert "PYTHONPATH" not in clean
+    clean2 = scrub_env(extra={"PYTHONPATH": "/ok"}, allow_pythonpath=True)
+    assert clean2.get("PYTHONPATH") == "/ok"
+
+
+def test_shell_injection_still_isolated_or_refused():
+    async def _go():
+        with mock.patch(
+            "execution.isolation.select_backend",
+            return_value=("unshare", IsolationStrength.NETWORK_ONLY.value),
+        ):
+            r = await run_governed(
+                shell_command="echo hi; cat /etc/passwd",
+                policy="untrusted",
+                source="agent_runtime",
+            )
+            assert r.ok is False
+            assert r.status == "isolation_unavailable"
+            assert r.mode == "shell"
+    asyncio.run(_go())
+
+
+def test_output_redaction_tokens():
+    s = scrub_output("Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz012345")
+    assert "ghp_" not in s or "***" in s
+
+
+def test_pty_session_no_raw_environ_copy():
+    from pathlib import Path as P
+    src = (P(__file__).resolve().parents[1] / "execution" / "pty_session.py").read_text()
+    assert "os.environ.copy()" not in src
+    assert "scrub_env" in src
