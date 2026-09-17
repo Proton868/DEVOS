@@ -272,6 +272,126 @@ def _default_download(url, dest):
         dest.parent.mkdir(parents=True, exist_ok=True)
         with open(dest, 'wb') as f: shutil.copyfileobj(resp, f)
 
+
+def parse_pubspec_constraints(pubspec_text: str | None) -> dict:
+    """Extract Dart/Flutter environment constraints from pubspec.yaml text.
+
+    Does not install anything. Returns required sdk / flutter constraints
+    for compatibility checks (never silently substitutes incompatible versions).
+    """
+    out = {"dart_sdk": None, "flutter": None, "raw_environment": {}}
+    if not pubspec_text:
+        return out
+    # Simple YAML-ish parse without full PyYAML dependency
+    env_block = False
+    for line in pubspec_text.splitlines():
+        s = line.strip()
+        if s.startswith("environment:"):
+            env_block = True
+            continue
+        if env_block:
+            if not line.startswith(" ") and not line.startswith("\t") and s and not s.startswith("#"):
+                env_block = False
+            else:
+                m = re.match(r"\s*(sdk|flutter)\s*:\s*[\'\"]?([^\'#]+)[\'\"]?", line)
+                if m:
+                    key, val = m.group(1), m.group(2).strip().strip("'\"")
+                    out["raw_environment"][key] = val
+                    if key == "sdk":
+                        out["dart_sdk"] = val
+                    elif key == "flutter":
+                        out["flutter"] = val
+    return out
+
+
+def _version_tuple(v: str | None):
+    if not v:
+        return None
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)", v.strip())
+    if not m:
+        return None
+    return tuple(int(x) for x in m.groups())
+
+
+def constraint_compatible(installed: str | None, constraint: str | None) -> bool | None:
+    """Best-effort semver constraint check. None if cannot determine safely."""
+    if not constraint or not installed:
+        return None
+    c = constraint.strip()
+    inst = _version_tuple(installed)
+    if inst is None:
+        return None
+    # >=x.y.z <a.b.c or ^x.y.z or single version
+    if c.startswith("^"):
+        base = _version_tuple(c[1:])
+        if not base:
+            return None
+        return inst >= base and inst[0] == base[0]
+    if c.startswith(">="):
+        parts = re.split(r"\s+", c)
+        lower = _version_tuple(parts[0][2:])
+        upper = None
+        for p in parts[1:]:
+            if p.startswith("<"):
+                upper = _version_tuple(p[1:].lstrip("="))
+        if lower and inst < lower:
+            return False
+        if upper and inst >= upper:
+            return False
+        return True if lower else None
+    single = _version_tuple(c)
+    if single:
+        return inst == single
+    return None
+
+
+def flutter_project_status(fs, *, runtime_info=None) -> dict:
+    """Structured Flutter status for API/agents (no secrets)."""
+    from execution.toolchain import structured_status, TOOLCHAIN_UNAVAILABLE, VERSION_INCOMPATIBLE
+    det = detect_flutter_project(fs)
+    body = _read_text(fs, "pubspec.yaml") if det.has_pubspec else None
+    constraints = parse_pubspec_constraints(body)
+    info = runtime_info or probe_flutter_runtime()
+    compatible = None
+    if constraints.get("dart_sdk") and info.dart_version:
+        compatible = constraint_compatible(info.dart_version, constraints["dart_sdk"])
+    if constraints.get("flutter") and info.flutter_version:
+        fc = constraint_compatible(info.flutter_version, constraints["flutter"])
+        if compatible is None:
+            compatible = fc
+        elif fc is False:
+            compatible = False
+    if not det.is_flutter_project:
+        status = "unavailable"
+        err = None
+    elif not info.flutter_available:
+        status = "unavailable"
+        err = TOOLCHAIN_UNAVAILABLE
+    elif compatible is False:
+        status = "version_incompatible"
+        err = VERSION_INCOMPATIBLE
+    else:
+        status = "ready"
+        err = None
+    return structured_status(
+        kind="flutter",
+        detected=det.is_flutter_project,
+        available=bool(info.flutter_available),
+        required_version=constraints.get("flutter") or constraints.get("dart_sdk"),
+        installed_version=info.flutter_version,
+        compatible=compatible,
+        status=status,
+        error=err,
+        platform_limits=info.platform_limits,
+        extra={
+            "detection": det.to_dict(),
+            "constraints": constraints,
+            "runtime": info.to_dict(),
+            "provision_capability": CAP_FLUTTER_SDK_PROVISION,
+            "commands": flutter_command_plan()["commands"] if info.flutter_available else {},
+        },
+    )
+
 def provision_flutter_sdk(req: ProvisionRequest) -> ProvisionResult:
     evidence = {'capability': CAP_FLUTTER_SDK_PROVISION, 'authorized': bool(req.authorized), 'version_requested': req.version, 'channel': req.channel, 'platform': req.platform}
     if not req.authorized:

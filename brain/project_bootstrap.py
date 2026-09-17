@@ -81,6 +81,13 @@ def _put_profile(profile: ToolchainProfile) -> None:
         pass
 
 
+def ensure_default_profiles() -> None:
+    """Idempotent: profiles register at import; call to force load."""
+    if not PROFILES:
+        pass  # import side-effects already ran
+    return None
+
+
 def register_toolchain_profile(profile: ToolchainProfile) -> ToolchainProfile:
     """Extension point for additional ecosystems (e.g. Flutter) without a new agent."""
     if not profile.required_binaries and profile.runtime and profile.runtime != "browser":
@@ -870,6 +877,7 @@ def validate_project(fs, profile: ToolchainProfile, written: list[str]) -> dict:
 ERR_TOOLCHAIN_UNAVAILABLE = "toolchain_unavailable"
 ERR_UNSUPPORTED_ECOSYSTEM = "unsupported_ecosystem"
 ERR_INSTALL_FAILED = "install_failed"
+ERR_DEPENDENCY_INSTALL_FAILED = "dependency_install_failed"
 ERR_BUILD_FAILED = "build_failed"
 ERR_TEST_FAILED = "test_failed"
 ERR_SCAFFOLD_FAILED = "scaffold_failed"
@@ -1181,6 +1189,7 @@ async def bootstrap_project(
                     result.error_code = ERR_PATH_ESCAPE
                 else:
                     result.errors.append(ERR_INSTALL_FAILED)
+                    result.errors.append(ERR_DEPENDENCY_INSTALL_FAILED)
                     result.error_code = ERR_INSTALL_FAILED
                 result.validation = validate_project(fs, profile, written)
                 result.evidence_id = _evidence(

@@ -137,3 +137,55 @@ def test_pins(tmp_path, monkeypatch):
 def test_isolation():
     from execution.isolation import UNTRUSTED_MIN_STRENGTH, IsolationStrength
     assert IsolationStrength.RESTRICTED in UNTRUSTED_MIN_STRENGTH
+
+def test_pubspec_constraints_parsed():
+    from execution.flutter_toolchain import parse_pubspec_constraints, constraint_compatible
+    c = parse_pubspec_constraints(
+        "name: x\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n  flutter: '>=3.16.0'\n"
+    )
+    assert c["dart_sdk"] and "3.0.0" in c["dart_sdk"]
+    assert constraint_compatible("3.5.0", ">=3.0.0 <4.0.0") is True
+    assert constraint_compatible("4.0.0", ">=3.0.0 <4.0.0") is False
+    assert constraint_compatible("3.16.0", "^3.16.0") is True
+
+
+def test_flutter_status_unavailable_when_missing():
+    from execution.flutter_toolchain import flutter_project_status, FlutterRuntimeInfo
+    class FS:
+        def read(self, path):
+            return {"content": "name: app\ndependencies:\n  flutter:\n    sdk: flutter\n"}
+        def tree(self, max_depth=None):
+            return [{"path": "pubspec.yaml", "type": "file"}, {"path": "lib/main.dart", "type": "file"}]
+    info = FlutterRuntimeInfo(False, False, error="toolchain_unavailable")
+    st = flutter_project_status(FS(), runtime_info=info)
+    assert st["detected"] is True
+    assert st["available"] is False
+    assert st["status"] == "unavailable"
+    assert st["error"] == "toolchain_unavailable"
+    assert st["trust_boundary"]["sdk_provision"] == "privileged_hitl"
+
+
+def test_api_provision_always_hitl_no_self_auth():
+    """API module must not expose authorized=True bypass for ordinary clients."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "api" / "routes" / "toolchain.py").read_text()
+    assert "authorized: bool = False" not in src or "require_hitl" in src
+    assert "request_sdk_provision_hitl" in src
+    # No direct provision_flutter_sdk(..., authorized=True) from API without HITL
+    assert "authorized=True" not in src
+
+
+def test_universal_error_codes():
+    from execution.toolchain import (
+        TOOLCHAIN_UNAVAILABLE, DEPENDENCY_INSTALL_FAILED, map_bootstrap_error,
+    )
+    assert map_bootstrap_error("install_failed") == DEPENDENCY_INSTALL_FAILED
+    assert map_bootstrap_error("toolchain_unavailable") == TOOLCHAIN_UNAVAILABLE
+
+
+def test_profiles_include_flutter():
+    from execution.toolchain import list_registered_profiles
+    from brain import project_bootstrap  # noqa: F401 — register defaults
+    kinds = {p.get("kind") for p in list_registered_profiles()}
+    assert "flutter" in kinds
+    assert "python" in kinds
