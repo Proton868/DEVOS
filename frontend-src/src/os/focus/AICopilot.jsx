@@ -49,8 +49,10 @@ export default function AICopilot({ floating = false }) {
   const [taskHeadline, setTaskHeadline] = useState(null);
   const [personaMeta, setPersonaMeta] = useState({ name: "Nuha", id: "nuha" });
   const [error, setError] = useState(null);
+  const [streamState, setStreamState] = useState(null);
   const bodyRef = useRef(null);
   const sessionIdRef = useRef(undefined);
+  const abortRef = useRef(null);
 
   const personaId = (copilot.personaId || activePersonaId || "nuha").toLowerCase();
 
@@ -117,6 +119,13 @@ export default function AICopilot({ floating = false }) {
     bodyRef.current?.scrollTo(0, bodyRef.current.scrollHeight);
   }, [messages, streaming]);
 
+  useEffect(() => {
+    return () => {
+      try { abortRef.current?.abort(); } catch (_) {}
+    };
+  }, []);
+
+
   async function send() {
     const text = input.trim();
     if (!text || streaming) return;
@@ -125,10 +134,14 @@ export default function AICopilot({ floating = false }) {
     const next = [...messages.filter((m) => m.role !== "system-note"), { role: "user", content: text }];
     setMessages([...next, { role: "assistant", content: "" }]);
     setStreaming(true);
+    setStreamState("open");
     setTaskStartedAt(Date.now());
     setSeenStatuses([]);
     setTaskDetail(null);
     setTaskHeadline(text.length > 120 ? `${text.slice(0, 120)}…` : text);
+    try { abortRef.current?.abort(); } catch (_) {}
+    const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
+    abortRef.current = ac;
     try {
       if (nuhaMode === "plan" || nuhaMode === "action") {
         setOrchestrationStatus(nuhaMode === "plan" ? "planning…" : "executing…");
@@ -184,8 +197,16 @@ export default function AICopilot({ floating = false }) {
         session_id: sessionIdRef.current,
         persona_id: personaId,
         system_prompt: contextNote,
+        signal: ac?.signal,
       });
       for await (const evt of iter) {
+        if (evt.stream_state) {
+          setStreamState(evt.stream_state);
+          // Stream closed/aborted is not success — only real terminal statuses count
+          if (evt.stream_state === "aborted") {
+            setTaskDetail((d) => d || "Connection closed before a terminal status was received.");
+          }
+        }
         if (evt.session_id) sessionIdRef.current = evt.session_id;
         if (evt.error) {
           setMessages((ms) => {
@@ -209,7 +230,7 @@ export default function AICopilot({ floating = false }) {
           } catch (_) { /* store optional */ }
         }
         // Truthful lifecycle + artifact → IDE/Preview
-        if (evt.status && ["planning","plan_created","delegating","worker_completed","validation_started","validation_completed","artifact_created","agent_progress","failed","cancelled"].includes(evt.status)) {
+        if (evt.status && ["planning","plan_created","delegating","worker_completed","validation_started","validation_completed","artifact_created","agent_progress","failed","cancelled","completed","responding"].includes(evt.status)) {
           try {
             setSeenStatuses((prev) => (prev.includes(evt.status) ? prev : [...prev, evt.status]));
             if (evt.plan_id) {
@@ -287,6 +308,8 @@ export default function AICopilot({ floating = false }) {
       });
     } finally {
       setStreaming(false);
+      setStreamState((s) => s === "open" ? "closed" : s);
+      abortRef.current = null;
     }
   }
 
@@ -377,6 +400,7 @@ export default function AICopilot({ floating = false }) {
           personaName={personaMeta.name}
           headline={taskHeadline}
           detail={taskDetail}
+          streamState={streamState}
         />
         {streaming && seenStatuses.length === 0 && (
           <div className="sp-copilot-thinking" aria-live="polite">

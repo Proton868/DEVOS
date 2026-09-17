@@ -62,18 +62,95 @@ Aligned with **Governance v1 + Reliability v1** freeze (`main` tip including cha
 
 ## Cluster 4 — migration / ALLOWED_ORIGINS / actor_id (2026-09-16)
 
-### VERIFIED (repository / prior operator evidence)
-- Commit `8a075fe` direct-psycopg migration runner; 12 unit tests passed
-- Prime pulled `8a075fe`; dialect check OK; 13 migration *filenames* skipped via `schema_migrations`
-- Prior health: db/memory/orchestration/UCIP/workspace/stores postgres backends OK
-- Prior live path: UCIP approved `create_file` before `execution_operations.actor_id` UndefinedColumn
+**Status: FULLY LIVE-PROVEN on Prime** (do not downgrade to “tests only”).
 
-### NOT live-proven (do not claim PASS)
-- Production `execution_operations.actor_id` column presence after apply of `20260916210000_...`
-- `migrate_agency_schema` completion on Prime
-- Current uvicorn bind / `/api/health` after ALLOWED_ORIGINS parse fix
-- End-to-end `prime_probe.txt` artifact (content exactly `ok`, 2 bytes)
+### 1. VERIFIED LOCAL TESTS
 
-### Root causes addressed in-repo
-1. **Skipped ≠ schema aligned.** Base `20260915130000` used `CREATE TABLE IF NOT EXISTS execution_operations` **without** `actor_id`. Once recorded in `schema_migrations`, re-runs skip the file and never ALTER. New migration `20260916210000_execution_operations_orm_alignment.sql` adds ORM columns with `IF NOT EXISTS`.
-2. **ALLOWED_ORIGINS.** Canonical forms: JSON array *or* bare CSV. Production value `[https://dev.carai.agency,http://127.0.0.1:8000]` is invalid JSON; parser now falls back to bracket-stripped CSV so Settings load (and uvicorn) does not crash.
+| Suite | Result |
+|-------|--------|
+| `pytest tests/test_apply_supabase_migrations_runner.py -q` | **12 passed** |
+| `pytest tests/test_allowed_origins_bracketed_csv.py tests/test_execution_operations_schema_migration.py -q` | **8 passed** |
+
+Implementation commits:
+
+- `8a075fe` — direct psycopg migration runner
+- `38949b5` (`38949b5703a949d6d590088152ea134bdc7df19f`) — `execution_operations.actor_id` alignment + bracketed CORS
+
+### 2. VERIFIED PRIME LIVE PROOF
+
+Live PostgreSQL:
+
+```
+FOUND COLUMNS:
+('actor_id', 'text', 'YES')
+('status', 'text', 'NO')
+PASS: execution_operations.actor_id EXISTS IN LIVE POSTGRES
+```
+
+DevOS restart + health (`dev.carai.agency`):
+
+- `service=devos` `status=ok`
+- `db=ok` `db_backend=postgres`
+- `memory=ok` `memory_backend=postgres`
+- `governance=v1-frozen` `ucip=ok` `workspace=import_ok`
+- `execution_store_backend=postgres` `outbox_backend=postgres`
+- `saga_backend=postgres` `audit_backend=postgres`
+
+Authenticated:
+
+- `GET /api/auth/me` → **200**
+- identity: `username=cluster4_probe` `role=member` `plan=recruit`
+
+Real mission:
+
+- `POST /api/chat/send` intent: create `prime_probe.txt` with exact content `ok`
+- HTTP **200** accepted on server
+- Client Python reader later **timed out** waiting on the streamed body — **not** a mission failure; server continued
+
+UCIP (server logs):
+
+- `[UCIP:APPROVE] action=search_files cap=ucip:filesystem.read`
+- `[UCIP:APPROVE] action=create_file cap=ucip:filesystem.write reason=policy check passed`
+- **PASS:** no `actor_id` UndefinedColumn / schema error
+
+Artifact:
+
+- Path: `/home/ubuntu/devos/data/projects/358d6f79-f55c-473e-b2c1-f2f37b9c9509/default/prime_probe.txt`
+- **EXISTS**, **BYTES: 2**, **HEX: `6f 6b`**, **CONTENT: `b'ok'`** (no newline)
+
+### 3. NOT YET VERIFIED / REMAINING RELEASE GATES
+
+Cluster 4 does **not** mean the full product is release-green. Remaining examples:
+
+- Full multi-tenant production load / long-lived SSE client resilience under all proxies
+- Cluster 5 Nuha progress UI live visual confirmation on Prime
+- Broader E2E matrix beyond the single-file probe
+- Any gate listed in `docs/PRODUCTION_GATES.md` not re-run after this tip
+
+---
+
+## Cluster 5 — Nuha task execution progress UI (2026-09-16)
+
+**Scope:** Truthful mission progress UI from real `/api/chat` SSE statuses; docs accuracy.
+
+### Behavior
+
+- Progress panel maps only known SSE statuses: `planning`, `plan_created`, `delegating`, `agent_progress` / `worker_completed`, `validation_*`, `artifact_created`, plus terminal `completed` / `failed` / `cancelled`
+- No invented percentages, fake stages, or fabricated elapsed time without a real stream start timestamp
+- `streamChat` accepts `AbortSignal`, cancels the reader on abort, flushes trailing SSE buffer, reports `stream_state`: `closed` | `aborted` | `error`
+- Stream abort/close is **not** treated as mission success
+
+### 1. VERIFIED LOCAL TESTS
+
+| Command | Result |
+|---------|--------|
+| `node frontend-src/scripts/test-nuha-task-progress.mjs` | progress logic assertions |
+
+### 2. LIVE PRIME VERIFICATION
+
+**Cluster 5 live Prime verification remains unproven** (repository-only work in this pass).
+
+### 3. Remaining
+
+- Confirm progress panel on `dev.carai.agency` during a real chat mission
+- Optional: rebuild/deploy frontend static assets on Prime after pull

@@ -346,6 +346,7 @@ const chatApi = {
     system,
     system_prompt,
     persona_id,
+    signal,
   }) {
     const token = getToken();
     const finalMessage =
@@ -365,31 +366,69 @@ const chatApi = {
       system_prompt: system_prompt || system,
       persona_id: persona_id || "nuha",
     };
-    const r = await fetch(`${BASE}/api/chat/send`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok || !r.body) throw new Error(`Chat stream failed: HTTP ${r.status}`);
-    const reader = r.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const events = buffer.split("\n\n");
-      buffer = events.pop();
-      for (const evt of events) {
-        const line = evt.split("\n").find((l) => l.startsWith("data: "));
-        if (!line) continue;
-        const payload = JSON.parse(line.slice("data: ".length));
-        if (payload.error) yield { error: payload.error, session_id: payload.session_id };
-        else if (payload.delta) yield { text: payload.delta, session_id: payload.session_id };
-        else yield payload;
+    let reader;
+    try {
+      const r = await fetch(`${BASE}/api/chat/send`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
+      if (!r.ok || !r.body) throw new Error(`Chat stream failed: HTTP ${r.status}`);
+      reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        if (signal?.aborted) {
+          try { await reader.cancel(); } catch (_) {}
+          yield { stream_state: "aborted" };
+          return;
+        }
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split("\n\n");
+        buffer = events.pop();
+        for (const evt of events) {
+          const line = evt.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          let payload;
+          try {
+            payload = JSON.parse(line.slice("data: ".length));
+          } catch (_) {
+            continue;
+          }
+          if (payload.error) yield { error: payload.error, session_id: payload.session_id };
+          else if (payload.delta) yield { text: payload.delta, session_id: payload.session_id };
+          else yield payload;
+        }
+      }
+      // Flush trailing buffer (final event without trailing blank line)
+      if (buffer && buffer.trim()) {
+        const line = buffer.split("\n").find((l) => l.startsWith("data: "));
+        if (line) {
+          try {
+            const payload = JSON.parse(line.slice("data: ".length));
+            if (payload.error) yield { error: payload.error, session_id: payload.session_id };
+            else if (payload.delta) yield { text: payload.delta, session_id: payload.session_id };
+            else yield payload;
+          } catch (_) {}
+        }
+      }
+      yield { stream_state: "closed" };
+    } catch (err) {
+      if (signal?.aborted || err?.name === "AbortError") {
+        yield { stream_state: "aborted" };
+        return;
+      }
+      yield { stream_state: "error", error: err?.message || String(err) };
+      throw err;
+    } finally {
+      if (reader) {
+        try { await reader.cancel(); } catch (_) {}
       }
     }
   },
