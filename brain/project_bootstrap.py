@@ -219,13 +219,25 @@ def _seed_builtin_profiles() -> None:
         detect_markers=["Makefile", "makefile"],
         requires_install=False,
     ))
-    # Example extension registration pattern (Flutter) — not enabled by default:
-    # register_toolchain_profile(ToolchainProfile(
-    #     kind="flutter", runtime="flutter", package_manager="flutter",
-    #     install_cmd="flutter pub get", build_cmd="flutter build apk --debug",
-    #     test_cmd="flutter test", validate_files=["pubspec.yaml"],
-    #     required_binaries=["flutter"], detect_markers=["pubspec.yaml"],
-    # ))
+    # Flutter: project deps via governed execution; SDK install is never silent.
+    # Missing flutter binary → fail-closed report (required_binaries), not apt/sudo.
+    register_toolchain_profile(ToolchainProfile(
+        kind="flutter",
+        runtime="flutter",
+        package_manager="flutter",
+        install_cmd="flutter pub get",
+        build_cmd="flutter build apk --debug",
+        test_cmd="flutter test",
+        validate_files=["pubspec.yaml"],
+        repair_hints=[
+            "Ensure Flutter SDK is installed and on PATH",
+            "Run flutter doctor and resolve reported issues",
+            "Do not use apt/sudo from DevOS to install Flutter",
+        ],
+        required_binaries=["flutter"],
+        detect_markers=["pubspec.yaml"],
+        requires_install=True,
+    ))
 
 
 _seed_builtin_profiles()
@@ -639,7 +651,11 @@ def _evidence(action: str, actor: str, status: str, meta: dict) -> str:
 
 
 async def _default_runner(command: str, ctx: dict) -> dict:
-    """Governed command path via execution.runner when available."""
+    """Governed command path via execution.runner when available.
+
+    Project bootstrap/install/build/test commands are untrusted by default
+    (uploaded or AI-generated project trees). Isolation is mandatory.
+    """
     try:
         from execution.runner import run_command_in_project
         user_id = ctx.get("user_id") or "system"
@@ -649,16 +665,32 @@ async def _default_runner(command: str, ctx: dict) -> dict:
             project_id=project_id,
             command=command,
             timeout_s=int(ctx.get("timeout_s") or 120),
+            policy=ctx.get("isolation_policy") or "untrusted",
+            source="project_bootstrap",
+            allow_network=bool(ctx.get("allow_network", False)),
         )
         if isinstance(result, dict):
+            if result.get("status") == "isolation_unavailable":
+                return {
+                    "ok": False,
+                    "exit_code": 126,
+                    "stdout": "",
+                    "stderr": str(result.get("stderr") or "isolation_unavailable"),
+                    "command": command,
+                    "status": "isolation_unavailable",
+                    "isolation_evidence": result.get("isolation_evidence"),
+                }
             code = int(result.get("exit_code") if result.get("exit_code") is not None else (0 if result.get("ok") else 1))
-            return {
-                "ok": code == 0,
+            out = {
+                "ok": code == 0 and result.get("ok", code == 0),
                 "exit_code": code,
                 "stdout": str(result.get("stdout") or result.get("output") or "")[:8000],
                 "stderr": str(result.get("stderr") or result.get("error") or "")[:4000],
                 "command": command,
             }
+            if result.get("isolation_evidence"):
+                out["isolation_evidence"] = result["isolation_evidence"]
+            return out
     except Exception as e:
         return {
             "ok": False,

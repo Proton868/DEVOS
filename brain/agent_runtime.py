@@ -1644,20 +1644,36 @@ class AgentRuntime:
                 return {"ok": False, "error": "command required"}
 
         timeout = min(int(args.get("timeout_s") or 60), 120)
-        # Prefer existing project-scoped runner if available; fall back to GitService-style subprocess
+        # Mandatory isolation: project commands are untrusted (AI/generated/uploaded code).
+        # Do not fall back to bare host subprocess — that bypasses isolation policy.
         try:
-            if callable(run_command_in_project):
-                result = await run_command_in_project(
-                    self.user_id, self.project_id, cmd, timeout_s=timeout
-                )
-            else:
-                result = await self._subprocess(cmd, timeout)
-        except ImportError:
-            result = await self._subprocess(cmd, timeout)
-        except TypeError:
-            result = await self._subprocess(cmd, timeout)
+            result = await run_command_in_project(
+                self.user_id,
+                self.project_id,
+                cmd,
+                timeout_s=timeout,
+                policy="untrusted",
+                source="agent_runtime",
+            )
+        except Exception as e:
+            result = {
+                "ok": False,
+                "exit_code": 127,
+                "stdout": "",
+                "stderr": f"runner_error:{type(e).__name__}",
+                "status": "failed",
+                "isolation_evidence": {
+                    "trust_level": "untrusted",
+                    "policy_decision": "error",
+                    "failure_reason": type(e).__name__,
+                },
+            }
 
-        ok = result.get("exit_code", 1) == 0
+        # Isolation refusal is never success
+        if result.get("status") == "isolation_unavailable":
+            ok = False
+        else:
+            ok = result.get("exit_code", 1) == 0 and result.get("ok", False)
         event_type = "agent.test_result" if name == "run_tests" else "agent.command_output"
         check_kind = None
         if name == "run_tests":

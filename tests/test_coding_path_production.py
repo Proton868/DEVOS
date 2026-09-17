@@ -132,7 +132,10 @@ def test_run_command_in_project_exists_and_scopes():
     async def _run():
         fs = FileService("cmduser", "cmdproj")
         fs.write("a.txt", "ok\n")
-        r = await run_command_in_project("cmduser", "cmdproj", "cat a.txt", timeout_s=15)
+        # Trusted policy: path-scoping test; untrusted would require strong sandbox.
+        r = await run_command_in_project(
+            "cmduser", "cmdproj", "cat a.txt", timeout_s=15, policy="trusted",
+        )
         assert r["ok"] is True
         assert "ok" in r["stdout"]
         bad = await run_command_in_project("..", "x", "echo hi")

@@ -44,12 +44,14 @@ class IsolationLevel(str, Enum):
     UNSAFE = "unsafe"
 
 
-# Policies for callers
-POLICY_TRUSTED = "trusted"       # internal/trusted ops — may use weaker isolation if configured
-POLICY_UNTRUSTED = "untrusted"   # workflow inputs.code, arbitrary user code
+# Policies for callers (canonical execution trust)
+POLICY_TRUSTED = "trusted"       # developer/local/governed workspace — weaker isolation only if configured
+POLICY_UNTRUSTED = "untrusted"   # AI-generated, uploaded, arbitrary repo, untrusted project cmds
+POLICY_PRIVILEGED = "privileged" # host/system, credentials, unrestricted net, deploy, destructive
 
-# Minimum strength for untrusted code execution
+# Minimum strength for untrusted / privileged code execution
 UNTRUSTED_MIN_STRENGTH = {IsolationStrength.STRONG, IsolationStrength.RESTRICTED}
+PRIVILEGED_MIN_STRENGTH = {IsolationStrength.STRONG, IsolationStrength.RESTRICTED}
 
 
 @dataclass
@@ -62,6 +64,9 @@ class IsolationResult:
     isolation: str
     isolation_level: str = IsolationLevel.DEGRADED.value
     strength: str = IsolationStrength.NONE.value
+    policy: str = POLICY_UNTRUSTED
+    policy_decision: str = ""
+    policy_reason: str = ""
 
     @property
     def is_isolated(self) -> bool:
@@ -69,6 +74,24 @@ class IsolationResult:
             IsolationStrength.STRONG.value,
             IsolationStrength.RESTRICTED.value,
         )
+
+    def to_evidence(self) -> dict:
+        """Machine-readable isolation decision for audit/acceptance."""
+        return {
+            "trust_level": self.policy,
+            "requested_isolation": "strong_or_restricted"
+            if self.policy in (POLICY_UNTRUSTED, POLICY_PRIVILEGED)
+            else "any_available",
+            "actual_isolation": self.isolation,
+            "strength": self.strength,
+            "isolation_level": self.isolation_level,
+            "policy_decision": self.policy_decision or (
+                "denied" if self.status == "isolation_unavailable" else "allowed"
+            ),
+            "failure_reason": self.stderr if self.status == "isolation_unavailable" else "",
+            "status": self.status,
+            "exit_code": self.exit_code,
+        }
 
 
 def _which(*names: str) -> Optional[str]:
@@ -174,13 +197,67 @@ def strength_allows_untrusted(strength: str) -> bool:
     return s in UNTRUSTED_MIN_STRENGTH
 
 
+def strength_allows_privileged(strength: str) -> bool:
+    try:
+        s = IsolationStrength(strength)
+    except ValueError:
+        return False
+    return s in PRIVILEGED_MIN_STRENGTH
+
+
+def normalize_policy(policy: Optional[str]) -> str:
+    """Map caller policy strings to canonical POLICY_* values."""
+    p = (policy or POLICY_UNTRUSTED).strip().lower()
+    if p in (POLICY_TRUSTED, "trusted", "developer", "local"):
+        return POLICY_TRUSTED
+    if p in (POLICY_PRIVILEGED, "privileged", "high_risk", "admin"):
+        return POLICY_PRIVILEGED
+    return POLICY_UNTRUSTED
+
+
+def classify_execution_request(
+    *,
+    policy: Optional[str] = None,
+    source: Optional[str] = None,
+    explicit_untrusted: bool = False,
+) -> str:
+    """Classify an execution request into trusted | untrusted | privileged.
+
+    Authoritative classification used at the subprocess boundary.
+    Default is untrusted (fail closed for generated/uploaded/project code).
+    """
+    if explicit_untrusted:
+        return POLICY_UNTRUSTED
+    if policy:
+        return normalize_policy(policy)
+    src = (source or "").strip().lower()
+    if src in ("system_admin", "deploy", "privileged_capability", "host"):
+        return POLICY_PRIVILEGED
+    if src in ("developer", "local", "trusted_workspace", "self_hosted_dev"):
+        return POLICY_TRUSTED
+    # AI-generated, uploaded, repo, bootstrap, check_runner, coding loop → untrusted
+    return POLICY_UNTRUSTED
+
+
 def policy_allows_execution(policy: str, strength: str) -> tuple[bool, str]:
-    """Decide whether code may run under this policy + backend strength."""
-    if policy == POLICY_TRUSTED:
+    """Decide whether code may run under this policy + backend strength.
+
+    Authoritative: untrusted and privileged MUST NOT accept network_only or degraded.
+    """
+    pol = normalize_policy(policy)
+    if pol == POLICY_TRUSTED:
         if strength == IsolationStrength.NONE.value and not _allow_degraded():
             return False, "No isolation backend and degraded mode disabled"
         return True, "trusted policy"
-    # untrusted
+    if pol == POLICY_PRIVILEGED:
+        if not strength_allows_privileged(strength):
+            return False, (
+                f"Privileged execution requires strong/restricted isolation; "
+                f"available strength={strength}. Enable Docker (DEVOS_USE_DOCKER_SANDBOX=1) "
+                f"or install bubblewrap/firejail."
+            )
+        return True, "privileged policy satisfied"
+    # untrusted (default)
     if not strength_allows_untrusted(strength):
         return False, (
             f"Untrusted code requires strong/restricted isolation; "
@@ -188,6 +265,34 @@ def policy_allows_execution(policy: str, strength: str) -> tuple[bool, str]:
             f"or install bubblewrap/firejail. unshare-only and degraded host are insufficient."
         )
     return True, "untrusted policy satisfied"
+
+
+def evaluate_isolation_decision(
+    policy: str,
+    *,
+    allow_network: bool = False,
+) -> dict:
+    """Pre-flight isolation decision without executing.
+
+    Returns structured evidence: trust_level, backend, strength, allowed, reason.
+    """
+    pol = normalize_policy(policy)
+    backend, strength = select_backend(allow_network=allow_network)
+    ok, reason = policy_allows_execution(pol, strength)
+    return {
+        "trust_level": pol,
+        "requested_isolation": "strong_or_restricted"
+        if pol in (POLICY_UNTRUSTED, POLICY_PRIVILEGED)
+        else "any_available",
+        "backend": backend,
+        "actual_isolation": backend,
+        "strength": strength,
+        "policy_decision": "allowed" if ok else "denied",
+        "failure_reason": "" if ok else reason,
+        "allowed": ok,
+        "reason": reason,
+        "suitable_for_untrusted_code": strength_allows_untrusted(strength),
+    }
 
 
 async def run_isolated(
@@ -217,9 +322,14 @@ async def run_isolated(
     }
     env.setdefault("PATH", "/usr/bin:/bin")
 
+    pol = normalize_policy(policy)
     backend, strength = select_backend(allow_network=allow_network)
-    ok, reason = policy_allows_execution(policy, strength)
+    ok, reason = policy_allows_execution(pol, strength)
     if not ok:
+        logger.warning(
+            "isolation_denied policy=%s backend=%s strength=%s reason=%s",
+            pol, backend, strength, reason,
+        )
         return IsolationResult(
             status="isolation_unavailable",
             stdout="",
@@ -229,6 +339,9 @@ async def run_isolated(
             isolation=backend,
             isolation_level=IsolationLevel.UNSAFE.value,
             strength=strength,
+            policy=pol,
+            policy_decision="denied",
+            policy_reason=reason,
         )
 
     if strength == IsolationStrength.NONE.value:
@@ -241,6 +354,9 @@ async def run_isolated(
             isolation="none",
             isolation_level=IsolationLevel.UNSAFE.value,
             strength=IsolationStrength.NONE.value,
+            policy=pol,
+            policy_decision="denied",
+            policy_reason="No isolation backend available",
         )
 
     # Docker (strong)
@@ -257,7 +373,7 @@ async def run_isolated(
             *cmd,
         ]
         return await _run(
-            full, None, env, timeout_s, "docker", strength, t0
+            full, None, env, timeout_s, "docker", strength, t0, policy=pol
         )
 
     # bubblewrap (restricted)
@@ -278,7 +394,7 @@ async def run_isolated(
             "--chdir", "/work",
             "--", *cmd,
         ]
-        return await _run(full, None, env, timeout_s, "bwrap", strength, t0)
+        return await _run(full, None, env, timeout_s, "bwrap", strength, t0, policy=pol)
 
     # firejail (restricted)
     if backend == "firejail":
@@ -286,7 +402,7 @@ async def run_isolated(
         net = [] if allow_network else ["--net=none"]
         return await _run(
             [firejail, *net, "--private", "--quiet", "--", *cmd],
-            cwd, env, timeout_s, "firejail", strength, t0,
+            cwd, env, timeout_s, "firejail", strength, t0, policy=pol,
         )
 
     # unshare network_only — only reachable for trusted policy
@@ -294,13 +410,13 @@ async def run_isolated(
         unshare = _which("unshare")
         return await _run(
             [unshare, "--net", "--", *cmd],
-            cwd, env, timeout_s, "unshare", strength, t0,
+            cwd, env, timeout_s, "unshare", strength, t0, policy=pol,
         )
 
     # degraded host — trusted + DEVOS_ALLOW_DEGRADED_ISOLATION only
     if backend == "degraded_host":
         logger.warning("degraded host isolation in use (dev only)")
-        return await _run(cmd, cwd, env, timeout_s, "degraded_host", strength, t0)
+        return await _run(cmd, cwd, env, timeout_s, "degraded_host", strength, t0, policy=pol)
 
     return IsolationResult(
         status="isolation_unavailable",
@@ -311,11 +427,15 @@ async def run_isolated(
         isolation="none",
         isolation_level=IsolationLevel.UNSAFE.value,
         strength=IsolationStrength.NONE.value,
+        policy=pol,
+        policy_decision="denied",
+        policy_reason="No suitable isolation backend",
     )
 
 
-async def _run(cmd, cwd, env, timeout_s, isolation, strength, t0) -> IsolationResult:
+async def _run(cmd, cwd, env, timeout_s, isolation, strength, t0, policy: str = POLICY_UNTRUSTED) -> IsolationResult:
     strength_v = strength.value if isinstance(strength, IsolationStrength) else strength
+    pol = normalize_policy(policy)
     level = (
         IsolationLevel.ISOLATED.value
         if strength_v in (IsolationStrength.STRONG.value, IsolationStrength.RESTRICTED.value)
@@ -337,19 +457,42 @@ async def _run(cmd, cwd, env, timeout_s, isolation, strength, t0) -> IsolationRe
             except Exception:
                 pass
             return IsolationResult(
-                "timeout", "", "timeout", 124,
-                int((time.monotonic() - t0) * 1000), isolation, level, strength_v,
+                status="timeout",
+                stdout="",
+                stderr="timeout",
+                exit_code=124,
+                duration_ms=int((time.monotonic() - t0) * 1000),
+                isolation=isolation,
+                isolation_level=level,
+                strength=strength_v,
+                policy=pol,
+                policy_decision="allowed",
+                policy_reason="",
             )
         return IsolationResult(
-            "ok" if proc.returncode == 0 else "error",
-            out.decode("utf-8", "replace")[:200000],
-            err.decode("utf-8", "replace")[:50000],
-            proc.returncode or 0,
-            int((time.monotonic() - t0) * 1000),
-            isolation, level, strength_v,
+            status="ok" if proc.returncode == 0 else "error",
+            stdout=out.decode("utf-8", "replace")[:200000],
+            stderr=err.decode("utf-8", "replace")[:50000],
+            exit_code=proc.returncode or 0,
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            isolation=isolation,
+            isolation_level=level,
+            strength=strength_v,
+            policy=pol,
+            policy_decision="allowed",
+            policy_reason="",
         )
     except Exception as e:
         return IsolationResult(
-            "error", "", str(e), 1,
-            int((time.monotonic() - t0) * 1000), isolation, level, strength_v,
+            status="error",
+            stdout="",
+            stderr=str(e),
+            exit_code=1,
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            isolation=isolation,
+            isolation_level=level,
+            strength=strength_v,
+            policy=pol,
+            policy_decision="allowed",
+            policy_reason="",
         )

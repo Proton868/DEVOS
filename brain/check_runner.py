@@ -363,16 +363,32 @@ async def _default_runner(command: str, ctx: dict) -> dict:
             project_id=ctx.get("project_id") or "default",
             command=command,
             timeout_s=int(ctx.get("timeout_s") or 180),
+            policy=ctx.get("isolation_policy") or "untrusted",
+            source="check_runner",
+            allow_network=bool(ctx.get("allow_network", False)),
         )
         if isinstance(result, dict):
+            if result.get("status") == "isolation_unavailable":
+                return {
+                    "ok": False,
+                    "exit_code": 126,
+                    "stdout": "",
+                    "stderr": str(result.get("stderr") or "isolation_unavailable"),
+                    "command": command,
+                    "status": "isolation_unavailable",
+                    "isolation_evidence": result.get("isolation_evidence"),
+                }
             code = int(result.get("exit_code") if result.get("exit_code") is not None else (0 if result.get("ok") else 1))
-            return {
-                "ok": code == 0,
+            out = {
+                "ok": code == 0 and result.get("ok", code == 0),
                 "exit_code": code,
                 "stdout": str(result.get("stdout") or result.get("output") or "")[:12000],
                 "stderr": str(result.get("stderr") or result.get("error") or "")[:6000],
                 "command": command,
             }
+            if result.get("isolation_evidence"):
+                out["isolation_evidence"] = result["isolation_evidence"]
+            return out
     except Exception as e:
         return {
             "ok": False,
