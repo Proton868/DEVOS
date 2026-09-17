@@ -113,8 +113,9 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
     # Fake runtime is TEST-ONLY. Never silently fall back in production.
     # Real-runtime gate (DEVOS_REAL_RUNTIME_TESTS=1) ALWAYS forbids fake,
     # even under pytest — production-path tests must exercise AgentRuntime.
-    if os.environ.get("DEVOS_ORCH_FAKE_RUNTIME") == "1":
-        if os.environ.get("DEVOS_REAL_RUNTIME_TESTS") == "1":
+    # Real-runtime gate: fake is ALWAYS forbidden (even under pytest).
+    if os.environ.get("DEVOS_REAL_RUNTIME_TESTS") == "1":
+        if os.environ.get("DEVOS_ORCH_FAKE_RUNTIME") == "1":
             return NodeExecutionResult(
                 success=False,
                 status="error",
@@ -123,6 +124,8 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
                     "when DEVOS_REAL_RUNTIME_TESTS=1"
                 ),
             )
+        # Never take the fake path when real-runtime gate is active.
+    elif os.environ.get("DEVOS_ORCH_FAKE_RUNTIME") == "1":
         if os.environ.get("DEVOS_ALLOW_FAKE_RUNTIME") == "1" or os.environ.get("PYTEST_CURRENT_TEST"):
             return await _fake_runtime(req)
         return NodeExecutionResult(

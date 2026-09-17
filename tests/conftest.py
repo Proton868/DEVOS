@@ -30,7 +30,15 @@ def _apply_test_db_isolation() -> None:
     """Default test-process DB policy (SQLite) unless Postgres was opted in."""
     Path("data").mkdir(exist_ok=True)
     # Real-runtime suite must never inherit FAKE defaults.
-    if os.environ.get("DEVOS_REAL_RUNTIME_TESTS") == "1":
+    import sys as _sys
+    _argv = " ".join(_sys.argv).lower()
+    _real = (
+        os.environ.get("DEVOS_REAL_RUNTIME_TESTS") == "1"
+        or "tests/real_runtime" in _argv
+        or "tests\\real_runtime" in _argv
+    )
+    if _real:
+        os.environ["DEVOS_REAL_RUNTIME_TESTS"] = "1"
         os.environ.pop("DEVOS_ORCH_FAKE_RUNTIME", None)
         os.environ.pop("DEVOS_ALLOW_FAKE_RUNTIME", None)
     else:

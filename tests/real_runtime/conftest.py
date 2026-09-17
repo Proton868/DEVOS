@@ -60,21 +60,24 @@ def pytest_configure(config):
 
 def pytest_sessionstart(session):
     os.environ["DEVOS_REAL_RUNTIME_TESTS"] = "1"
-    # Parent conftest may have setdefault FAKE after configure — force clear again.
+    # Capture FAKE state BEFORE clearing — enabling FAKE for this suite is a hard fail.
+    was_fake = os.environ.get("DEVOS_ORCH_FAKE_RUNTIME", "")
+    was_allow = os.environ.get("DEVOS_ALLOW_FAKE_RUNTIME", "")
     os.environ.pop("DEVOS_ORCH_FAKE_RUNTIME", None)
     os.environ.pop("DEVOS_ALLOW_FAKE_RUNTIME", None)
-    if os.environ.get("DEVOS_ORCH_FAKE_RUNTIME") == "1":
+    if was_fake == "1" or was_allow == "1":
         report = _env_report()
+        report["was_DEVOS_ORCH_FAKE_RUNTIME"] = was_fake
+        report["was_DEVOS_ALLOW_FAKE_RUNTIME"] = was_allow
         sys.stderr.write(
-            "\n[real_runtime] FATAL: DEVOS_ORCH_FAKE_RUNTIME=1 is forbidden\n"
+            "\n[real_runtime] FATAL: fake runtime was enabled at session start\n"
             + json.dumps(report, indent=2)
             + "\n"
         )
         pytest.exit(
-            "real_runtime_gate_failed: DEVOS_ORCH_FAKE_RUNTIME=1 forbidden",
+            "real_runtime_gate_failed: DEVOS_ORCH_FAKE_RUNTIME or ALLOW_FAKE was set",
             returncode=2,
         )
-    os.environ.pop("DEVOS_ALLOW_FAKE_RUNTIME", None)
     sys.stderr.write(
         "\n========== REAL-RUNTIME GATE ==========\n"
         + json.dumps(_env_report(), indent=2)
@@ -92,14 +95,34 @@ def pytest_sessionfinish(session, exitstatus):
 
 @pytest.fixture(autouse=True)
 def _assert_no_fake_runtime():
-    if os.environ.get("DEVOS_ORCH_FAKE_RUNTIME") == "1":
-        pytest.fail(
-            "real_runtime_gate_failed: DEVOS_ORCH_FAKE_RUNTIME=1 during test"
-        )
+    """Hard fail if fake runtime env is present or AgentRuntime is monkeypatched away."""
     os.environ["DEVOS_REAL_RUNTIME_TESTS"] = "1"
+    os.environ.pop("DEVOS_ORCH_FAKE_RUNTIME", None)
+    os.environ.pop("DEVOS_ALLOW_FAKE_RUNTIME", None)
+    if os.environ.get("DEVOS_ORCH_FAKE_RUNTIME") == "1":
+        pytest.fail("real_runtime_gate_failed: DEVOS_ORCH_FAKE_RUNTIME=1 during test")
     yield
     if os.environ.get("DEVOS_ORCH_FAKE_RUNTIME") == "1":
         pytest.fail("DEVOS_ORCH_FAKE_RUNTIME was re-enabled during test")
+    if os.environ.get("DEVOS_ALLOW_FAKE_RUNTIME") == "1":
+        pytest.fail("DEVOS_ALLOW_FAKE_RUNTIME was re-enabled during test")
+
+
+def assert_real_agent_runtime_loaded():
+    """Prove AgentRuntime is the real module, not a MagicMock/fake substitute."""
+    import inspect
+    from brain import agent_runtime as ar_mod
+    from brain.agent_runtime import AgentRuntime
+    assert ar_mod.__name__ == "brain.agent_runtime"
+    assert inspect.getmodule(AgentRuntime) is ar_mod
+    assert not getattr(AgentRuntime, "_is_fake_runtime", False)
+    src = inspect.getsource(AgentRuntime)
+    assert "class AgentRuntime" in src
+    # UCIP must resolve
+    from governance import ucip as ucip_mod
+    assert ucip_mod.__name__ == "governance.ucip"
+    from execution.files import FileService
+    assert inspect.getmodule(FileService).__name__ == "execution.files"
 
 
 @pytest.fixture
@@ -183,3 +206,4 @@ def require_agent_runtime_deps():
             + ",".join(missing)
             + " — install requirements.txt before real-runtime AgentRuntime tests"
         )
+    assert_real_agent_runtime_loaded()

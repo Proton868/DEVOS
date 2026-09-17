@@ -333,3 +333,54 @@ def test_user_cannot_access_other_user_project(real_user_ids):
         pass
     assert not (b_root / "secret_a.txt").exists()
     assert secret.read_text() == "owner-a-only\n"
+
+
+@pytest.mark.real_runtime
+def test_fake_runtime_env_hard_fails_orchestration(monkeypatch):
+    """With REAL_RUNTIME gate on, FAKE=1 must error — never succeed via _fake_runtime."""
+    from tests.real_runtime.conftest import require_agent_runtime_deps, assert_real_agent_runtime_loaded
+    require_agent_runtime_deps()
+    assert_real_agent_runtime_loaded()
+    monkeypatch.setenv("DEVOS_REAL_RUNTIME_TESTS", "1")
+    monkeypatch.setenv("DEVOS_ORCH_FAKE_RUNTIME", "1")
+    async def _go():
+        from brain.orchestration_runtime import (
+            run_node_on_agent_runtime, NodeExecutionRequest,
+        )
+        req = NodeExecutionRequest(
+            plan_id="rr-fake-1",
+            node_id="n1",
+            workspace_id="rr_proj_a",
+            user_id="rr_user_a",
+            persona_id="code",
+            objective="should not use fake runtime",
+            authorization_decision="allow",
+            effective_caps=["ucip:filesystem.write"],
+        )
+        result = await run_node_on_agent_runtime(req)
+        assert result.success is False
+        assert "FAKE_RUNTIME" in (result.error or "") or "forbidden" in (result.error or "").lower()
+        assert result.status in ("error", "failed", "blocked")
+    import asyncio
+    asyncio.run(_go())
+
+
+@pytest.mark.real_runtime
+def test_real_modules_not_mocked():
+    from tests.real_runtime.conftest import assert_real_agent_runtime_loaded
+    assert_real_agent_runtime_loaded()
+
+
+@pytest.mark.real_runtime
+def test_isolation_refusal_not_acceptance_success():
+    from brain.mission_acceptance import evaluate_mission_acceptance
+    acc = evaluate_mission_acceptance(
+        execution_ok=False,
+        status="isolation_unavailable",
+        files_changed=[],
+        ponytail={"passed": False, "applicable": False},
+        evidence_refs=[],
+        mission_id="rr-iso-fail",
+        user_id="rr_user_a",
+    )
+    assert acc.get("ok") is False

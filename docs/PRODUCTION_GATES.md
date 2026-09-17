@@ -87,3 +87,16 @@ Public `/api/health` MUST return JSON with `"service": "devos"`. Fix nginx upstr
 
 See **docs/CURRENT_STATUS.md** for the full table. Auth E2E and `/api/health` were operator-verified at commit `aa15b22`. Cluster 12 is **not** release-green. Isolation remains `network_only` / not suitable for untrusted code.
 
+
+
+## Real-runtime gate (`./ops/run_real_runtime_tests.sh`)
+
+| Category | Location | Fake runtime |
+|----------|----------|--------------|
+| **A REAL RUNTIME** | `tests/real_runtime/` + marker `real_runtime` | **Forbidden** |
+| **B PROVIDER TRANSPORT** | May script LLM HTTP only | Runtime stays real |
+| **C UNIT / FAKE** | `tests/test_*.py` with `fake_runtime` marker | Allowed under pytest only |
+
+**PASS means:** fake env unset; real `AgentRuntime`/`UCIP`/`FileService` loaded; workspace tools write real files; acceptance uses `evaluate_mission_acceptance`; isolation refusal and provider exhaustion cannot become success.
+
+**Exit codes:** 0 pass; 1 pytest fail; 2 fake runtime / gate config error.
