@@ -61,3 +61,8 @@ data/hitl/
 data/*.sqlite3
 data/*.sqlite3-shm
 data/*.sqlite3-wal
+
+# Managed Flutter SDK
+data/toolchains/flutter/
+!data/toolchains/flutter_checksums.json
+!data/toolchains/.gitkeep

@@ -33,3 +33,7 @@ python3 scripts/apply_supabase_schema.py
 ```
 
 Only enable client-direct access to those tables after writing RLS policies tied to `auth.uid()` and membership mapping. Until then, keep access backend-only.
+
+
+## RLS completion (2026-09-17)
+See migrations `20260917110000_*` and `20260917120000_*`. Memories policies fixed to use users.supabase_id linkage. Secrets/scripts/settings gain RLS when present.

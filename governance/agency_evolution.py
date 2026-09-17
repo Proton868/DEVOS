@@ -32,6 +32,7 @@ ALWAYS_HUMAN_GATED = {
     "ucip:vcs.push",
     "financial.transfer",
     "governance.change",
+    "ucip:toolchain.flutter_sdk_provision",
 }
 
 # High-risk caps need stronger evidence even when not permanently gated
@@ -41,6 +42,7 @@ HIGH_RISK_CAPS = {
     "ucip:api.call",
     "ucip:filesystem.write",
     "ucip:vcs.write",
+    "ucip:toolchain.flutter_sdk_provision",
 }
 
 # Low-risk baseline capabilities: safe to run at the worker's global autonomy

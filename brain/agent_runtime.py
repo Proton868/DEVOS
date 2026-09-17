@@ -1187,7 +1187,7 @@ class AgentRuntime:
                 "list_safe_skill_handlers", "suggest_skill_handler",
             ):
                 return await self._skill_acquisition_tool(name, args)
-            if name in ("bootstrap_project", "detect_project_toolchain"):
+            if name in ("bootstrap_project", "detect_project_toolchain", "provision_flutter_sdk", "probe_flutter_runtime"):
                 return await self._project_bootstrap_tool(name, args)
             if name in ("detect_checks", "run_check", "debug_check_loop"):
                 return await self._check_runner_tool(name, args)
@@ -1226,6 +1226,48 @@ class AgentRuntime:
                 fs = None
             resolved = resolve_toolchain(request=request, explicit=explicit, fs=fs)
             return {"ok": bool(resolved.get("ok")), **resolved}
+
+        if name == "probe_flutter_runtime":
+            from execution.flutter_toolchain import probe_flutter_runtime
+            info = probe_flutter_runtime()
+            return {"ok": info.ok, **info.to_dict()}
+
+        if name == "provision_flutter_sdk":
+            from execution.flutter_toolchain import (
+                CAP_FLUTTER_SDK_PROVISION, DEFAULT_FLUTTER_VERSION,
+                ProvisionRequest, provision_flutter_sdk, request_sdk_provision_hitl,
+            )
+            authorized = bool(args.get("authorized") or args.get("authorization_granted"))
+            use_hitl = bool(args.get("require_hitl", True)) and not authorized
+            version = str(args.get("version") or DEFAULT_FLUTTER_VERSION)
+            channel = str(args.get("channel") or "stable")
+            platform = str(args.get("platform") or "linux")
+            if use_hitl:
+                return await request_sdk_provision_hitl(
+                    version=version, channel=channel, platform=platform,
+                    actor_id=getattr(self, "agent_id", None) or self.user_id or "agent",
+                    user_id=self.user_id or "user",
+                    loop_id=str(getattr(self, "loop_id", None) or "toolchain"),
+                    reason=str(args.get("reason") or "Flutter SDK provisioning requested"),
+                )
+            caps = set()
+            try:
+                identity = getattr(self, "identity", None) or getattr(self, "context", None)
+                if identity is not None:
+                    caps = set(getattr(identity, "capabilities", None) or getattr(identity, "caps", None) or [])
+            except Exception:
+                caps = set()
+            if CAP_FLUTTER_SDK_PROVISION not in caps and not authorized:
+                return {
+                    "ok": False, "error": "authorization_required",
+                    "error_code": "authorization_required",
+                    "capability": CAP_FLUTTER_SDK_PROVISION,
+                    "message": "Flutter SDK provisioning requires HITL/UCIP grant",
+                }
+            result = provision_flutter_sdk(ProvisionRequest(
+                version=version, channel=channel, platform=platform, authorized=True,
+            ))
+            return result.to_dict()
 
         # bootstrap_project
         project_name = str(args.get("project_name") or args.get("name") or "app")

@@ -208,3 +208,13 @@ def test_unauthenticated_denied(client):
     assert client.get("/api/account/me").status_code in (401, 403)
     assert client.get("/api/auth/me").status_code in (401, 403)
     assert client.get("/api/files/x/read", params={"path": "a"}).status_code in (401, 403)
+
+def test_secrets_idor(client, users):
+    ta, tb = users["idor_a"]["token"], users["idor_b"]["token"]
+    r = client.post("/api/secrets", headers=auth(ta), json={"name": "IDOR_KEY", "value": "secret-a"})
+    if r.status_code >= 400:
+        import pytest; pytest.skip(f"secrets: {r.status_code}")
+    sid = (r.json().get("secret") or r.json()).get("id") or r.json().get("id")
+    lb = client.get("/api/secrets", headers=auth(tb))
+    ids_b = {s.get("id") for s in (lb.json().get("secrets") or [])}
+    assert sid not in ids_b

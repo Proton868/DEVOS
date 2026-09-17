@@ -228,14 +228,18 @@ def _seed_builtin_profiles() -> None:
         install_cmd="flutter pub get",
         build_cmd="flutter build apk --debug",
         test_cmd="flutter test",
-        validate_files=["pubspec.yaml"],
+        typecheck_cmd="flutter analyze",
+        lint_cmd="dart analyze",
+        validate_files=["pubspec.yaml", "lib/main.dart", "README.md"],
         repair_hints=[
-            "Ensure Flutter SDK is installed and on PATH",
+            "Ensure Flutter SDK is installed (PATH or data/toolchains/flutter)",
             "Run flutter doctor and resolve reported issues",
-            "Do not use apt/sudo from DevOS to install Flutter",
+            "Use authorized ucip:toolchain.flutter_sdk_provision for governed SDK install",
+            "Do not use apt/sudo/curl|bash from DevOS to install Flutter",
+            "ios builds require macOS + Xcode",
         ],
-        required_binaries=["flutter"],
-        detect_markers=["pubspec.yaml"],
+        required_binaries=["flutter", "dart"],
+        detect_markers=["pubspec.yaml", "lib/main.dart"],
         requires_install=True,
     ))
 
@@ -277,6 +281,8 @@ def detect_toolchain(request: str, explicit: Optional[str] = None) -> ToolchainK
             "makefile": "shell",
             "make": "shell",
             "sh": "shell",
+            "flutter": "flutter",
+            "dart": "flutter",
         }
         key = aliases.get(key, key)
         if key in PROFILES:
@@ -293,6 +299,7 @@ def detect_toolchain(request: str, explicit: Optional[str] = None) -> ToolchainK
         (ToolchainKind.VITE, ("vite",)),
         (ToolchainKind.TYPESCRIPT, ("typescript", " ts ", ".ts ")),
         (ToolchainKind.SHELL, ("makefile", " make ", "shell script")),
+        ("flutter", ("flutter", "dart mobile", "android app", "ios app", "pubspec")),
         (ToolchainKind.PYTHON, ("python", "pytest", "django", "flask", "fastapi")),
         (ToolchainKind.NODE, ("node.js", "nodejs", "express", "npm ")),
         (ToolchainKind.JAVASCRIPT, ("javascript",)),
@@ -318,6 +325,22 @@ def detect_project_toolchain(fs) -> dict:
         }
     except Exception:
         paths = set()
+
+    try:
+        from execution.flutter_toolchain import detect_flutter_project
+        fl = detect_flutter_project(fs)
+        if fl.is_flutter_project:
+            profile = PROFILES.get("flutter")
+            return {
+                "kind": "flutter",
+                "profile": profile.to_dict() if profile else None,
+                "markers_found": ["pubspec.yaml"] + list(fl.structure_markers),
+                "score": int(fl.confidence * 10),
+                "message": "detected:flutter",
+                "flutter": fl.to_dict(),
+            }
+    except Exception:
+        pass
 
     scores: dict[str, int] = {}
     for key, profile in list(PROFILES.items()):
@@ -366,6 +389,41 @@ def check_runtime_available(
     required = list(profile.required_binaries or [])
     if not required and profile.runtime and profile.runtime != "browser":
         required = [profile.runtime]
+
+    if profile.kind_value() == "flutter" and which_fn is None:
+        try:
+            from execution.flutter_toolchain import probe_flutter_runtime, flutter_command_plan
+            info = probe_flutter_runtime()
+            out = {
+                "ok": bool(info.flutter_available),
+                "runtime": profile.runtime,
+                "required_binaries": required,
+                "present": [],
+                "missing": [],
+                "toolchain": "flutter",
+                "flutter": info.to_dict(),
+                "versions": {"flutter": info.flutter_version, "dart": info.dart_version, "channel": info.channel},
+                "plan": flutter_command_plan(),
+                "platform_limits": info.platform_limits,
+            }
+            if info.flutter_path:
+                out["present"].append({"binary": "flutter", "path": info.flutter_path})
+            else:
+                out["missing"].append("flutter")
+            if info.dart_path:
+                out["present"].append({"binary": "dart", "path": info.dart_path})
+            elif "dart" in required:
+                out["missing"].append("dart")
+            if not out["ok"]:
+                out["error"] = "toolchain_unavailable"
+                out["message"] = (
+                    "Flutter SDK not available. Use authorized "
+                    "ucip:toolchain.flutter_sdk_provision or install on PATH. "
+                    "DevOS will not run apt/sudo/curl|bash to install Flutter."
+                )
+            return out
+        except Exception as e:
+            logger.debug("flutter probe failed: %s", e)
 
     missing = []
     present = []
@@ -463,6 +521,56 @@ def _templates(kind: ToolchainKind | str, name: str) -> dict[str, str]:
     """Minimal viable file set per toolchain (not framework-specific engines)."""
     safe = re.sub(r"[^a-zA-Z0-9_-]+", "-", name).strip("-") or "app"
     kind_key = kind.value if isinstance(kind, ToolchainKind) else str(kind)
+    if kind_key == "flutter":
+        class_name = "".join(part.title() for part in safe.replace("-", "_").split("_") if part) or "App"
+        pkg = safe.lower().replace("-", "_")
+        return {
+            "pubspec.yaml": (
+                f"name: {pkg}\n"
+                "description: Flutter project bootstrapped by DevOS.\n"
+                "publish_to: 'none'\n"
+                "version: 0.1.0+1\n\n"
+                "environment:\n"
+                "  sdk: '>=3.0.0 <4.0.0'\n\n"
+                "dependencies:\n"
+                "  flutter:\n"
+                "    sdk: flutter\n\n"
+                "dev_dependencies:\n"
+                "  flutter_test:\n"
+                "    sdk: flutter\n\n"
+                "flutter:\n"
+                "  uses-material-design: true\n"
+            ),
+            "lib/main.dart": (
+                "import 'package:flutter/material.dart';\n\n"
+                f"void main() => runApp(const {class_name}App());\n\n"
+                f"class {class_name}App extends StatelessWidget {{\n"
+                f"  const {class_name}App({{super.key}});\n\n"
+                "  @override\n"
+                "  Widget build(BuildContext context) {\n"
+                "    return MaterialApp(\n"
+                f"      title: '{safe}',\n"
+                "      home: const Scaffold(\n"
+                f"        body: Center(child: Text('hello from {safe}')),\n"
+                "      ),\n"
+                "    );\n"
+                "  }\n"
+                "}\n"
+            ),
+            "test/widget_test.dart": (
+                "import 'package:flutter_test/flutter_test.dart';\n\n"
+                "void main() {\n"
+                "  test('placeholder', () {\n"
+                "    expect(1 + 1, 2);\n"
+                "  });\n"
+                "}\n"
+            ),
+            "README.md": (
+                f"# {safe}\n\nFlutter project bootstrapped by DevOS.\n\n"
+                "```bash\nflutter pub get\nflutter analyze\nflutter test\n```\n\n"
+                "Note: `flutter build ios` requires macOS + Xcode.\n"
+            ),
+        }
     if kind_key in ("javascript", ToolchainKind.JAVASCRIPT.value):
         kind = ToolchainKind.NODE  # same scaffold as node
     if kind_key == ToolchainKind.TYPESCRIPT.value or kind is ToolchainKind.TYPESCRIPT:
