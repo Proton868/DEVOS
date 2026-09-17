@@ -178,11 +178,16 @@ def _decode_supabase_hs256(token: str):
     """Verify HS256 Supabase access tokens with SUPABASE_JWT_SECRET only.
 
     Never uses DevOS JWT_SECRET. Returns payload dict or None.
+
+    Audience handling: Supabase commonly sets aud to the string
+    ``authenticated``; some tokens omit aud or use a list — accept the
+    standard claim when present without rejecting compatible variants.
     """
     secret = (getattr(settings, "SUPABASE_JWT_SECRET", None) or "").strip()
     if not secret:
         return None
     try:
+        # First try strict audience (current Supabase default).
         return jwt.decode(
             token,
             secret,
@@ -190,6 +195,28 @@ def _decode_supabase_hs256(token: str):
             audience="authenticated",
             options={"require": ["exp", "sub"]},
         )
+    except (jwt.InvalidAudienceError, jwt.MissingRequiredClaimError):
+        try:
+            # Fallback: verify signature/exp/sub without audience constraint,
+            # then accept only if aud is missing or includes authenticated.
+            payload = jwt.decode(
+                token,
+                secret,
+                algorithms=["HS256"],
+                options={"require": ["exp", "sub"], "verify_aud": False},
+            )
+            aud = payload.get("aud")
+            if aud is None:
+                return payload
+            if isinstance(aud, str) and aud == "authenticated":
+                return payload
+            if isinstance(aud, (list, tuple)) and "authenticated" in aud:
+                return payload
+            logger.debug("[auth] Supabase HS256 aud rejected: %s", type(aud).__name__)
+            return None
+        except Exception as e:
+            logger.debug("[auth] Supabase HS256 verification failed: %s", type(e).__name__)
+            return None
     except Exception as e:
         logger.debug("[auth] Supabase HS256 verification failed: %s", type(e).__name__)
         return None
@@ -593,14 +620,25 @@ async def supabase_sync(request: Request, response: Response, db: AsyncSession =
 
     payload = decode_supabase_token(token)
     if payload is None:
+        alg = _supabase_token_alg(token)
+        has_secret = bool((getattr(settings, "SUPABASE_JWT_SECRET", None) or "").strip())
+        logger.warning(
+            "[auth] supabase/sync rejected token alg=%s jwt_secret_configured=%s",
+            alg or "unknown",
+            has_secret,
+        )
         raise HTTPException(401, "Invalid Supabase token")
 
     from governance.audit import AuditLogger, AuditEventType
     user = await sync_supabase_user(db, payload)
     local_token = make_jwt(user.id, user.is_admin)
     response.set_cookie(
-        "devos_token", local_token, httponly=True, samesite="lax",
+        "devos_token",
+        local_token,
+        httponly=True,
+        samesite="lax",
         secure=not settings.DEBUG,
+        path="/",
         max_age=settings.JWT_EXPIRE_HOURS * 3600,
     )
     AuditLogger().log(AuditEventType.AUTH, actor_id=user.id, tenant_id="default",

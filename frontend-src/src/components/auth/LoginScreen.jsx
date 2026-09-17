@@ -248,8 +248,17 @@ export default function LoginScreen() {
           return;
         }
         const user = await syncSupabaseSession();
-        if (user?.token) localStorage.setItem("devos_token", user.token);
-        setUser(user.user || user);
+        // syncSupabaseSession already persists DevOS JWT via setToken()
+        if (user?.token) {
+          try { localStorage.setItem("devos_token", user.token); } catch (_) {}
+        }
+        const profile = user?.user || user;
+        if (!profile || !(profile.id || profile.username)) {
+          setError("Signed in with Supabase but DevOS session was incomplete.");
+          setSubmitting(false);
+          return;
+        }
+        setUser(profile);
         return;
       } catch (err) {
         setError(err.message || "Supabase sign-in failed.");

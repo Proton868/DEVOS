@@ -160,11 +160,31 @@ export default function App() {
     registerCoreCommands();
   }, []);
 
-  // Auth check
+  // Auth check — never wipe a successfully established session with a
+  // racing null verifySession() result (common after Supabase password login).
   useEffect(() => {
-    handleSupabaseRedirect(setUser, setStatus).finally(() => {
-      verifySession().then((user) => setUser(user));
+    let cancelled = false;
+    handleSupabaseRedirect(setUser, setStatus).finally(async () => {
+      try {
+        const user = await verifySession();
+        if (cancelled) return;
+        if (user) setUser(user);
+        else {
+          // Mark auth resolved without clearing an in-flight login success.
+          const { default: store } = await import("./store/useStore");
+          const current = store.getState?.()?.user;
+          if (!current) setUser(null);
+          else store.setState({ authChecked: true });
+        }
+      } catch (_) {
+        if (!cancelled) {
+          const { default: store } = await import("./store/useStore");
+          if (!store.getState?.()?.user) setUser(null);
+          else store.setState({ authChecked: true });
+        }
+      }
     });
+    return () => { cancelled = true; };
   }, [setUser, setStatus]);
 
   // Prefer Supabase SDK session events over manual hash parsing alone
@@ -177,22 +197,19 @@ export default function App() {
         const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
           if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && session?.access_token) {
             try {
-              const { api } = await import("./services/api");
-              // exchange/sync path
-              const r = await fetch("/api/auth/supabase/sync", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${session.access_token}`,
-                },
-              });
-              if (r.ok) {
-                const user = await r.json();
-                setUser(user);
+              const { syncSupabaseSession } = await import("./services/api");
+              const synced = await syncSupabaseSession();
+              if (synced?.token) {
+                try { localStorage.setItem("devos_token", synced.token); } catch (_) {}
               }
-            } catch (e) {}
+              if (synced) setUser(synced.user || synced);
+            } catch (e) {
+              // Keep Supabase session; do not clear UI on transient sync errors.
+              console.warn("[auth] supabase sync after SIGNED_IN failed", e?.message || e);
+            }
           }
           if (event === "SIGNED_OUT") {
+            try { localStorage.removeItem("devos_token"); } catch (_) {}
             setUser(null);
           }
         });

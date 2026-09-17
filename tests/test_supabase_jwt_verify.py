@@ -94,3 +94,20 @@ def test_no_url_returns_none():
     settings.SUPABASE_JWT_SECRET = "secret"
     token = _hs256_token("secret")
     assert auth_mod.decode_supabase_token(token) is None
+
+
+def test_hs256_accepts_missing_aud_when_signature_valid():
+    settings.SUPABASE_URL = "https://heinpngifdqsykqzufhe.supabase.co"
+    settings.SUPABASE_JWT_SECRET = "unit-test-supabase-jwt-secret-value"
+    now = int(time.time())
+    payload = {
+        "sub": "user-no-aud",
+        "email": "noaud@example.com",
+        "role": "authenticated",
+        "iat": now,
+        "exp": now + 3600,
+    }
+    token = jwt.encode(payload, settings.SUPABASE_JWT_SECRET, algorithm="HS256")
+    out = auth_mod.decode_supabase_token(token)
+    assert out is not None
+    assert out["sub"] == "user-no-aud"
