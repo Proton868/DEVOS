@@ -52,7 +52,7 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "list_workflows", "inspect_workflow",
         "get_project_metadata", "get_test_files", "get_build_system",
         "get_package_dependencies", "find_symbol", "select_related_tests",
-        "propose_skill", "detect_missing_capability", "list_skill_proposals",
+        "propose_skill", "detect_missing_capability", "list_skill_proposals", "list_safe_skill_handlers", "suggest_skill_handler",
         "bootstrap_project", "detect_project_toolchain",
         "detect_checks", "run_check", "debug_check_loop",
     },
@@ -62,7 +62,7 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "git_status", "git_diff", "git_log", "git_show", "git_branch",
         "get_project_metadata", "get_test_files", "get_build_system",
         "get_package_dependencies", "find_symbol", "select_related_tests",
-        "propose_skill", "detect_missing_capability", "list_skill_proposals",
+        "propose_skill", "detect_missing_capability", "list_skill_proposals", "list_safe_skill_handlers", "suggest_skill_handler",
     
         "bootstrap_project", "detect_project_toolchain",
         "detect_checks", "run_check", "debug_check_loop",},
@@ -76,7 +76,7 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "list_workflows", "inspect_workflow", "execute_workflow",
         "get_project_metadata", "get_test_files", "get_build_system",
         "get_package_dependencies", "find_symbol", "select_related_tests",
-        "propose_skill", "detect_missing_capability", "list_skill_proposals",
+        "propose_skill", "detect_missing_capability", "list_skill_proposals", "list_safe_skill_handlers", "suggest_skill_handler",
         "bootstrap_project", "detect_project_toolchain",
     
         "detect_checks", "run_check", "debug_check_loop",},
@@ -752,8 +752,9 @@ register_agent_tool(AgentTool(
     name="propose_skill",
     description=(
         "Propose a new governed skill/tool when a required capability is missing. "
-        "Does not grant permissions. High/critical risk requires human approval. "
-        "Only safe handler kinds (echo, json_validate, hash_text) are installable."
+        "Does not grant permissions. High/critical/network/system require human approval. "
+        "Only catalog handler_kinds are installable (analysis/transform/adapters — no shell/network). "
+        "Use list_safe_skill_handlers or suggest_skill_handler to choose a kind."
     ),
     input_schema=_s({
         "name": {"type": "string", "description": "snake_case tool name", "maxLength": 64},
@@ -761,7 +762,14 @@ register_agent_tool(AgentTool(
         "reason": {"type": "string", "description": "Why this agent needs it", "maxLength": 1000},
         "risk": {"type": "string", "description": "low|medium|high|critical"},
         "side_effect": {"type": "string", "description": "none|workspace|network|system"},
-        "handler_kind": {"type": "string", "description": "echo|json_validate|hash_text"},
+        "handler_kind": {
+            "type": "string",
+            "description": (
+                "Catalog kind: echo|json_validate|hash_text|text_transform|line_stats|"
+                "diff_summary|json_path_get|regex_extract|path_normalize|extension_tally|"
+                "parse_pytest_summary|parse_compiler_errors|markdown_outline|csv_preview|semver_compare"
+            ),
+        },
         "input_schema": {"type": "object", "description": "Optional JSON schema for arguments"},
     }, required=["name", "description", "reason"]),
     capability=None,

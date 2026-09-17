@@ -121,11 +121,114 @@ _INSTALLED: dict[str, str] = {}  # tool_name → proposal_id
 _DYNAMIC_HANDLERS: dict[str, str] = {}  # tool_name → safe handler_kind
 
 # Safe handler kinds only — no arbitrary code execution from model output.
+# Implementations are fixed Python functions registered in-process. Agents can
+# *bind* a tool name to a kind; they cannot inject new implementation code.
 _SAFE_HANDLERS: dict[str, Callable[..., dict]] = {}
+
+# Catalog metadata for production-useful kinds (still sandbox-safe).
+HANDLER_CATALOG: dict[str, dict] = {
+    "echo": {
+        "category": "utility",
+        "summary": "Echo arguments (regression / smoke)",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "json_validate": {
+        "category": "code_analysis",
+        "summary": "Parse/validate JSON text or object",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "hash_text": {
+        "category": "utility",
+        "summary": "SHA-256 hash of provided text (no secret store access)",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "text_transform": {
+        "category": "file_transform",
+        "summary": "Safe text transforms: upper|lower|strip|slugify|reverse",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "line_stats": {
+        "category": "code_analysis",
+        "summary": "Line/word/char counts for provided text",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "diff_summary": {
+        "category": "code_analysis",
+        "summary": "Summarize differences between two text blobs (no FS)",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "json_path_get": {
+        "category": "code_analysis",
+        "summary": "Read a simple dotted path from JSON (no code eval)",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "regex_extract": {
+        "category": "code_analysis",
+        "summary": "Extract limited regex matches from text (bounded)",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "path_normalize": {
+        "category": "project_toolchain",
+        "summary": "Normalize a relative path string; reject traversal",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "extension_tally": {
+        "category": "project_toolchain",
+        "summary": "Count file extensions from a list of path strings",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "parse_pytest_summary": {
+        "category": "test_build_adapter",
+        "summary": "Parse pytest output for pass/fail/error counts",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "parse_compiler_errors": {
+        "category": "test_build_adapter",
+        "summary": "Parse common tsc/eslint/python traceback lines from text",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "markdown_outline": {
+        "category": "code_analysis",
+        "summary": "Extract markdown heading outline from text",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "csv_preview": {
+        "category": "file_transform",
+        "summary": "Preview first N rows of CSV text",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+    "semver_compare": {
+        "category": "project_toolchain",
+        "summary": "Compare two semver-like version strings",
+        "max_risk": "low",
+        "side_effect": "none",
+    },
+}
 
 
 def _register_safe_handler(kind: str, fn: Callable[..., dict]) -> None:
     _SAFE_HANDLERS[kind] = fn
+
+
+def _bound_text(val: Any, limit: int = 200_000) -> str:
+    s = str(val if val is not None else "")
+    if len(s) > limit:
+        return s[:limit]
+    return s
 
 
 def _handler_echo(args: dict, **_ctx) -> dict:
@@ -145,14 +248,346 @@ def _handler_json_validate(args: dict, **_ctx) -> dict:
 
 
 def _handler_hash_text(args: dict, **_ctx) -> dict:
-    text = str(args.get("text") or "")
+    text = _bound_text(args.get("text") or "")
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     return {"ok": True, "sha256": digest, "length": len(text)}
+
+
+def _handler_text_transform(args: dict, **_ctx) -> dict:
+    text = _bound_text(args.get("text") or "")
+    op = str(args.get("op") or "strip").lower().strip()
+    allowed = {
+        "upper": lambda s: s.upper(),
+        "lower": lambda s: s.lower(),
+        "strip": lambda s: s.strip(),
+        "reverse": lambda s: s[::-1],
+        "slugify": lambda s: re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:200],
+    }
+    if op not in allowed:
+        return {"ok": False, "error": f"op must be one of {sorted(allowed)}"}
+    return {"ok": True, "op": op, "result": allowed[op](text), "handler": "text_transform"}
+
+
+def _handler_line_stats(args: dict, **_ctx) -> dict:
+    text = _bound_text(args.get("text") or "")
+    lines = text.splitlines()
+    words = text.split()
+    return {
+        "ok": True,
+        "lines": len(lines),
+        "words": len(words),
+        "chars": len(text),
+        "non_empty_lines": sum(1 for ln in lines if ln.strip()),
+        "handler": "line_stats",
+    }
+
+
+def _handler_diff_summary(args: dict, **_ctx) -> dict:
+    a = _bound_text(args.get("before") or args.get("a") or "", 100_000)
+    b = _bound_text(args.get("after") or args.get("b") or "", 100_000)
+    la, lb = a.splitlines(), b.splitlines()
+    first_diff = None
+    for i, (x, y) in enumerate(zip(la, lb)):
+        if x != y:
+            first_diff = i + 1
+            break
+    if first_diff is None and len(la) != len(lb):
+        first_diff = min(len(la), len(lb)) + 1
+    return {
+        "ok": True,
+        "before_lines": len(la),
+        "after_lines": len(lb),
+        "identical": a == b,
+        "first_diff_line": first_diff,
+        "handler": "diff_summary",
+    }
+
+
+def _handler_json_path_get(args: dict, **_ctx) -> dict:
+    payload = args.get("payload")
+    path = str(args.get("path") or "").strip()
+    if payload is None:
+        return {"ok": False, "error": "payload required"}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            return {"ok": False, "error": "invalid_json"}
+    if not path or not re.match(r"^[A-Za-z0-9_.\[\]-]+$", path) or ".." in path:
+        return {"ok": False, "error": "invalid_path"}
+    cur: Any = payload
+    for part in path.replace("[", ".").replace("]", "").split("."):
+        if part == "":
+            continue
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        elif isinstance(cur, list) and part.isdigit():
+            idx = int(part)
+            if idx < 0 or idx >= len(cur):
+                return {"ok": False, "error": "index_out_of_range"}
+            cur = cur[idx]
+        else:
+            return {"ok": False, "error": "path_not_found"}
+    # Never return huge nested objects
+    if isinstance(cur, (dict, list)):
+        try:
+            enc = json.dumps(cur, default=str)
+            if len(enc) > 20_000:
+                return {"ok": True, "truncated": True, "type": type(cur).__name__, "size": len(enc)}
+        except Exception:
+            return {"ok": False, "error": "unserializable"}
+    return {"ok": True, "value": cur, "type": type(cur).__name__, "handler": "json_path_get"}
+
+
+def _handler_regex_extract(args: dict, **_ctx) -> dict:
+    text = _bound_text(args.get("text") or "", 50_000)
+    pattern = str(args.get("pattern") or "")
+    if not pattern or len(pattern) > 200:
+        return {"ok": False, "error": "pattern required (≤200 chars)"}
+    # Refuse nested quantifiers that commonly enable ReDoS
+    if re.search(r"(\+|\*|\{\d+,?\d*\})\1", pattern) or "(?!" in pattern or "(?<" in pattern:
+        return {"ok": False, "error": "pattern_not_allowed"}
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        return {"ok": False, "error": "invalid_regex"}
+    matches = []
+    for m in rx.finditer(text):
+        matches.append(m.group(0)[:500])
+        if len(matches) >= 50:
+            break
+    return {"ok": True, "count": len(matches), "matches": matches, "handler": "regex_extract"}
+
+
+def _handler_path_normalize(args: dict, **_ctx) -> dict:
+    raw = str(args.get("path") or args.get("rel") or "").strip().replace("\\", "/")
+    if not raw:
+        return {"ok": False, "error": "path required"}
+    if raw.startswith("/") or re.match(r"^[A-Za-z]:", raw) or "\x00" in raw:
+        return {"ok": False, "error": "absolute_or_null_path_rejected"}
+    parts = []
+    for seg in raw.split("/"):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            return {"ok": False, "error": "path_traversal_rejected"}
+        if seg.startswith("~"):
+            return {"ok": False, "error": "home_path_rejected"}
+        parts.append(seg)
+    norm = "/".join(parts)
+    return {"ok": True, "path": norm, "handler": "path_normalize"}
+
+
+def _handler_extension_tally(args: dict, **_ctx) -> dict:
+    paths = args.get("paths") or args.get("files") or []
+    if isinstance(paths, str):
+        paths = [p.strip() for p in paths.splitlines() if p.strip()]
+    if not isinstance(paths, list):
+        return {"ok": False, "error": "paths must be a list"}
+    tallies: dict[str, int] = {}
+    for p in paths[:5000]:
+        s = str(p).replace("\\", "/")
+        if ".." in s.split("/"):
+            continue
+        if "." not in s.rsplit("/", 1)[-1]:
+            ext = "(none)"
+        else:
+            ext = s.rsplit(".", 1)[-1].lower()[:20]
+        tallies[ext] = tallies.get(ext, 0) + 1
+    return {"ok": True, "counts": tallies, "total": sum(tallies.values()), "handler": "extension_tally"}
+
+
+def _handler_parse_pytest_summary(args: dict, **_ctx) -> dict:
+    text = _bound_text(args.get("text") or args.get("stdout") or "", 100_000)
+    passed = failed = errors = skipped = 0
+    m = re.search(r"(\d+)\s+passed", text)
+    if m:
+        passed = int(m.group(1))
+    m = re.search(r"(\d+)\s+failed", text)
+    if m:
+        failed = int(m.group(1))
+    m = re.search(r"(\d+)\s+error", text)
+    if m:
+        errors = int(m.group(1))
+    m = re.search(r"(\d+)\s+skipped", text)
+    if m:
+        skipped = int(m.group(1))
+    ok = failed == 0 and errors == 0 and ("passed" in text or passed > 0)
+    return {
+        "ok": True,
+        "passed": passed,
+        "failed": failed,
+        "errors": errors,
+        "skipped": skipped,
+        "tests_ok": ok and failed == 0 and errors == 0,
+        "handler": "parse_pytest_summary",
+    }
+
+
+def _handler_parse_compiler_errors(args: dict, **_ctx) -> dict:
+    text = _bound_text(args.get("text") or args.get("stderr") or "", 100_000)
+    findings = []
+    # TypeScript/ESLint style: path(line,col): error TS####: message
+    for m in re.finditer(
+        r"(?P<file>[\w./\\-]+)\((?P<line>\d+),(?P<col>\d+)\):\s*(?P<sev>error|warning)\s+(?P<code>\w+):\s*(?P<msg>.+)",
+        text,
+    ):
+        findings.append({
+            "file": m.group("file")[:200],
+            "line": int(m.group("line")),
+            "severity": m.group("sev"),
+            "code": m.group("code"),
+            "message": m.group("msg").strip()[:300],
+        })
+        if len(findings) >= 50:
+            break
+    # Python traceback: File "x.py", line N
+    if len(findings) < 50:
+        for m in re.finditer(r'File "([^"]+)", line (\d+)', text):
+            findings.append({
+                "file": m.group(1)[:200],
+                "line": int(m.group(2)),
+                "severity": "error",
+                "code": "python",
+                "message": "traceback",
+            })
+            if len(findings) >= 50:
+                break
+    return {
+        "ok": True,
+        "count": len(findings),
+        "findings": findings,
+        "handler": "parse_compiler_errors",
+    }
+
+
+def _handler_markdown_outline(args: dict, **_ctx) -> dict:
+    text = _bound_text(args.get("text") or "", 100_000)
+    headings = []
+    for m in re.finditer(r"^(#{1,6})\s+(.+)$", text, re.M):
+        headings.append({"level": len(m.group(1)), "title": m.group(2).strip()[:200]})
+        if len(headings) >= 100:
+            break
+    return {"ok": True, "headings": headings, "count": len(headings), "handler": "markdown_outline"}
+
+
+def _handler_csv_preview(args: dict, **_ctx) -> dict:
+    text = _bound_text(args.get("text") or "", 50_000)
+    max_rows = min(int(args.get("max_rows") or 10), 50)
+    rows = []
+    for i, line in enumerate(text.splitlines()):
+        if i >= max_rows:
+            break
+        # Simple CSV split (no RFC4180 edge cases — preview only)
+        rows.append([c.strip()[:200] for c in line.split(",")][:30])
+    return {"ok": True, "rows": rows, "row_count": len(rows), "handler": "csv_preview"}
+
+
+def _handler_semver_compare(args: dict, **_ctx) -> dict:
+    def parts(v: str):
+        v = re.sub(r"^[^0-9]*", "", str(v).strip())
+        nums = []
+        for bit in re.split(r"[.+-]", v):
+            if bit.isdigit():
+                nums.append(int(bit))
+            else:
+                break
+        return nums or [0]
+
+    a, b = str(args.get("a") or ""), str(args.get("b") or "")
+    pa, pb = parts(a), parts(b)
+    n = max(len(pa), len(pb))
+    pa += [0] * (n - len(pa))
+    pb += [0] * (n - len(pb))
+    cmp = 0
+    for x, y in zip(pa, pb):
+        if x < y:
+            cmp = -1
+            break
+        if x > y:
+            cmp = 1
+            break
+    return {"ok": True, "a": a, "b": b, "cmp": cmp, "handler": "semver_compare"}
 
 
 _register_safe_handler("echo", _handler_echo)
 _register_safe_handler("json_validate", _handler_json_validate)
 _register_safe_handler("hash_text", _handler_hash_text)
+_register_safe_handler("text_transform", _handler_text_transform)
+_register_safe_handler("line_stats", _handler_line_stats)
+_register_safe_handler("diff_summary", _handler_diff_summary)
+_register_safe_handler("json_path_get", _handler_json_path_get)
+_register_safe_handler("regex_extract", _handler_regex_extract)
+_register_safe_handler("path_normalize", _handler_path_normalize)
+_register_safe_handler("extension_tally", _handler_extension_tally)
+_register_safe_handler("parse_pytest_summary", _handler_parse_pytest_summary)
+_register_safe_handler("parse_compiler_errors", _handler_parse_compiler_errors)
+_register_safe_handler("markdown_outline", _handler_markdown_outline)
+_register_safe_handler("csv_preview", _handler_csv_preview)
+_register_safe_handler("semver_compare", _handler_semver_compare)
+
+
+def list_safe_handler_kinds() -> list[dict]:
+    """Catalog of installable handler kinds (no unrestricted ops)."""
+    out = []
+    for kind, meta in HANDLER_CATALOG.items():
+        if kind not in _SAFE_HANDLERS:
+            continue
+        out.append({
+            "handler_kind": kind,
+            "category": meta.get("category"),
+            "summary": meta.get("summary"),
+            "max_risk": meta.get("max_risk", "low"),
+            "side_effect": meta.get("side_effect", "none"),
+            "executable": True,
+        })
+    return out
+
+
+def suggest_handler_for_need(need: str) -> dict:
+    """Map a free-text need to a safe handler_kind or honest failure."""
+    n = (need or "").lower()
+    mapping = [
+        (("json", "parse json", "validate json"), "json_validate"),
+        (("hash", "checksum", "sha256"), "hash_text"),
+        (("slug", "uppercase", "lowercase", "transform text"), "text_transform"),
+        (("line count", "word count", "stats"), "line_stats"),
+        (("diff", "compare text", "what changed"), "diff_summary"),
+        (("json path", "get field", "nested key"), "json_path_get"),
+        (("regex", "extract", "match pattern"), "regex_extract"),
+        (("path", "normalize path", "relative path"), "path_normalize"),
+        (("extension", "file types", "project files"), "extension_tally"),
+        (("pytest", "test results", "test summary"), "parse_pytest_summary"),
+        (("tsc", "compiler", "eslint", "traceback"), "parse_compiler_errors"),
+        (("markdown", "outline", "headings"), "markdown_outline"),
+        (("csv", "spreadsheet preview"), "csv_preview"),
+        (("version", "semver"), "semver_compare"),
+    ]
+    for keys, kind in mapping:
+        if any(k in n for k in keys):
+            return {
+                "ok": True,
+                "handler_kind": kind,
+                "catalog": HANDLER_CATALOG.get(kind),
+                "note": "Install via propose_skill with this handler_kind; UCIP still governs execution.",
+            }
+    # Explicitly refuse dangerous needs
+    for bad in ("shell", "bash", "rm -rf", "network", "http", "deploy", "ssh", "credential", "database", "sudo"):
+        if bad in n:
+            return {
+                "ok": False,
+                "error": "capability_not_generatable",
+                "reason": (
+                    f"Requested capability involves '{bad}' which cannot be auto-generated. "
+                    "Use existing governed tools (run_command/run_tests) under UCIP, or request human approval."
+                ),
+            }
+    return {
+        "ok": False,
+        "error": "no_safe_handler_match",
+        "reason": "No safe handler_kind matches this need. Available: " + ", ".join(sorted(_SAFE_HANDLERS)),
+        "available": list_safe_handler_kinds(),
+    }
 
 
 def detect_missing_capability(name_or_slug: str) -> dict:
@@ -276,10 +711,48 @@ def security_governance_check(defn: SkillDefinition) -> tuple[bool, list[str]]:
         "disable governance",
         "all capabilities",
         "sudo",
+        "subprocess",
+        "os.system",
+        "__import__",
+        "eval(",
+        "exec(",
+        "service_role",
+        "secret_key",
+        "api_key",
+        "raw_shell",
+        "drop table",
+        "rm -rf",
     ):
         if token in blob:
             notes.append(f"security reject: contains '{token}'")
             return False, notes
+
+    # Capability slug must bind to the skill name (anti-spoofing)
+    expected_slug = f"ucip:skill.{defn.name}"
+    if (defn.capability_slug or "").strip() != expected_slug:
+        notes.append(
+            f"capability_slug must equal '{expected_slug}' (got '{defn.capability_slug}')"
+        )
+        return False, notes
+
+    # Handler must remain in allowlist — agents cannot inject custom code
+    if defn.handler_kind not in _SAFE_HANDLERS:
+        notes.append("handler_kind not in safe allowlist")
+        return False, notes
+
+    # Catalog risk ceiling: safe handlers cannot claim system side effects as low-risk
+    catalog = HANDLER_CATALOG.get(defn.handler_kind) or {}
+    if defn.side_effect in ("network", "system"):
+        notes.append("side_effect elevates privilege surface — approval required")
+        # Even if catalog is low, elevated side_effect forces HITL (handled elsewhere)
+    if (defn.side_effect or "none") not in ("none", "workspace", "network", "system"):
+        notes.append("invalid side_effect")
+        return False, notes
+
+    # Reject attempts to request destructive/network via "low" risk with system effect
+    if defn.side_effect in ("network", "system") and risk in (SkillRisk.LOW, SkillRisk.MEDIUM):
+        notes.append("network/system requires high or critical risk")
+        return False, notes
 
     if risk == SkillRisk.CRITICAL:
         notes.append("critical risk requires human approval before install")
@@ -287,14 +760,6 @@ def security_governance_check(defn: SkillDefinition) -> tuple[bool, list[str]]:
         notes.append("high risk requires human approval before install")
     else:
         notes.append("risk within auto-installable band after validation")
-
-    if defn.side_effect in ("network", "system"):
-        notes.append("side_effect elevates privilege surface — approval required")
-
-    # handler must remain in allowlist
-    if defn.handler_kind not in _SAFE_HANDLERS:
-        notes.append("handler_kind not in safe allowlist")
-        return False, notes
 
     return True, notes
 
@@ -495,6 +960,25 @@ def resolve_approval(proposal_id: str, approved: bool, resolved_by: str = "opera
         raise KeyError(f"unknown proposal {proposal_id}")
     if prop.status not in (ProposalStatus.PENDING_APPROVAL, ProposalStatus.VALIDATED):
         return prop
+    # Agents cannot approve their own privileged proposals
+    requester = (prop.definition.requested_by or "").strip()
+    resolver = (resolved_by or "").strip()
+    if (
+        approved
+        and requester
+        and resolver
+        and requester == resolver
+        and requires_hitl(prop.definition)
+    ):
+        prop.validation_errors = list(prop.validation_errors or []) + ["self_approval_forbidden"]
+        prop.status = ProposalStatus.PENDING_APPROVAL
+        _evidence(
+            "skill.approval_resolved",
+            resolver,
+            "denied_self_approval",
+            {"proposal_id": proposal_id, "tenant_id": prop.definition.tenant_id},
+        )
+        return prop
     if approved:
         prop.status = ProposalStatus.APPROVED
         outcome = "approved"
@@ -511,6 +995,51 @@ def resolve_approval(proposal_id: str, approved: bool, resolved_by: str = "opera
     return prop
 
 
+
+def _isolation_sample_for(defn: SkillDefinition) -> dict:
+    """Handler-aware sample args so isolation tests exercise real code paths."""
+    kind = defn.handler_kind
+    presets = {
+        "echo": {"msg": "test"},
+        "json_validate": {"payload": "{}"},
+        "hash_text": {"text": "test"},
+        "text_transform": {"text": "Hello World", "op": "slugify"},
+        "line_stats": {"text": "a\nb\n"},
+        "diff_summary": {"before": "a\n", "after": "b\n"},
+        "json_path_get": {"payload": {"a": {"b": 1}}, "path": "a.b"},
+        "regex_extract": {"text": "abc 123", "pattern": r"\d+"},
+        "path_normalize": {"path": "src/app.py"},
+        "extension_tally": {"paths": ["a.py", "b.ts", "c.py"]},
+        "parse_pytest_summary": {"text": "1 passed in 0.1s"},
+        "parse_compiler_errors": {"text": 'File "x.py", line 1'},
+        "markdown_outline": {"text": "# Title\n\n## Sub"},
+        "csv_preview": {"text": "a,b\n1,2\n", "max_rows": 2},
+        "semver_compare": {"a": "1.2.3", "b": "1.2.4"},
+    }
+    sample = dict(presets.get(kind) or {})
+    props = (defn.input_schema or {}).get("properties") or {}
+    for k, spec in list(props.items())[:8]:
+        if k in sample:
+            continue
+        typ = (spec or {}).get("type")
+        if typ == "string":
+            if k in ("payload", "json", "data") or kind == "json_validate":
+                sample[k] = "{}"
+            else:
+                sample[k] = "test"
+        elif typ == "integer":
+            sample[k] = 0
+        elif typ == "boolean":
+            sample[k] = False
+        elif typ == "object":
+            sample[k] = {}
+        elif typ == "array":
+            sample[k] = []
+        else:
+            sample[k] = "test"
+    return sample
+
+
 def _isolation_test(defn: SkillDefinition) -> dict:
     """Run the safe handler once — proves callable without network/system side effects.
 
@@ -521,24 +1050,7 @@ def _isolation_test(defn: SkillDefinition) -> dict:
     if not fn:
         return {"ok": False, "error": "no handler"}
     try:
-        sample = {}
-        props = (defn.input_schema or {}).get("properties") or {}
-        for k, spec in list(props.items())[:5]:
-            typ = (spec or {}).get("type")
-            if typ == "string":
-                # Prefer valid JSON when field name suggests payload/data
-                if k in ("payload", "json", "data") or defn.handler_kind == "json_validate":
-                    sample[k] = "{}"
-                else:
-                    sample[k] = "test"
-            elif typ == "integer":
-                sample[k] = 0
-            elif typ == "boolean":
-                sample[k] = False
-            elif typ == "object":
-                sample[k] = {}
-            else:
-                sample[k] = "test"
+        sample = _isolation_sample_for(defn)
         result = fn(sample)
         if not isinstance(result, dict):
             return {"ok": False, "error": "handler must return dict"}

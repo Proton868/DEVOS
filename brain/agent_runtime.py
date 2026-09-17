@@ -1184,6 +1184,7 @@ class AgentRuntime:
             # Governed dynamically installed skills (safe handler kinds only)
             if name in (
                 "propose_skill", "detect_missing_capability", "list_skill_proposals",
+                "list_safe_skill_handlers", "suggest_skill_handler",
             ):
                 return await self._skill_acquisition_tool(name, args)
             if name in ("bootstrap_project", "detect_project_toolchain"):
@@ -1202,6 +1203,60 @@ class AgentRuntime:
             logger.exception("tool %s failed", name)
             return {"ok": False, "error": str(e)}
 
+
+
+    async def _skill_acquisition_tool(self, name: str, args: dict) -> dict:
+        """Governed skill acquisition meta-tools — never grants unrestricted authority."""
+        from governance.skill_acquisition import (
+            acquire_skill_pipeline,
+            detect_missing_capability,
+            list_proposals,
+            list_safe_handler_kinds,
+            suggest_handler_for_need,
+            get_proposal,
+        )
+        args = args if isinstance(args, dict) else {}
+        tenant = (
+            getattr(self, "tenant_id", None)
+            or (getattr(self.context, "tenant_id", None) if getattr(self, "context", None) else None)
+            or "default"
+        )
+        requester = (
+            getattr(self, "agent_id", None)
+            or getattr(self, "persona_id", None)
+            or self.user_id
+            or "agent"
+        )
+
+        if name == "detect_missing_capability":
+            return detect_missing_capability(str(args.get("name") or ""))
+
+        if name == "list_safe_skill_handlers":
+            return {"ok": True, "handlers": list_safe_handler_kinds()}
+
+        if name == "suggest_skill_handler":
+            return suggest_handler_for_need(str(args.get("need") or ""))
+
+        if name == "list_skill_proposals":
+            tid = str(args.get("tenant_id") or tenant)
+            return {"ok": True, "proposals": list_proposals(tenant_id=tid)}
+
+        if name == "propose_skill":
+            result = acquire_skill_pipeline(
+                name=str(args.get("name") or ""),
+                description=str(args.get("description") or ""),
+                reason=str(args.get("reason") or ""),
+                requested_by=str(requester),
+                tenant_id=str(tenant),
+                risk=str(args.get("risk") or "low"),
+                side_effect=str(args.get("side_effect") or "none"),
+                handler_kind=str(args.get("handler_kind") or "echo"),
+                input_schema=args.get("input_schema") if isinstance(args.get("input_schema"), dict) else None,
+                auto_approve_low_risk=True,
+            )
+            return result if isinstance(result, dict) else {"ok": True, "result": result}
+
+        return {"ok": False, "error": f"unknown skill acquisition tool: {name}"}
 
     async def _check_runner_tool(self, name: str, args: dict) -> dict:
         from brain.check_runner import (
