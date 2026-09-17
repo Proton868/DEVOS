@@ -150,7 +150,6 @@ export default function CosmicSidebar() {
         >
           <MenorahLogo size={20} id="rail" />
         </button>
-        <OmniRouteRailButton setOmniOpen={setOmniOpen} setOverlay={setOverlay} />
         {railItems.map((r) => (
           <button
             key={r.key}
@@ -196,6 +195,10 @@ export default function CosmicSidebar() {
             <button title="Hide Omni-Panel — reopen with the Omni tab or Menorah icon" onClick={toggleOmni}>
               <ChevronLeft size={15} />
             </button>
+          </div>
+
+          <div className="sp-omni-sec sp-omniroute-sec">
+            <OmniRoutePanelControl />
           </div>
 
           <div className="sp-omni-sec">
@@ -314,46 +317,86 @@ export default function CosmicSidebar() {
   );
 }
 
-function OmniRouteRailButton({ setOmniOpen, setOverlay }) {
-  const [st, setSt] = React.useState({ state: "unknown" });
+
+/** Derive OmniRoute management UI origin from API base (…/api/v1 → origin). */
+function omnirouteUiUrl(apiBase) {
+  const raw = (apiBase || "").trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    // Strip trailing /api/v1 or /api
+    let path = u.pathname.replace(/\/+$/, "");
+    path = path.replace(/\/api\/v1$/i, "").replace(/\/api$/i, "");
+    u.pathname = path || "/";
+    u.search = "";
+    u.hash = "";
+    return u.toString().replace(/\/$/, "") || u.origin;
+  } catch {
+    return null;
+  }
+}
+
+function OmniRoutePanelControl() {
+  const [st, setSt] = React.useState({ state: "unknown", endpoint: null, uiUrl: null });
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const { api } = await import("../../services/api");
-        let next = { state: "disconnected" };
+        const cfg = await api.getProviderConfig().catch(() => null);
+        const endpoint = (cfg && cfg.OMNIROUTE_BASE_URL) || null;
+        const uiUrl = omnirouteUiUrl(endpoint);
+        let state = endpoint ? "configured" : "disconnected";
         try {
           const r = await api.testProviderConnection("omniroute");
-          if (r?.ok) next = { state: "connected" };
-          else if (r?.error) next = { state: "error" };
-        } catch (_) {
-          const cfg = await api.getProviderConfig().catch(() => null);
-          if (cfg?.OMNIROUTE_BASE_URL) next = { state: "configured", endpoint: cfg.OMNIROUTE_BASE_URL };
-        }
-        if (!cancelled) setSt(next);
+          if (r && r.ok) state = "connected";
+          else if (r && (r.error || r.status === "UNREACHABLE" || r.status === "AUTH_FAILED")) state = "error";
+        } catch (_) { /* keep configured/disconnected */ }
+        if (!cancelled) setSt({ state, endpoint, uiUrl });
       } catch {
-        if (!cancelled) setSt({ state: "disconnected" });
+        if (!cancelled) setSt({ state: "disconnected", endpoint: null, uiUrl: null });
       }
     })();
     return () => { cancelled = true; };
   }, []);
-  const cls =
-    st.state === "connected" ? "connected" :
-    st.state === "error" ? "error" :
-    st.state === "configured" ? "configured" : "disconnected";
+
+  const openOmniRouteUi = () => {
+    const url = st.uiUrl || omnirouteUiUrl(st.endpoint);
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const cls = st.state === "connected" ? "connected"
+    : st.state === "error" ? "error"
+    : st.state === "configured" ? "configured" : "disconnected";
+  const statusLabel =
+    st.state === "connected" ? "Connected"
+    : st.state === "error" ? "Error"
+    : st.state === "configured" ? "Configured"
+    : "Disconnected";
+
   return (
-    <button
-      type="button"
-      className={`sp-rail-btn sp-omniroute-btn ${cls}`}
-      title="Open OmniRoute"
-      aria-label="Open OmniRoute"
-      onClick={() => {
-        if (setOverlay) setOverlay(null);
-        if (setOmniOpen) setOmniOpen(true);
-      }}
-    >
-      <span className={`sp-omniroute-pulse ${cls}`} aria-hidden="true" />
-      <span className="sp-omniroute-glyph" aria-hidden="true">OR</span>
-    </button>
+    <div className="sp-omniroute-panel">
+      <div className="sp-omni-label">OmniRoute gateway</div>
+      <button
+        type="button"
+        className={`sp-omniroute-open ${cls}`}
+        title="Open OmniRoute"
+        aria-label="Open OmniRoute"
+        disabled={!st.uiUrl && !st.endpoint}
+        onClick={openOmniRouteUi}
+      >
+        <span className={`sp-omniroute-pulse ${cls}`} aria-hidden="true" />
+        <span className="sp-omniroute-open-text">
+          <strong>Open OmniRoute</strong>
+          <span className="sp-omniroute-status">{statusLabel}</span>
+        </span>
+      </button>
+      {st.endpoint && (
+        <div className="sp-omniroute-endpoint mono" title="API endpoint (non-secret)">
+          {String(st.endpoint).replace(/https?:\/\//, "")}
+        </div>
+      )}
+    </div>
   );
 }

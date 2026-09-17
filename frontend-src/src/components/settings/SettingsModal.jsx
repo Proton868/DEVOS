@@ -2,7 +2,7 @@ import React, { useState, useEffect, Suspense, lazy } from "react";
 import { X, CheckCircle, AlertCircle, ExternalLink, Save, Loader, Search, Download, Package } from "lucide-react";
 import useStore from "../../store/useStore";
 import { api } from "../../services/api";
-import UserProviderCredentials from "./UserProviderCredentials";
+import UnifiedProviders from "./UnifiedProviders";
 import "../auth/AuthSurfaces.css";
 
 // Lazy load ThemeCustomizer to avoid heavy initial bundle
@@ -737,64 +737,9 @@ export default function SettingsModal({ embedded = false, onClose = null }) {
             )}
             {tab === "providers" && (
               <div>
-                <p className="settings-hint">
-                  One entry per gateway or provider. OmniRoute is the native DevOS gateway; OpenRouter remains available.
-                  Personal credentials and active selection are below; system defaults are separate.
-                </p>
-                <UserProviderCredentials />
-                <h4 className="settings-section-title" style={{ marginTop: 16 }}>Active provider and model</h4>
-                <div className="provider-list provider-list-deduped">
-                  {Object.entries(providers).filter(([id]) => id !== "ollama").map(([id, p]) => (
-                    <div key={id}
-                      className={`provider-card ${selectedProvider===id?"selected":""} ${!p.configured?"unconfigured":""}`}
-                      onClick={() => p.configured && setProvider(id)}>
-                      <div className="provider-card-header">
-                        <span className="provider-icon">{p.icon}</span>
-                        <span className="provider-name">{p.name}</span>
-                        {p.configured ? <CheckCircle size={14} color="#4ade80"/> : <AlertCircle size={14} color="#f59e0b"/>}
-                        {PROVIDER_LINKS[id] && <a href={PROVIDER_LINKS[id]} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()}><ExternalLink size={12} color="#888"/></a>}
-                      </div>
-                      {selectedProvider===id && p.configured && (
-                        <div className="provider-models">
-                          <label>Model</label>
-                          <select value={selectedModel} onChange={e=>setModel(e.target.value)} onClick={e=>e.stopPropagation()}>
-                            {p.models.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
-                          </select>
-                        </div>
-                      )}
-                      {!p.configured && <p className="provider-unconfigured-msg">Set <code>{id.toUpperCase()}_API_KEY</code> in <code>.env</code></p>}
-                    </div>
-                  ))}
-                </div>
-                <div style={{ marginTop: 20, borderTop: "1px solid var(--border)", paddingTop: 16 }}>
-                  <ProviderConfigEditor />
-                </div>
+                <UnifiedProviders />
               </div>
             )}
-
-            {tab === "marketplace" && <MarketplacePanel />}
-
-            {tab === "editor" && s.editor && (
-              <div className="settings-section">
-                <NumInput label="Font Size" value={s.editor.fontSize} min={10} max={28} onChange={v=>patch("editor","fontSize",v)}/>
-                <NumInput label="Tab Size" value={s.editor.tabSize} min={2} max={8} onChange={v=>patch("editor","tabSize",v)}/>
-                <SelInput label="Word Wrap" value={s.editor.wordWrap}
-                  options={[{value:"off",label:"Off"},{value:"on",label:"On"}]}
-                  onChange={v=>patch("editor","wordWrap",v)}/>
-                <SelInput label="Line Numbers" value={s.editor.lineNumbers}
-                  options={[{value:"on",label:"On"},{value:"off",label:"Off"},{value:"relative",label:"Relative"}]}
-                  onChange={v=>patch("editor","lineNumbers",v)}/>
-                <Toggle label="Minimap" value={s.editor.minimap} onChange={v=>patch("editor","minimap",v)}/>
-                <Toggle label="Format on Save" value={s.editor.formatOnSave} onChange={v=>patch("editor","formatOnSave",v)}/>
-                <Toggle label="Auto Save" value={s.editor.autoSave} onChange={v=>patch("editor","autoSave",v)}/>
-              </div>
-            )}
-
-            
-            {tab === "personas" && (
-              <PersonasSettingsPanel />
-            )}
-
             {tab === "ai" && (
               <div className="settings-section">
                 <h3 className="settings-section-title">AI behavior</h3>

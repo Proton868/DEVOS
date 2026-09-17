@@ -49,6 +49,7 @@ def build_coding_progress(
     acceptance: Optional[dict] = None,
     evidence_id: Optional[str] = None,
     isolation_evidence: Optional[dict] = None,
+    usage: Optional[dict] = None,
 ) -> dict[str, Any]:
     """Structured coding progress for SSE. Truthful only — no success invention."""
     files: list[str] = []
@@ -93,6 +94,7 @@ def build_coding_progress(
         "acceptance": _public_acceptance(acc),
         "evidence_id": evidence_id,
         "isolation_evidence": isolation_evidence if isinstance(isolation_evidence, dict) else None,
+        "usage": _public_usage(usage),
         "at": datetime.now(timezone.utc).isoformat(),
         # UI must not treat presence of this object as success.
         # Final success only when authoritative acceptance.ok AND lifecycle completed.
@@ -106,6 +108,21 @@ def build_coding_progress(
         "projection": True,
     }
     return {k: v for k, v in snap.items() if v is not None}
+
+
+def _public_usage(u: Optional[dict]) -> Optional[dict]:
+    """Aggregate token/latency metrics — never prompts or secrets."""
+    if not isinstance(u, dict):
+        return None
+    out = {}
+    for k in (
+        "provider", "model", "input_tokens", "output_tokens", "cached_tokens",
+        "total_tokens", "latency_ms", "retry_attempt", "fallback_used",
+        "call_count", "mission_id", "agent_id", "persona_id",
+    ):
+        if u.get(k) is not None:
+            out[k] = u[k]
+    return out or None
 
 
 def _public_validation(v: Optional[dict]) -> Optional[dict]:

@@ -2247,3 +2247,52 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
   70% { box-shadow: 0 0 0 8px rgba(34, 211, 238, 0); }
   100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); }
 }
+
+/* OmniRoute control inside Omni-Panel */
+.sp-omniroute-sec { padding-bottom: 4px; }
+.sp-omniroute-panel { display: flex; flex-direction: column; gap: 8px; }
+.sp-omniroute-open {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  background: rgba(34, 211, 238, 0.06);
+  color: var(--sp-text-0, #e2e8f0);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+.sp-omniroute-open:hover:not(:disabled) {
+  border-color: rgba(34, 211, 238, 0.55);
+  background: rgba(34, 211, 238, 0.12);
+}
+.sp-omniroute-open:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.sp-omniroute-open-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+}
+.sp-omniroute-open-text strong { font-weight: 600; }
+.sp-omniroute-status {
+  font-size: 10.5px;
+  color: var(--sp-text-2, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.sp-omniroute-open.connected .sp-omniroute-status { color: var(--sp-good, #4ade80); }
+.sp-omniroute-open.error .sp-omniroute-status { color: var(--sp-bad, #f87171); }
+.sp-omniroute-endpoint {
+  font-size: 10px;
+  color: var(--sp-text-2, #94a3b8);
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

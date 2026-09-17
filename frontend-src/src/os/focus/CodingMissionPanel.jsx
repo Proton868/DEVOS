@@ -124,6 +124,24 @@ export default function CodingMissionPanel({ coding = null, missionStatus = null
             <dd className="mono">{coding.evidence_id}</dd>
           </>
         )}
+        {coding.usage && (
+          <>
+            <dt>Token usage</dt>
+            <dd className="mono" data-testid="coding-mission-usage">
+              {[
+                coding.usage.input_tokens != null && `in ${coding.usage.input_tokens}`,
+                coding.usage.output_tokens != null && `out ${coding.usage.output_tokens}`,
+                coding.usage.cached_tokens != null && `cache ${coding.usage.cached_tokens}`,
+                coding.usage.total_tokens != null && `total ${coding.usage.total_tokens}`,
+                coding.usage.latency_ms != null && `${coding.usage.latency_ms}ms`,
+                coding.usage.retry_attempt != null && `retry ${coding.usage.retry_attempt}`,
+                coding.usage.fallback_used && "fallback",
+              ]
+                .filter(Boolean)
+                .join(" · ") || "—"}
+            </dd>
+          </>
+        )}
       </dl>
       {(coding.command_stdout_tail || coding.command_stderr_tail) && (
         <pre className="sp-coding-mission-log" aria-label="Command output">
