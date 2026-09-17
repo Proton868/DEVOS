@@ -1,3 +1,4 @@
+import httpx
 """Auth routes
 
 Dual-mode authentication (security-audit P2): Supabase-primary with local
@@ -215,10 +216,10 @@ def _decode_supabase_hs256(token: str):
             logger.debug("[auth] Supabase HS256 aud rejected: %s", type(aud).__name__)
             return None
         except Exception as e:
-            logger.debug("[auth] Supabase HS256 verification failed: %s", type(e).__name__)
+            logger.warning("[auth] Supabase HS256 verification failed type=%s", type(e).__name__)
             return None
     except Exception as e:
-        logger.debug("[auth] Supabase HS256 verification failed: %s", type(e).__name__)
+        logger.warning("[auth] Supabase HS256 verification failed type=%s", type(e).__name__)
         return None
 
 
@@ -243,41 +244,124 @@ def _decode_supabase_jwks(token: str):
 
 
 def decode_supabase_token(token: str):
-    """Verify a Supabase-issued access token.
+    """Local cryptographic verification of a Supabase access token.
 
     Ordering is driven by the token header ``alg``:
-    - HS256 → verify with ``SUPABASE_JWT_SECRET`` (Dashboard JWT Secret).
+    - HS256 → verify with ``SUPABASE_JWT_SECRET`` when configured.
       DevOS ``JWT_SECRET`` is never used.
     - RS256/ES256 (or unknown) → verify against project JWKS, then HS256
       fallback if ``SUPABASE_JWT_SECRET`` is set.
 
-    Returns the payload dict, or None if verification fails / not configured.
+    Returns the payload dict, or None if local verification fails.
+
+    Note: After Supabase JWT Signing Keys migration, user access tokens may
+    still be ``alg=HS256`` while the Dashboard "legacy JWT secret" no longer
+    matches the active signing secret (and JWKS only publishes asymmetric
+    public keys). In that case local HS256 verification yields
+    InvalidSignatureError. Callers that need to accept live user sessions
+    must use :func:`verify_supabase_access_token`, which falls back to the
+    Auth server ``GET /auth/v1/user`` path recommended by Supabase for
+    shared-secret HS256 tokens.
     """
     if not token or not (settings.SUPABASE_URL or "").strip():
         return None
 
     alg = (_supabase_token_alg(token) or "").upper()
 
-    # Prefer the path that matches the token's declared algorithm.
     if alg == "HS256":
         payload = _decode_supabase_hs256(token)
         if payload is not None:
             return payload
-        if not (getattr(settings, "SUPABASE_JWT_SECRET", None) or "").strip():
-            logger.warning(
-                "[auth] Supabase access token is HS256 but SUPABASE_JWT_SECRET is not set; "
-                "cannot verify. Set SUPABASE_JWT_SECRET to the Supabase Dashboard JWT Secret "
-                "(Settings → API). Do not use DevOS JWT_SECRET."
-            )
         return None
 
     payload = _decode_supabase_jwks(token)
     if payload is not None:
         return payload
 
-    # Asymmetric path failed — allow HS256 fallback when secret is configured
-    # (mixed projects / transitional tokens).
     return _decode_supabase_hs256(token)
+
+
+def _supabase_api_key_for_auth_user() -> str:
+    """Anon/publishable key preferred; server key as last resort for apikey header."""
+    anon = (getattr(settings, "SUPABASE_ANON_KEY", None) or "").strip()
+    if anon:
+        return anon
+    return (getattr(settings, "SUPABASE_KEY", None) or "").strip()
+
+
+async def _verify_supabase_via_auth_user(token: str) -> dict | None:
+    """Validate a user access token with Supabase Auth (official HS256 path).
+
+    GET {SUPABASE_URL}/auth/v1/user
+      apikey: <anon or publishable key>
+      Authorization: Bearer <access_token>
+
+    HTTP 200 means Auth accepted the token; claims come from the JSON body.
+    """
+    base = (settings.SUPABASE_URL or "").strip().rstrip("/")
+    api_key = _supabase_api_key_for_auth_user()
+    if not base or not api_key:
+        logger.warning(
+            "[auth] Auth-server token verify skipped: missing SUPABASE_URL or anon/server key"
+        )
+        return None
+    url = f"{base}/auth/v1/user"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.get(
+                url,
+                headers={
+                    "apikey": api_key,
+                    "Authorization": f"Bearer {token}",
+                },
+            )
+    except Exception as e:
+        logger.warning(
+            "[auth] Auth-server token verify request failed: %s", type(e).__name__
+        )
+        return None
+    if r.status_code != 200:
+        logger.debug(
+            "[auth] Auth-server token verify rejected status=%s", r.status_code
+        )
+        return None
+    try:
+        data = r.json()
+    except Exception:
+        return None
+    user_id = data.get("id") or data.get("sub")
+    if not user_id:
+        return None
+    email = (data.get("email") or "") or None
+    return {
+        "sub": str(user_id),
+        "email": email.lower() if email else None,
+        "role": data.get("role") or "authenticated",
+        "aud": "authenticated",
+        "app_metadata": data.get("app_metadata") or {},
+        "user_metadata": data.get("user_metadata") or {},
+        "iss": f"{base}/auth/v1",
+        "_verified_via": "supabase_auth_user",
+    }
+
+
+async def verify_supabase_access_token(token: str) -> dict | None:
+    """Full Supabase access-token verification for request handlers.
+
+    1. Local JWKS (RS256/ES256) or HS256 with SUPABASE_JWT_SECRET when it matches
+    2. Else Auth server GET /auth/v1/user (Signing Keys / HS256 secret mismatch)
+    """
+    if not token or not (settings.SUPABASE_URL or "").strip():
+        return None
+    payload = decode_supabase_token(token)
+    if payload is not None:
+        return payload
+    alg = (_supabase_token_alg(token) or "").upper()
+    logger.info(
+        "[auth] local JWT verify failed alg=%s; trying Auth /auth/v1/user",
+        alg or "unknown",
+    )
+    return await _verify_supabase_via_auth_user(token)
 
 
 def verify_any_token(token: str):
@@ -426,7 +510,7 @@ async def get_current_user(request: Request = None, db: AsyncSession = Depends(g
             return user
 
     if settings.AUTH_MODE != "local" and settings.has_supabase:
-        payload = decode_supabase_token(token)
+        payload = await verify_supabase_access_token(token)
         if payload is not None:
             return await sync_supabase_user(db, payload)
 
@@ -517,7 +601,7 @@ async def supabase_exchange(req: SupabaseTokenReq, response: Response, db: Async
     if not settings.has_supabase:
         raise HTTPException(400, "Supabase is not configured on this server")
 
-    payload = decode_supabase_token(req.token)
+    payload = await verify_supabase_access_token(req.token)
     if payload is None:
         raise HTTPException(401, "Invalid Supabase token")
 
@@ -618,12 +702,13 @@ async def supabase_sync(request: Request, response: Response, db: AsyncSession =
     if not token:
         raise HTTPException(401, "Missing Supabase access token")
 
-    payload = decode_supabase_token(token)
+    payload = await verify_supabase_access_token(token)
     if payload is None:
         alg = _supabase_token_alg(token)
         has_secret = bool((getattr(settings, "SUPABASE_JWT_SECRET", None) or "").strip())
         logger.warning(
-            "[auth] supabase/sync rejected token alg=%s jwt_secret_configured=%s",
+            "[auth] supabase/sync rejected token alg=%s jwt_secret_configured=%s "
+            "(local HMAC/JWKS and Auth /user all failed)",
             alg or "unknown",
             has_secret,
         )
