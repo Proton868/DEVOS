@@ -92,8 +92,16 @@ def build_coding_progress(
         "acceptance": _public_acceptance(acc),
         "evidence_id": evidence_id,
         "at": datetime.now(timezone.utc).isoformat(),
-        # UI must not treat presence of this object as success
+        # UI must not treat presence of this object as success.
+        # Final success only when authoritative acceptance.ok AND lifecycle completed.
         "success_implied": False,
+        "final_success": bool(
+            isinstance(acc, dict)
+            and acc.get("ok") is True
+            and str(status or "").lower() in ("completed", "accepted")
+        ),
+        "authority": "mission_checkpoint+acceptance",
+        "projection": True,
     }
     return {k: v for k, v in snap.items() if v is not None}
 
