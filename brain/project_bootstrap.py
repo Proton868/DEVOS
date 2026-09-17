@@ -604,6 +604,7 @@ class BootstrapResult:
     artifact_refs: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     claimed_working: bool = False  # always False unless validation proves it
+    error_code: Optional[str] = None  # primary fail-closed code when not fully working
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -724,6 +725,201 @@ def validate_project(fs, profile: ToolchainProfile, written: list[str]) -> dict:
     }
 
 
+
+# Fail-closed error codes (stable contract for agents/UI)
+ERR_TOOLCHAIN_UNAVAILABLE = "toolchain_unavailable"
+ERR_UNSUPPORTED_ECOSYSTEM = "unsupported_ecosystem"
+ERR_INSTALL_FAILED = "install_failed"
+ERR_BUILD_FAILED = "build_failed"
+ERR_TEST_FAILED = "test_failed"
+ERR_SCAFFOLD_FAILED = "scaffold_failed"
+ERR_PATH_ESCAPE = "path_escape"
+ERR_SYSTEM_INSTALL_BLOCKED = "system_install_blocked"
+
+# Commands that would install system packages — never auto-run by bootstrap.
+_SYSTEM_INSTALL_PATTERNS = (
+    "apt-get ", "apt install", "yum install", "dnf install", "pacman -S",
+    "brew install", "choco install", "winget install", "snap install",
+    "sudo ",
+)
+
+
+def is_system_level_install_command(command: str) -> bool:
+    c = (command or "").strip().lower()
+    return any(p in c for p in _SYSTEM_INSTALL_PATTERNS)
+
+
+def apply_fail_closed_claims(
+    result: "BootstrapResult",
+    *,
+    kind_value: str,
+    profile: "ToolchainProfile",
+    run_install: bool,
+    run_build: bool,
+    run_test: bool,
+) -> "BootstrapResult":
+    """
+    Authoritative fail-closed finalizer.
+
+    Invariants:
+    - Missing binary → toolchain_unavailable; claimed_working=False
+    - Unsupported ecosystem → unsupported_ecosystem; claimed_working=False
+    - Install/build/test failure → claimed_working=False
+    - HTML: never claimed_working (files delivered only)
+    - Scaffold alone never claimed_working
+    """
+    errors = list(result.errors or [])
+    validation = dict(result.validation or {})
+
+    # Primary error_code from first hard failure
+    for code in (
+        ERR_UNSUPPORTED_ECOSYSTEM,
+        ERR_TOOLCHAIN_UNAVAILABLE,
+        ERR_SCAFFOLD_FAILED,
+        ERR_INSTALL_FAILED,
+        ERR_BUILD_FAILED,
+        ERR_TEST_FAILED,
+        ERR_PATH_ESCAPE,
+        ERR_SYSTEM_INSTALL_BLOCKED,
+    ):
+        if code in errors:
+            result.error_code = code
+            break
+
+    # HTML / static: never runtime-proven
+    if kind_value == "html" or profile.runtime == "browser":
+        validation["works"] = False
+        validation["scaffold_only"] = True
+        validation["runtime_proven"] = False
+        validation["message"] = (
+            validation.get("message")
+            or "Static files delivered; not runtime-proven (open in a browser to verify)"
+        )
+        result.claimed_working = False
+        result.validation = validation
+        # Delivery can still be ok if scaffold succeeded
+        if ERR_SCAFFOLD_FAILED not in errors and result.scaffold_ok:
+            result.ok = True
+        return result
+
+    # Any hard pipeline failure forbids claimed_working
+    hard = {
+        ERR_TOOLCHAIN_UNAVAILABLE,
+        ERR_UNSUPPORTED_ECOSYSTEM,
+        ERR_INSTALL_FAILED,
+        ERR_BUILD_FAILED,
+        ERR_TEST_FAILED,
+        ERR_SCAFFOLD_FAILED,
+        ERR_PATH_ESCAPE,
+        ERR_SYSTEM_INSTALL_BLOCKED,
+    }
+    if hard.intersection(errors):
+        result.claimed_working = False
+        validation["works"] = False
+        if ERR_TOOLCHAIN_UNAVAILABLE in errors:
+            validation["scaffold_only"] = True
+            validation["error"] = ERR_TOOLCHAIN_UNAVAILABLE
+        result.validation = validation
+        result.ok = (
+            result.scaffold_ok
+            and ERR_SCAFFOLD_FAILED not in errors
+            and ERR_TOOLCHAIN_UNAVAILABLE not in errors
+            and ERR_UNSUPPORTED_ECOSYSTEM not in errors
+            and ERR_INSTALL_FAILED not in errors
+        )
+        return result
+
+    install_ok = (
+        (not profile.install_cmd)
+        or (not run_install)
+        or (not profile.requires_install)
+        or bool((result.install or {}).get("ok"))
+    )
+    build_ok = (not profile.build_cmd) or (not run_build) or bool((result.build or {}).get("ok"))
+    test_ok = (not profile.test_cmd) or (not run_test) or bool((result.test or {}).get("ok"))
+
+    structure_ok = bool(validation.get("structure_ok"))
+    works = bool(structure_ok and install_ok and build_ok and test_ok and result.scaffold_ok)
+
+    # Scaffold-only path: no install/build/test requested or required
+    if works and run_install and profile.requires_install and profile.install_cmd:
+        validation["scaffold_only"] = False
+        validation["runtime_proven"] = True
+    elif works and not profile.requires_install and not run_build and not run_test:
+        # e.g. shell without proving make — still not "working" without a successful command
+        if result.build or result.test:
+            validation["scaffold_only"] = False
+            validation["runtime_proven"] = True
+        else:
+            works = False
+            validation["scaffold_only"] = True
+            validation["runtime_proven"] = False
+    else:
+        if not works:
+            validation["scaffold_only"] = True
+            validation["runtime_proven"] = False
+
+    validation["works"] = works
+    validation["install_ok"] = install_ok
+    validation["build_ok"] = build_ok
+    validation["test_ok"] = test_ok
+    if works:
+        validation["message"] = "Structure + required commands succeeded"
+    elif not validation.get("message"):
+        validation["message"] = "Not proven working under fail-closed rules"
+
+    result.validation = validation
+    result.claimed_working = bool(works)
+    # ok = pipeline delivered without hard failure (may still not be "working")
+    result.ok = result.scaffold_ok and ERR_INSTALL_FAILED not in errors
+    if not works:
+        result.claimed_working = False
+    return result
+
+
+async def guarded_command_runner(
+    command: str,
+    ctx: dict,
+    inner: Optional[CommandRunner] = None,
+) -> dict:
+    """Block system-level package installs; enforce project-scoped runner."""
+    if is_system_level_install_command(command):
+        return {
+            "ok": False,
+            "exit_code": 2,
+            "stdout": "",
+            "stderr": (
+                "system_install_blocked: DevOS does not silently install system packages. "
+                "Use project-local dependency commands only."
+            ),
+            "command": command,
+            "error": ERR_SYSTEM_INSTALL_BLOCKED,
+            "status": "failed",
+        }
+    # Path-ish escape in the command string itself
+    if any(x in (command or "") for x in ("\x00",)):
+        return {
+            "ok": False,
+            "exit_code": 2,
+            "stdout": "",
+            "stderr": "invalid command",
+            "command": command,
+            "error": ERR_PATH_ESCAPE,
+            "status": "failed",
+        }
+    runner = inner or _default_runner
+    result = await runner(command, ctx)
+    if not isinstance(result, dict):
+        return {"ok": False, "exit_code": 1, "stdout": "", "stderr": "invalid_runner_result", "command": command}
+    # Normalize path-escape signals from run_command_in_project
+    err = str(result.get("stderr") or "")
+    if "path separators refused" in err or "escapes projects directory" in err or "Invalid user_id" in err:
+        result = dict(result)
+        result["ok"] = False
+        result["error"] = ERR_PATH_ESCAPE
+    return result
+
+
 async def bootstrap_project(
     *,
     user_id: str,
@@ -750,16 +946,23 @@ async def bootstrap_project(
         profile = get_profile(kind)
     except KeyError as e:
         result = BootstrapResult(ok=False, toolchain=str(toolchain or "unknown"), profile={})
-        result.errors.append("unsupported_ecosystem")
+        result.errors.append(ERR_UNSUPPORTED_ECOSYSTEM)
+        result.error_code = ERR_UNSUPPORTED_ECOSYSTEM
+        result.claimed_working = False
         result.validation = {
             "structure_ok": False,
             "works": False,
             "scaffold_only": True,
-            "error": "unsupported_ecosystem",
+            "error": ERR_UNSUPPORTED_ECOSYSTEM,
             "message": str(e),
+            "runtime_proven": False,
         }
         return result
-    runner = command_runner or _default_runner
+    inner_runner = command_runner or _default_runner
+
+    async def runner(cmd, c):
+        return await guarded_command_runner(cmd, c, inner=inner_runner)
+
     ctx = {"user_id": user_id, "project_id": project_id, "timeout_s": 180}
 
     from execution.files import FileService
@@ -776,14 +979,16 @@ async def bootstrap_project(
     runtime = check_runtime_available(profile)
     result.validation = {"runtime": runtime}
     if not runtime.get("ok"):
-        result.errors.append("toolchain_unavailable")
+        result.errors.append(ERR_TOOLCHAIN_UNAVAILABLE)
+        result.error_code = ERR_TOOLCHAIN_UNAVAILABLE
         result.validation.update({
             "structure_ok": False,
             "works": False,
             "scaffold_only": True,
-            "error": "toolchain_unavailable",
+            "error": ERR_TOOLCHAIN_UNAVAILABLE,
             "message": runtime.get("message"),
             "missing_binaries": runtime.get("missing"),
+            "runtime_proven": False,
         })
         result.claimed_working = False
         result.evidence_id = _evidence(
@@ -803,7 +1008,9 @@ async def bootstrap_project(
     result.errors.extend(sc_errors)
     result.scaffold_ok = len(written) > 0 and not sc_errors
     if not result.scaffold_ok:
-        result.errors.append("scaffold_failed")
+        result.errors.append(ERR_SCAFFOLD_FAILED)
+        result.error_code = ERR_SCAFFOLD_FAILED
+        result.claimed_working = False
         result.evidence_id = _evidence(
             "project.bootstrap", actor_id, "failed",
             {"stage": "scaffold", "toolchain": kind_value, "tenant_id": tenant_id},
@@ -826,7 +1033,15 @@ async def bootstrap_project(
                         result.install = install
                         break
             if not (result.install or {}).get("ok"):
-                result.errors.append("install_failed")
+                if (result.install or {}).get("error") == ERR_SYSTEM_INSTALL_BLOCKED:
+                    result.errors.append(ERR_SYSTEM_INSTALL_BLOCKED)
+                    result.error_code = ERR_SYSTEM_INSTALL_BLOCKED
+                elif (result.install or {}).get("error") == ERR_PATH_ESCAPE:
+                    result.errors.append(ERR_PATH_ESCAPE)
+                    result.error_code = ERR_PATH_ESCAPE
+                else:
+                    result.errors.append(ERR_INSTALL_FAILED)
+                    result.error_code = ERR_INSTALL_FAILED
                 result.validation = validate_project(fs, profile, written)
                 result.evidence_id = _evidence(
                     "project.bootstrap", actor_id, "failed",
@@ -855,48 +1070,31 @@ async def bootstrap_project(
             result.errors.append("test_failed")
 
     validation = validate_project(fs, profile, written)
-    # Prove more than scaffold when commands ran
-    install_ok = (not profile.install_cmd) or (not run_install) or bool((result.install or {}).get("ok"))
-    build_ok = (not profile.build_cmd) or (not run_build) or bool((result.build or {}).get("ok"))
-    test_ok = (not run_test) or (not profile.test_cmd) or bool((result.test or {}).get("ok"))
-
-    validation["install_ok"] = install_ok
-    validation["build_ok"] = build_ok
-    validation["test_ok"] = test_ok
-    # HTML/static: structure is delivery of files only — never "works" without runtime proof.
-    if kind == ToolchainKind.HTML or kind_value == "html":
-        validation["works"] = False
-        validation["scaffold_only"] = True
-        validation["message"] = (
-            "Static files written; open index.html to verify in a browser "
-            "(scaffold is not runtime proof)"
-        )
-    else:
-        validation["works"] = bool(
-            validation["structure_ok"] and install_ok and build_ok and test_ok
-            and (not run_install or profile.install_cmd is None or install_ok)
-        )
-        if validation["works"]:
-            validation["scaffold_only"] = False
-            validation["message"] = "Structure + required commands succeeded"
-        else:
-            validation["scaffold_only"] = not install_ok or not validation["structure_ok"]
+    validation["runtime"] = (result.validation or {}).get("runtime") or check_runtime_available(profile)
     result.validation = validation
 
-    result.claimed_working = bool(validation.get("works"))
-    result.ok = result.scaffold_ok and install_ok and (
-        # HTML: structure is enough for ok=true of bootstrap delivery, still claimed_working only if works
-        kind == ToolchainKind.HTML or kind_value == "html" or install_ok
-    )
-    if result.errors and kind != ToolchainKind.HTML and kind_value != "html":
-        result.ok = result.scaffold_ok and install_ok and "install_failed" not in result.errors
+    # Map command outcomes into error list before fail-closed finalizer
+    if run_build and profile.build_cmd and result.build and not result.build.get("ok"):
+        if ERR_BUILD_FAILED not in result.errors:
+            result.errors.append(ERR_BUILD_FAILED)
+    if run_test and profile.test_cmd and result.test and not result.test.get("ok"):
+        if ERR_TEST_FAILED not in result.errors:
+            result.errors.append(ERR_TEST_FAILED)
+    if result.install and result.install.get("error") == ERR_SYSTEM_INSTALL_BLOCKED:
+        if ERR_SYSTEM_INSTALL_BLOCKED not in result.errors:
+            result.errors.append(ERR_SYSTEM_INSTALL_BLOCKED)
+    if result.install and result.install.get("error") == ERR_PATH_ESCAPE:
+        if ERR_PATH_ESCAPE not in result.errors:
+            result.errors.append(ERR_PATH_ESCAPE)
 
-    # Tighten: ok means bootstrap pipeline finished without hard failure
-    hard_fail = "scaffold_failed" in result.errors or "install_failed" in result.errors
-    result.ok = result.scaffold_ok and not hard_fail
-    # Never claim working on scaffold alone
-    if not validation.get("works"):
-        result.claimed_working = False
+    result = apply_fail_closed_claims(
+        result,
+        kind_value=kind_value,
+        profile=profile,
+        run_install=run_install,
+        run_build=run_build,
+        run_test=run_test,
+    )
 
     result.evidence_id = _evidence(
         "project.bootstrap",
@@ -907,6 +1105,7 @@ async def bootstrap_project(
             "files": written,
             "claimed_working": result.claimed_working,
             "errors": result.errors,
+            "error_code": result.error_code,
             "tenant_id": tenant_id,
         },
     )
