@@ -111,8 +111,18 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
         return await _run_web_crawl_node(req)
 
     # Fake runtime is TEST-ONLY. Never silently fall back in production.
-    # Require both FAKE flag and explicit test allow (pytest sets PYTEST_CURRENT_TEST).
+    # Real-runtime gate (DEVOS_REAL_RUNTIME_TESTS=1) ALWAYS forbids fake,
+    # even under pytest — production-path tests must exercise AgentRuntime.
     if os.environ.get("DEVOS_ORCH_FAKE_RUNTIME") == "1":
+        if os.environ.get("DEVOS_REAL_RUNTIME_TESTS") == "1":
+            return NodeExecutionResult(
+                success=False,
+                status="error",
+                error=(
+                    "AGENT_RUNTIME_UNAVAILABLE: DEVOS_ORCH_FAKE_RUNTIME=1 is forbidden "
+                    "when DEVOS_REAL_RUNTIME_TESTS=1"
+                ),
+            )
         if os.environ.get("DEVOS_ALLOW_FAKE_RUNTIME") == "1" or os.environ.get("PYTEST_CURRENT_TEST"):
             return await _fake_runtime(req)
         return NodeExecutionResult(

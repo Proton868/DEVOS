@@ -29,8 +29,13 @@ def _is_postgres_url(url: str) -> bool:
 def _apply_test_db_isolation() -> None:
     """Default test-process DB policy (SQLite) unless Postgres was opted in."""
     Path("data").mkdir(exist_ok=True)
-    os.environ.setdefault("DEVOS_ORCH_FAKE_RUNTIME", "1")
-    os.environ.setdefault("DEVOS_ALLOW_FAKE_RUNTIME", "1")
+    # Real-runtime suite must never inherit FAKE defaults.
+    if os.environ.get("DEVOS_REAL_RUNTIME_TESTS") == "1":
+        os.environ.pop("DEVOS_ORCH_FAKE_RUNTIME", None)
+        os.environ.pop("DEVOS_ALLOW_FAKE_RUNTIME", None)
+    else:
+        os.environ.setdefault("DEVOS_ORCH_FAKE_RUNTIME", "1")
+        os.environ.setdefault("DEVOS_ALLOW_FAKE_RUNTIME", "1")
 
     opt = (os.environ.get("DEVOS_TEST_DATABASE_URL") or "").strip()
     if opt and _is_postgres_url(opt):
