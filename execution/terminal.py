@@ -60,9 +60,13 @@ class TerminalService:
 
 
     def _env(self) -> dict:
-        """PATH suitable for IDE terminal under restricted service environments."""
+        """PATH for IDE terminal; host secrets/credentials stripped.
+
+        Human IDE terminal is treated as trusted-local by default, but must
+        not inherit server API keys / DB URLs from the service process.
+        """
         import os
-        env = os.environ.copy()
+        from execution.governed_exec import scrub_env
         extras = [
             "/usr/local/sbin",
             "/usr/local/bin",
@@ -73,21 +77,20 @@ class TerminalService:
             str(Path.home() / ".local" / "bin"),
             "/home/ubuntu/.nvm/versions/node/current/bin",
         ]
-        # Prefer existing PATH entries first, then extras
-        cur = env.get("PATH", "")
+        cur = os.environ.get("PATH", "")
         parts = [p for p in cur.split(":") if p] + [p for p in extras if p]
-        # de-dupe preserve order
         seen = set()
         ordered = []
         for p in parts:
             if p not in seen:
                 seen.add(p)
                 ordered.append(p)
-        env["PATH"] = ":".join(ordered)
-        env.setdefault("TERM", "xterm-256color")
-        env.setdefault("HOME", str(Path.home()))
-        env.setdefault("LANG", env.get("LANG") or "C.UTF-8")
-        return env
+        return scrub_env(extra={
+            "PATH": ":".join(ordered),
+            "TERM": "xterm-256color",
+            "HOME": str(Path.home()),
+            "LANG": os.environ.get("LANG") or "C.UTF-8",
+        })
 
     def _check_denylist(self, command: str):
         for pattern in DENYLIST_PATTERNS:

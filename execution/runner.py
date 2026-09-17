@@ -124,13 +124,15 @@ class ExecutionLayer:
         else:
             cmd = cfg["cmd"] + [str(script_file)]
 
-        # Build environment
-        env = os.environ.copy()
+        # Build environment — never inherit host secrets
+        from execution.governed_exec import scrub_env
+        extra = {}
         if env_vars:
-            env.update(env_vars)
+            extra.update(env_vars)
         if secrets:
             for k, v in secrets.items():
-                env[f"SECRET_{k.upper()}"] = str(v)
+                extra[f"SECRET_{k.upper()}"] = str(v)
+        env = scrub_env(extra=extra, allow_secret_prefix=True)
 
         start_ns = time.perf_counter_ns()
         try:
@@ -256,8 +258,9 @@ async def run_command_in_project(
     source: Optional[str] = None,
     allow_network: bool = False,
     language: str = "bash",
+    argv: Optional[list] = None,
 ) -> dict:
-    """Run a shell command scoped to a user project root under mandatory isolation.
+    """Run a command scoped to a user project root under mandatory isolation.
 
     Workspace-safe: cwd is data/projects/{user_id}/{project_id}.
     Does not authorize UCIP — callers must already be on a governed path.
@@ -268,21 +271,17 @@ async def run_command_in_project(
       - unavailable required backend → fail closed (isolation_unavailable)
       - never silently falls back to host execution for untrusted code
 
+    Prefer argv= for simple commands; shell_command form uses governed shell
+    mode when metacharacters require it (still isolated for untrusted).
+
     Returns dict including ok, exit_code, stdout, stderr, command, duration_ms,
-    status, and isolation evidence fields for audit/acceptance.
+    status, mode, and isolation evidence fields for audit/acceptance.
     """
     from execution.files import PROJECTS_DIR, PathViolation, _safe_scope_segment
-    from execution.isolation import (
-        classify_execution_request,
-        evaluate_isolation_decision,
-        run_isolated,
-        POLICY_TRUSTED,
-        POLICY_UNTRUSTED,
-        POLICY_PRIVILEGED,
-        normalize_policy,
-    )
+    from execution.governed_exec import run_governed, scrub_output
+    from execution.isolation import normalize_policy
 
-    if not command or not str(command).strip():
+    if argv is None and (not command or not str(command).strip()):
         return {
             "ok": False,
             "exit_code": 2,
@@ -290,13 +289,14 @@ async def run_command_in_project(
             "stderr": "empty command",
             "command": command or "",
             "status": "failed",
+            "mode": "argv",
             "isolation_evidence": {
                 "trust_level": normalize_policy(policy),
                 "policy_decision": "denied",
                 "failure_reason": "empty command",
             },
         }
-    cmd = str(command).strip()
+    cmd = str(command).strip() if command else ""
     if "\x00" in cmd:
         return {
             "ok": False,
@@ -305,6 +305,7 @@ async def run_command_in_project(
             "stderr": "invalid command",
             "command": cmd,
             "status": "failed",
+            "mode": "shell",
             "isolation_evidence": {
                 "trust_level": normalize_policy(policy),
                 "policy_decision": "denied",
@@ -321,7 +322,7 @@ async def run_command_in_project(
             "exit_code": 2,
             "stdout": "",
             "stderr": str(e),
-            "command": cmd,
+            "command": cmd or str(argv),
             "status": "failed",
             "isolation_evidence": {
                 "trust_level": normalize_policy(policy),
@@ -340,7 +341,7 @@ async def run_command_in_project(
             "exit_code": 2,
             "stdout": "",
             "stderr": "project root escapes projects directory",
-            "command": cmd,
+            "command": cmd or str(argv),
             "status": "failed",
             "isolation_evidence": {
                 "trust_level": normalize_policy(policy),
@@ -348,132 +349,51 @@ async def run_command_in_project(
                 "failure_reason": "project root escapes projects directory",
             },
         }
+    # Resolve and re-check after mkdir (symlink escape)
     root.mkdir(parents=True, exist_ok=True)
-
-    # Authoritative trust classification at the execution boundary
-    trust = classify_execution_request(
-        policy=policy,
-        source=source,
-        explicit_untrusted=(normalize_policy(policy) == POLICY_UNTRUSTED),
-    )
-    decision = evaluate_isolation_decision(trust, allow_network=allow_network)
-    logger.info(
-        "run_command_in_project isolation decision trust=%s backend=%s strength=%s allowed=%s",
-        trust,
-        decision.get("backend"),
-        decision.get("strength"),
-        decision.get("allowed"),
-    )
-
-    if not decision.get("allowed"):
-        reason = decision.get("failure_reason") or decision.get("reason") or "isolation_unavailable"
-        logger.warning(
-            "isolation_refused trust=%s strength=%s reason=%s cmd=%s",
-            trust,
-            decision.get("strength"),
-            reason,
-            cmd[:120],
-        )
+    root = root.resolve()
+    try:
+        root.relative_to(base)
+    except ValueError:
         return {
             "ok": False,
-            "exit_code": 126,
+            "exit_code": 2,
             "stdout": "",
-            "stderr": reason,
-            "command": cmd,
-            "duration_ms": 0,
-            "status": "isolation_unavailable",
-            "isolation": decision.get("backend") or "none",
-            "isolation_strength": decision.get("strength"),
+            "stderr": "project root escapes projects directory after resolve",
+            "command": cmd or str(argv),
+            "status": "failed",
             "isolation_evidence": {
-                "trust_level": trust,
-                "requested_isolation": decision.get("requested_isolation"),
-                "actual_isolation": decision.get("actual_isolation"),
-                "strength": decision.get("strength"),
+                "trust_level": normalize_policy(policy),
                 "policy_decision": "denied",
-                "failure_reason": reason,
+                "failure_reason": "symlink/path escape",
             },
         }
 
-    timeout = max(1, min(int(timeout_s or 120), 600))
-    started = time.monotonic()
-    # Shell form under isolation: argv list, never bare host shell for untrusted
-    argv = ["/bin/sh", "-c", cmd]
-    safe_env = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        "HOME": os.environ.get("HOME", "/tmp"),
-        "LANG": os.environ.get("LANG", "C.UTF-8"),
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "PYTHONUNBUFFERED": "1",
-        "TMPDIR": "/tmp",
-    }
-
     try:
-        iso = await run_isolated(
-            argv,
-            cwd=str(root),
-            env=safe_env,
-            timeout_s=timeout,
-            language=language or "bash",
-            require_isolation=True,
-            allow_network=bool(allow_network),
-            policy=trust,
-        )
-        evidence = iso.to_evidence() if hasattr(iso, "to_evidence") else {
-            "trust_level": trust,
-            "actual_isolation": getattr(iso, "isolation", "unknown"),
-            "strength": getattr(iso, "strength", "none"),
-            "policy_decision": getattr(iso, "policy_decision", "")
-            or ("denied" if iso.status == "isolation_unavailable" else "allowed"),
-            "failure_reason": iso.stderr if iso.status == "isolation_unavailable" else "",
-            "status": iso.status,
-        }
-        if iso.status == "isolation_unavailable":
-            return {
-                "ok": False,
-                "exit_code": 126,
-                "stdout": "",
-                "stderr": iso.stderr or "isolation_unavailable",
-                "command": cmd,
-                "duration_ms": iso.duration_ms,
-                "status": "isolation_unavailable",
-                "isolation": iso.isolation,
-                "isolation_strength": iso.strength,
-                "isolation_evidence": evidence,
-            }
-        if iso.status == "timeout":
-            return {
-                "ok": False,
-                "exit_code": -1,
-                "stdout": iso.stdout or "",
-                "stderr": iso.stderr or f"command timed out after {timeout}s",
-                "command": cmd,
-                "duration_ms": iso.duration_ms,
-                "status": "timeout",
-                "isolation": iso.isolation,
-                "isolation_strength": iso.strength,
-                "isolation_evidence": evidence,
-            }
-        stdout = iso.stdout or ""
-        stderr = iso.stderr or ""
-        MAX = 50_000
-        if len(stdout) > MAX:
-            stdout = stdout[-MAX:] + f"\n[...truncated to last {MAX} chars]"
-        if len(stderr) > MAX:
-            stderr = stderr[-MAX:] + f"\n[...truncated]"
-        code = int(iso.exit_code if iso.exit_code is not None else 1)
-        return {
-            "ok": code == 0 and iso.status == "ok",
-            "exit_code": code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "command": cmd,
-            "duration_ms": iso.duration_ms
-            or int((time.monotonic() - started) * 1000),
-            "status": "success" if code == 0 and iso.status == "ok" else "failed",
-            "isolation": iso.isolation,
-            "isolation_strength": iso.strength,
-            "isolation_evidence": evidence,
-        }
+        if argv is not None:
+            result = await run_governed(
+                argv=list(argv),
+                cwd=str(root),
+                timeout_s=timeout_s,
+                policy=policy,
+                source=source or "run_command_in_project",
+                allow_network=allow_network,
+                language=language or "bash",
+            )
+        else:
+            result = await run_governed(
+                shell_command=cmd,
+                cwd=str(root),
+                timeout_s=timeout_s,
+                policy=policy,
+                source=source or "run_command_in_project",
+                allow_network=allow_network,
+                language=language or "bash",
+            )
+        d = result.to_dict()
+        d["stdout"] = scrub_output(d.get("stdout") or "")
+        d["stderr"] = scrub_output(d.get("stderr") or "")
+        return d
     except Exception as e:
         logger.warning("run_command_in_project failed: %s", type(e).__name__)
         return {
@@ -481,11 +401,11 @@ async def run_command_in_project(
             "exit_code": 127,
             "stdout": "",
             "stderr": f"runner_error:{type(e).__name__}",
-            "command": cmd,
-            "duration_ms": int((time.monotonic() - started) * 1000),
+            "command": cmd or str(argv),
+            "duration_ms": 0,
             "status": "failed",
             "isolation_evidence": {
-                "trust_level": trust,
+                "trust_level": normalize_policy(policy),
                 "policy_decision": "error",
                 "failure_reason": f"runner_error:{type(e).__name__}",
             },

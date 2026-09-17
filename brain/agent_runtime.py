@@ -1724,71 +1724,29 @@ class AgentRuntime:
         return out
 
     async def _subprocess(self, cmd: str, timeout: int) -> dict:
-        """Run shell command under project root with cancel/timeout kill ownership.
+        """Legacy helper — routes through governed project runner (no bare shell).
 
-        Lifecycle owner: this method owns the child process until wait()/kill completes.
-        Observability must never be required for cleanup.
+        Lifecycle: isolation + timeout owned by run_command_in_project / governed_exec.
         """
-        from execution.files import PROJECTS_DIR
-        root = (PROJECTS_DIR / self.user_id / self.project_id).resolve()
-        root.mkdir(parents=True, exist_ok=True)
-        proc = await asyncio.create_subprocess_shell(
+        from execution.runner import run_command_in_project
+        result = await run_command_in_project(
+            self.user_id,
+            self.project_id,
             cmd,
-            cwd=str(root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            timeout_s=max(1, int(timeout or 60)),
+            policy="untrusted",
+            source="agent_runtime_subprocess",
         )
-        task = getattr(self, "_current_task", None)
-        result: dict = {"exit_code": -1, "stdout": "", "stderr": "aborted"}
-        try:
-            deadline = asyncio.get_event_loop().time() + max(1, int(timeout or 60))
-            while True:
-                if task is not None and (
-                    getattr(task, "cancel_requested", False)
-                    or (_CANCEL_FLAGS.get(task.id) and _CANCEL_FLAGS[task.id].is_set())
-                ):
-                    result = {"exit_code": -1, "stdout": "", "stderr": "cancelled", "cancelled": True}
-                    break
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:
-                    result = {"exit_code": -1, "stdout": "", "stderr": "command timed out"}
-                    break
-                try:
-                    stdout, stderr = await asyncio.wait_for(
-                        proc.communicate(), timeout=min(1.0, remaining)
-                    )
-                    return {
-                        "exit_code": proc.returncode,
-                        "stdout": stdout.decode(errors="replace"),
-                        "stderr": stderr.decode(errors="replace"),
-                    }
-                except asyncio.TimeoutError:
-                    if proc.returncode is not None:
-                        try:
-                            stdout, stderr = await proc.communicate()
-                        except Exception:
-                            stdout, stderr = b"", b""
-                        return {
-                            "exit_code": proc.returncode,
-                            "stdout": (stdout or b"").decode(errors="replace"),
-                            "stderr": (stderr or b"").decode(errors="replace"),
-                        }
-                    continue
-        finally:
-            # Always release the child if still running (cancel/timeout/exception)
-            if proc.returncode is None:
-                try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=3.0)
-                except Exception:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-        return result
+        return {
+            "exit_code": result.get("exit_code", -1),
+            "stdout": result.get("stdout") or "",
+            "stderr": result.get("stderr") or "",
+            "ok": result.get("ok", False),
+            "status": result.get("status"),
+            "isolation_evidence": result.get("isolation_evidence"),
+            "cancelled": bool(result.get("cancelled")),
+        }
+
 
     async def _git(self, name: str, args: dict) -> dict:
         git = self._git_svc()
