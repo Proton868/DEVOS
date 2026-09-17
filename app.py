@@ -102,6 +102,19 @@ def _is_weak_password(pw: str) -> Optional[str]:
     return None
 
 
+def _supabase_available() -> bool:
+    """Read settings.has_supabase whether implemented as @property or method.
+
+    Local startup fix (property access) + remote public-config work both rely
+    on this not raising TypeError when the descriptor is a property.
+    """
+    attr = getattr(settings, "has_supabase", False)
+    try:
+        return bool(attr() if callable(attr) else attr)
+    except TypeError:
+        return bool(attr)
+
+
 def _validate_startup_env():
     """Fail closed on dangerous production misconfiguration.
 
@@ -211,7 +224,7 @@ def _validate_startup_env():
         "[startup] AUTH_ENABLED=%s AUTH_MODE=%s has_supabase=%s origins_count=%s",
         settings.AUTH_ENABLED,
         auth_mode,
-        bool(settings.has_supabase),
+        _supabase_available(),
         len(origins),
     )
 
