@@ -52,6 +52,7 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "list_workflows", "inspect_workflow",
         "get_project_metadata", "get_test_files", "get_build_system",
         "get_package_dependencies", "find_symbol", "select_related_tests",
+        "propose_skill", "detect_missing_capability", "list_skill_proposals",
     },
     AgentMode.EDIT: {
         "list_files", "read_file", "search_files", "get_file_metadata",
@@ -59,6 +60,7 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "git_status", "git_diff", "git_log", "git_show", "git_branch",
         "get_project_metadata", "get_test_files", "get_build_system",
         "get_package_dependencies", "find_symbol", "select_related_tests",
+        "propose_skill", "detect_missing_capability", "list_skill_proposals",
     },
     AgentMode.AGENT: {
         "list_files", "read_file", "search_files", "get_file_metadata",
@@ -70,6 +72,7 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "list_workflows", "inspect_workflow", "execute_workflow",
         "get_project_metadata", "get_test_files", "get_build_system",
         "get_package_dependencies", "find_symbol", "select_related_tests",
+        "propose_skill", "detect_missing_capability", "list_skill_proposals",
     },
     AgentMode.REVIEW: {
         "list_files", "read_file", "search_files", "get_file_metadata",
@@ -723,4 +726,52 @@ register_agent_tool(AgentTool(
     },
     capability="devos.fs.read",
     side_effect=SideEffect.NONE,
+))
+
+
+# ── Governed skill acquisition meta-tools ─────────────────────────────────────
+register_agent_tool(AgentTool(
+    name="detect_missing_capability",
+    description="Check whether a tool/capability name is registered. Use before proposing a new skill.",
+    input_schema=_s({
+        "name": {"type": "string", "description": "Tool or capability name", "maxLength": 64},
+    }, required=["name"]),
+    capability=None,
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.LOW,
+    timeout_s=5,
+))
+
+register_agent_tool(AgentTool(
+    name="propose_skill",
+    description=(
+        "Propose a new governed skill/tool when a required capability is missing. "
+        "Does not grant permissions. High/critical risk requires human approval. "
+        "Only safe handler kinds (echo, json_validate, hash_text) are installable."
+    ),
+    input_schema=_s({
+        "name": {"type": "string", "description": "snake_case tool name", "maxLength": 64},
+        "description": {"type": "string", "description": "What the skill does", "maxLength": 2000},
+        "reason": {"type": "string", "description": "Why this agent needs it", "maxLength": 1000},
+        "risk": {"type": "string", "description": "low|medium|high|critical"},
+        "side_effect": {"type": "string", "description": "none|workspace|network|system"},
+        "handler_kind": {"type": "string", "description": "echo|json_validate|hash_text"},
+        "input_schema": {"type": "object", "description": "Optional JSON schema for arguments"},
+    }, required=["name", "description", "reason"]),
+    capability=None,
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.MEDIUM,
+    timeout_s=30,
+))
+
+register_agent_tool(AgentTool(
+    name="list_skill_proposals",
+    description="List skill acquisition proposals for the current tenant.",
+    input_schema=_s({
+        "tenant_id": {"type": "string", "description": "Optional tenant filter", "maxLength": 64},
+    }),
+    capability=None,
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.LOW,
+    timeout_s=5,
 ))

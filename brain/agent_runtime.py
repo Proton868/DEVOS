@@ -1181,6 +1181,18 @@ class AgentRuntime:
                 files = args.get("changed_files") or []
                 limit = int(args.get("limit") or 20)
                 return {"ok": True, "tests": _select_related_tests(files, limit)}
+            # Governed dynamically installed skills (safe handler kinds only)
+            if name in (
+                "propose_skill", "detect_missing_capability", "list_skill_proposals",
+            ):
+                return await self._skill_acquisition_tool(name, args)
+            try:
+                from governance.skill_acquisition import run_dynamic_skill_handler
+                dyn = run_dynamic_skill_handler(name, args)
+                if dyn is not None:
+                    return dyn
+            except Exception as e:
+                return {"ok": False, "error": f"dynamic skill error: {type(e).__name__}"}
             return {"ok": False, "error": f"handler not implemented: {name}"}
         except Exception as e:
             logger.exception("tool %s failed", name)
