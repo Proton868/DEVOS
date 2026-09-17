@@ -369,14 +369,24 @@ async def run_command_in_project(
             },
         }
 
+    # Project-scoped path is never trusted. Callers may pass policy=trusted;
+    # classify_execution_request + source force untrusted. Privileged still
+    # requires strong/restricted isolation (no host fallback).
+    from execution.isolation import classify_execution_request, POLICY_TRUSTED, POLICY_UNTRUSTED
+    src = source or "run_command_in_project"
+    effective = classify_execution_request(policy=policy, source=src)
+    if effective == POLICY_TRUSTED:
+        # Anti-spoof: project runner is not a trusted terminal.
+        effective = POLICY_UNTRUSTED
+
     try:
         if argv is not None:
             result = await run_governed(
                 argv=list(argv),
                 cwd=str(root),
                 timeout_s=timeout_s,
-                policy=policy,
-                source=source or "run_command_in_project",
+                policy=effective,
+                source=src,
                 allow_network=allow_network,
                 language=language or "bash",
             )
@@ -385,8 +395,8 @@ async def run_command_in_project(
                 shell_command=cmd,
                 cwd=str(root),
                 timeout_s=timeout_s,
-                policy=policy,
-                source=source or "run_command_in_project",
+                policy=effective,
+                source=src,
                 allow_network=allow_network,
                 language=language or "bash",
             )

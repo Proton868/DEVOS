@@ -279,3 +279,19 @@ def test_agent_runtime_no_bare_subprocess_fallback():
     assert "source=\"agent_runtime\"" in src or "source='agent_runtime'" in src
     # Should not prefer bare _subprocess as primary path for project cmds
     assert "run_command_in_project" in src
+
+
+def test_privileged_requires_restricted():
+    ok, _ = policy_allows_execution("privileged", IsolationStrength.RESTRICTED.value)
+    assert ok is True
+    ok2, _ = policy_allows_execution("privileged", IsolationStrength.DEGRADED.value)
+    assert ok2 is False
+
+
+def test_evaluate_decision_untrusted_denied_on_unshare():
+    from execution.isolation import evaluate_isolation_decision
+    with mock.patch("execution.isolation.select_backend", return_value=("unshare", IsolationStrength.NETWORK_ONLY.value)):
+        d = evaluate_isolation_decision("untrusted")
+        assert d["allowed"] is False
+        assert d["policy_decision"] == "denied"
+        assert d["suitable_for_untrusted_code"] is False

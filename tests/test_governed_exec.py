@@ -188,3 +188,78 @@ def test_static_guard_no_new_bare_project_shell():
     chunk = ar[idx: idx + 800]
     assert "create_subprocess_shell" not in chunk
     assert not offenders, f"bare shell in governed paths: {offenders}"
+
+
+def test_static_guard_no_os_system_in_runtime():
+    """Runtime paths must not call os.system."""
+    root = Path(__file__).resolve().parents[1]
+    targets = [
+        root / "execution" / "runner.py",
+        root / "execution" / "governed_exec.py",
+        root / "execution" / "isolation.py",
+        root / "brain" / "agent_runtime.py",
+        root / "brain" / "check_runner.py",
+        root / "brain" / "project_bootstrap.py",
+    ]
+    offenders = []
+    for path in targets:
+        src = path.read_text(encoding="utf-8")
+        if "os.system(" in src:
+            offenders.append(str(path.relative_to(root)))
+    assert not offenders, f"os.system found: {offenders}"
+
+
+def test_static_guard_project_paths_use_governed():
+    """check_runner and project_bootstrap must call run_command_in_project."""
+    root = Path(__file__).resolve().parents[1]
+    for rel in ("brain/check_runner.py", "brain/project_bootstrap.py"):
+        src = (root / rel).read_text(encoding="utf-8")
+        assert "run_command_in_project" in src
+        assert "create_subprocess_shell" not in src
+
+
+def test_privileged_denied_on_network_only():
+    from execution.isolation import policy_allows_execution, IsolationStrength, POLICY_PRIVILEGED
+    ok, reason = policy_allows_execution(POLICY_PRIVILEGED, IsolationStrength.NETWORK_ONLY.value)
+    assert ok is False
+    assert "strong" in reason.lower() or "restricted" in reason.lower()
+
+
+def test_project_source_cannot_spoof_trusted():
+    from execution.isolation import classify_execution_request, POLICY_UNTRUSTED
+    assert classify_execution_request(policy="trusted", source="agent_runtime") == POLICY_UNTRUSTED
+    assert classify_execution_request(policy="trusted", source="project_bootstrap") == POLICY_UNTRUSTED
+    assert classify_execution_request(policy="trusted", source="check_runner") == POLICY_UNTRUSTED
+    assert classify_execution_request(policy="trusted", source="run_command_in_project") == POLICY_UNTRUSTED
+
+
+def test_isolation_refusal_never_ok():
+    async def _go():
+        with mock.patch(
+            "execution.isolation.select_backend",
+            return_value=("unshare", IsolationStrength.NETWORK_ONLY.value),
+        ):
+            r = await run_governed(argv=["echo", "x"], policy="untrusted", source="agent_runtime")
+            assert r.ok is False
+            assert r.status == "isolation_unavailable"
+            assert r.exit_code != 0
+            assert r.isolation_evidence.get("policy_decision") == "denied"
+            assert r.isolation_evidence.get("trust_level") == "untrusted"
+    asyncio.run(_go())
+
+
+def test_runner_rejects_trusted_policy_spoof():
+    async def _go():
+        with mock.patch(
+            "execution.isolation.select_backend",
+            return_value=("unshare", IsolationStrength.NETWORK_ONLY.value),
+        ):
+            from execution.runner import run_command_in_project
+            r = await run_command_in_project(
+                "u", "p", "echo hi", policy="trusted", source="agent_runtime"
+            )
+            assert r["ok"] is False
+            assert r.get("status") == "isolation_unavailable" or r.get("exit_code") == 126
+            ev = r.get("isolation_evidence") or {}
+            assert ev.get("trust_level") == "untrusted" or r["ok"] is False
+    asyncio.run(_go())

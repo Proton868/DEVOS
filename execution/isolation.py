@@ -225,17 +225,28 @@ def classify_execution_request(
 
     Authoritative classification used at the subprocess boundary.
     Default is untrusted (fail closed for generated/uploaded/project code).
+
+    Project-scoped sources (agent, bootstrap, check_runner, coding) are ALWAYS
+    untrusted even if a caller passes policy=trusted (anti-spoof).
     """
     if explicit_untrusted:
         return POLICY_UNTRUSTED
-    if policy:
-        return normalize_policy(policy)
     src = (source or "").strip().lower()
+    # Project / AI / coding paths cannot be elevated to trusted via policy string.
+    _FORCE_UNTRUSTED_SOURCES = (
+        "agent_runtime", "agent_runtime_subprocess", "run_command_in_project",
+        "project_bootstrap", "check_runner", "coding_loop", "coding",
+        "sandbox", "workflow", "mission", "a2a", "uploaded", "repo",
+        "flutter", "toolchain",
+    )
+    if any(src == s or src.startswith(s + "_") or src.endswith("_" + s) for s in _FORCE_UNTRUSTED_SOURCES):
+        return POLICY_UNTRUSTED
     if src in ("system_admin", "deploy", "privileged_capability", "host"):
         return POLICY_PRIVILEGED
-    if src in ("developer", "local", "trusted_workspace", "self_hosted_dev"):
+    if policy:
+        return normalize_policy(policy)
+    if src in ("developer", "local", "trusted_workspace", "self_hosted_dev", "terminal_human"):
         return POLICY_TRUSTED
-    # AI-generated, uploaded, repo, bootstrap, check_runner, coding loop → untrusted
     return POLICY_UNTRUSTED
 
 

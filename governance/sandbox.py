@@ -166,11 +166,18 @@ class SandboxedExecutor:
             # Isolation is the primary boundary. allow_network only tunes the
             # backend (e.g. Docker network mode); it must never mean bare host exec
             # for untrusted policy.
-            from execution.isolation import run_isolated, POLICY_UNTRUSTED, POLICY_TRUSTED
-            pol = policy if policy in (POLICY_UNTRUSTED, POLICY_TRUSTED) else (
-                POLICY_UNTRUSTED if policy == "untrusted" else POLICY_TRUSTED
+            from execution.isolation import (
+                run_isolated, POLICY_UNTRUSTED, POLICY_TRUSTED, POLICY_PRIVILEGED,
+                normalize_policy, classify_execution_request,
             )
-            if pol == POLICY_UNTRUSTED or not self.allow_network:
+            pol = classify_execution_request(
+                policy=policy or POLICY_UNTRUSTED,
+                source="sandbox",
+            )
+            # Bare host only for explicitly trusted + allow_network.
+            # Untrusted and privileged always use run_isolated (fail closed).
+            must_isolate = pol in (POLICY_UNTRUSTED, POLICY_PRIVILEGED) or not self.allow_network
+            if must_isolate:
                 iso = await run_isolated(
                     cmd, cwd=str(work_dir), env=env,
                     timeout_s=min(timeout, self.max_cpu_seconds + 5),
@@ -198,6 +205,7 @@ class SandboxedExecutor:
                 else:
                     status = "success" if exit_code == 0 else "failed"
             else:
+                # Trusted + allow_network only — human/local sandbox path
                 proc = await asyncio.create_subprocess_exec(
                     *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                     env=env, cwd=str(work_dir), start_new_session=True,

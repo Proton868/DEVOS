@@ -71,3 +71,23 @@ Aliases resolved into `SUPABASE_ANON_KEY` when empty: `SUPABASE_PUBLISHABLE_KEY`
 - `frontend-src/src/components/auth/LoginScreen.jsx` — UI
 - `core/config.py` — `AUTH_MODE`, Supabase settings
 - `tests/test_auth_mode.py`, `tests/test_supabase_auth_login.py`
+
+
+## Mandatory isolation model (2026-09-17)
+
+| Trust level | Meaning | Required isolation strength |
+|-------------|---------|----------------------------|
+| **trusted** | Local human / developer IDE terminal | May use host when explicitly intended |
+| **untrusted** | AI-generated, uploaded, project, bootstrap, check, coding | **strong** or **restricted** only |
+| **privileged** | Host/system/deploy high-risk | **strong** or **restricted** only |
+
+- `network_only` (unshare --net) and `degraded` host **fail closed** for untrusted and privileged.
+- No silent fallback to bare host for agent/project commands.
+- Canonical path: `run_command_in_project` → `run_governed` → `run_isolated`.
+- Project sources cannot spoof `policy=trusted` (classify forces untrusted).
+- Refusal contract: `status=isolation_unavailable`, `ok=false`, structured `isolation_evidence`.
+
+Backends (preference): Docker (`DEVOS_USE_DOCKER_SANDBOX=1`) → bubblewrap → firejail → unshare (network_only only) → none.
+
+Human `TerminalService` remains trusted-local shell with env scrub; it is not the agent command path.
+
