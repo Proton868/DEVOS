@@ -36,6 +36,14 @@ def _parse_allowed_origins(v):
     Compatible with pydantic-settings 2.3.0 (declared in requirements.txt).
     Union[str, list] lets JSON decode fail open so comma-separated values
     reach this parser as raw strings.
+
+    Canonical production forms:
+      - JSON array:  ["https://app.example","http://127.0.0.1:8000"]
+      - CSV string:  https://app.example,http://127.0.0.1:8000
+
+    Also tolerates a common misconfiguration (bracketed CSV without JSON
+    quotes), e.g. [https://app.example,http://127.0.0.1:8000], by falling
+    back to comma-split after stripping outer brackets when json.loads fails.
     """
     if v is None or v == "":
         return ["http://localhost:8000"]
@@ -45,7 +53,18 @@ def _parse_allowed_origins(v):
         s = v.strip()
         if s.startswith("["):
             import json
-            data = json.loads(s)
+            try:
+                data = json.loads(s)
+            except json.JSONDecodeError:
+                inner = s[1:] if s.startswith("[") else s
+                if inner.endswith("]"):
+                    inner = inner[:-1]
+                parts = []
+                for part in inner.split(","):
+                    p = part.strip().strip('"').strip("'")
+                    if p:
+                        parts.append(p)
+                return parts or ["http://localhost:8000"]
             if not isinstance(data, list):
                 raise ValueError("ALLOWED_ORIGINS JSON must be an array")
             return [str(x).strip() for x in data if str(x).strip()]

@@ -946,6 +946,54 @@ async def _migrate_missing_columns(conn):
         "ALTER TABLE messages ADD COLUMN metadata JSON",
     )
     await _add_column_if_missing(
+        "execution_operations", "actor_id",
+        "ALTER TABLE execution_operations ADD COLUMN actor_id VARCHAR",
+    )
+    await _add_column_if_missing(
+        "execution_operations", "task_id",
+        "ALTER TABLE execution_operations ADD COLUMN task_id VARCHAR",
+    )
+    await _add_column_if_missing(
+        "execution_operations", "tool_name",
+        "ALTER TABLE execution_operations ADD COLUMN tool_name VARCHAR",
+    )
+    await _add_column_if_missing(
+        "execution_operations", "request_id",
+        "ALTER TABLE execution_operations ADD COLUMN request_id VARCHAR",
+    )
+    await _add_column_if_missing(
+        "execution_operations", "correlation_id",
+        "ALTER TABLE execution_operations ADD COLUMN correlation_id VARCHAR",
+    )
+    await _add_column_if_missing(
+        "execution_operations", "input_digest",
+        "ALTER TABLE execution_operations ADD COLUMN input_digest VARCHAR",
+    )
+    await _add_column_if_missing(
+        "execution_operations", "target_digest",
+        "ALTER TABLE execution_operations ADD COLUMN target_digest VARCHAR",
+    )
+    await _add_column_if_missing(
+        "execution_operations", "result_digest",
+        "ALTER TABLE execution_operations ADD COLUMN result_digest VARCHAR",
+    )
+    await _add_column_if_missing(
+        "execution_operations", "attempt",
+        "ALTER TABLE execution_operations ADD COLUMN attempt INTEGER DEFAULT 1",
+    )
+    await _add_column_if_missing(
+        "execution_operations", "started_at",
+        "ALTER TABLE execution_operations ADD COLUMN started_at TIMESTAMP WITH TIME ZONE",
+    )
+    await _add_column_if_missing(
+        "execution_operations", "completed_at",
+        "ALTER TABLE execution_operations ADD COLUMN completed_at TIMESTAMP WITH TIME ZONE",
+    )
+    await _add_column_if_missing(
+        "execution_operations", "meta",
+        "ALTER TABLE execution_operations ADD COLUMN meta JSON",
+    )
+    await _add_column_if_missing(
         "users", "default_tenant_id",
         "ALTER TABLE users ADD COLUMN default_tenant_id VARCHAR",
     )
