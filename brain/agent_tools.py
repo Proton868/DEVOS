@@ -54,6 +54,7 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "get_package_dependencies", "find_symbol", "select_related_tests",
         "propose_skill", "detect_missing_capability", "list_skill_proposals",
         "bootstrap_project", "detect_project_toolchain",
+        "detect_checks", "run_check", "debug_check_loop",
     },
     AgentMode.EDIT: {
         "list_files", "read_file", "search_files", "get_file_metadata",
@@ -63,7 +64,8 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "get_package_dependencies", "find_symbol", "select_related_tests",
         "propose_skill", "detect_missing_capability", "list_skill_proposals",
     
-        "bootstrap_project", "detect_project_toolchain",},
+        "bootstrap_project", "detect_project_toolchain",
+        "detect_checks", "run_check", "debug_check_loop",},
     AgentMode.AGENT: {
         "list_files", "read_file", "search_files", "get_file_metadata",
         "create_file", "apply_patch", "replace_text", "rename_file", "delete_file",
@@ -76,7 +78,8 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "get_package_dependencies", "find_symbol", "select_related_tests",
         "propose_skill", "detect_missing_capability", "list_skill_proposals",
         "bootstrap_project", "detect_project_toolchain",
-    },
+    
+        "detect_checks", "run_check", "debug_check_loop",},
     AgentMode.REVIEW: {
         "list_files", "read_file", "search_files", "get_file_metadata",
         "git_status", "git_diff", "git_log", "git_show", "git_branch",
@@ -812,5 +815,48 @@ register_agent_tool(AgentTool(
     side_effect=SideEffect.LOCAL,
     risk=ToolRisk.MEDIUM,
     timeout_s=300,
+    durable=True,
+))
+
+
+register_agent_tool(AgentTool(
+    name="detect_checks",
+    description="Detect available test, build, lint, and typecheck commands from the project (no hard-coded paths).",
+    input_schema=_s({}, required=[]),
+    capability=None,
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.LOW,
+    timeout_s=15,
+))
+
+register_agent_tool(AgentTool(
+    name="run_check",
+    description="Run a detected test/build/lint/typecheck command and parse failures.",
+    input_schema=_s({
+        "kind": {"type": "string", "description": "test|build|lint|typecheck"},
+        "command": {"type": "string", "description": "Optional explicit command override"},
+    }, required=["kind"]),
+    capability="ucip:process.execute",
+    side_effect=SideEffect.LOCAL,
+    risk=ToolRisk.MEDIUM,
+    timeout_s=300,
+    durable=True,
+))
+
+register_agent_tool(AgentTool(
+    name="debug_check_loop",
+    description=(
+        "Bounded loop: run check → parse failures → identify files → "
+        "optional repair edits → rerun until success or attempts exhausted."
+    ),
+    input_schema=_s({
+        "kind": {"type": "string", "description": "test|build|lint|typecheck"},
+        "max_attempts": {"type": "integer"},
+        "command": {"type": "string"},
+    }, required=["kind"]),
+    capability="ucip:process.execute",
+    side_effect=SideEffect.LOCAL,
+    risk=ToolRisk.MEDIUM,
+    timeout_s=600,
     durable=True,
 ))

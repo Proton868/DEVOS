@@ -1188,6 +1188,8 @@ class AgentRuntime:
                 return await self._skill_acquisition_tool(name, args)
             if name in ("bootstrap_project", "detect_project_toolchain"):
                 return await self._project_bootstrap_tool(name, args)
+            if name in ("detect_checks", "run_check", "debug_check_loop"):
+                return await self._check_runner_tool(name, args)
             try:
                 from governance.skill_acquisition import run_dynamic_skill_handler
                 dyn = run_dynamic_skill_handler(name, args)
@@ -1199,6 +1201,56 @@ class AgentRuntime:
         except Exception as e:
             logger.exception("tool %s failed", name)
             return {"ok": False, "error": str(e)}
+
+
+    async def _check_runner_tool(self, name: str, args: dict) -> dict:
+        from brain.check_runner import (
+            CheckKind,
+            debug_check_loop,
+            detect_checks,
+            run_check,
+            select_check,
+            CheckCommand,
+            _default_runner,
+        )
+        fs = self._fs()
+        ctx = {"user_id": self.user_id, "project_id": self.project_id, "timeout_s": 180}
+
+        async def runner(cmd, c):
+            return await _default_runner(cmd, {**ctx, **(c or {})})
+
+        if name == "detect_checks":
+            checks = detect_checks(fs)
+            return {"ok": True, "checks": [c.to_dict() for c in checks]}
+
+        kind = str(args.get("kind") or "test")
+        preferred = args.get("command")
+        checks = detect_checks(fs)
+        if preferred:
+            check = CheckCommand(kind=CheckKind(kind), command=str(preferred), adapter="generic")
+        else:
+            check = select_check(checks, kind)
+        if check is None:
+            return {"ok": False, "error": "no_check_command_detected", "kind": kind}
+
+        if name == "run_check":
+            result = await run_check(check, runner=runner, ctx=ctx)
+            return {"ok": result.ok, **result.to_dict()}
+
+        # debug_check_loop — edits go through apply_patch only if caller provides; default no-op edit
+        async def edit_hook(files, failure):
+            return {"ok": False, "files_changed": [], "note": "agent must apply_patch before re-loop"}
+
+        loop = await debug_check_loop(
+            fs=fs,
+            kind=kind,
+            runner=runner,
+            edit_hook=edit_hook,
+            max_attempts=int(args.get("max_attempts") or 3),
+            ctx=ctx,
+            preferred_command=preferred,
+        )
+        return {"ok": loop.ok, **loop.to_dict()}
 
     def _fs(self):
         from execution.files import FileService
