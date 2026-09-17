@@ -143,7 +143,7 @@ export default function LoginScreen() {
   }
 
   async function handleGoogleSignIn() {
-    if (!supabase) {
+    if (!supabaseReady) {
       setError("Supabase is not configured.");
       return;
     }
