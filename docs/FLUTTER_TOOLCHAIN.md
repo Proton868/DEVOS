@@ -14,3 +14,6 @@ API: GET/POST `/api/toolchain/flutter`.
 
 ## Checksums
 Pin digests in `data/toolchains/flutter_checksums.json`.
+
+Full design, security boundary, and test coverage:
+see `docs/AUDIT_AND_TOOLCHAIN_RESULTS_2026-09-17.md`.
