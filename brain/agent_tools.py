@@ -53,6 +53,7 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "get_project_metadata", "get_test_files", "get_build_system",
         "get_package_dependencies", "find_symbol", "select_related_tests",
         "propose_skill", "detect_missing_capability", "list_skill_proposals",
+        "bootstrap_project", "detect_project_toolchain",
     },
     AgentMode.EDIT: {
         "list_files", "read_file", "search_files", "get_file_metadata",
@@ -61,7 +62,8 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "get_project_metadata", "get_test_files", "get_build_system",
         "get_package_dependencies", "find_symbol", "select_related_tests",
         "propose_skill", "detect_missing_capability", "list_skill_proposals",
-    },
+    
+        "bootstrap_project", "detect_project_toolchain",},
     AgentMode.AGENT: {
         "list_files", "read_file", "search_files", "get_file_metadata",
         "create_file", "apply_patch", "replace_text", "rename_file", "delete_file",
@@ -73,6 +75,7 @@ MODE_TOOLS: dict[AgentMode, set[str]] = {
         "get_project_metadata", "get_test_files", "get_build_system",
         "get_package_dependencies", "find_symbol", "select_related_tests",
         "propose_skill", "detect_missing_capability", "list_skill_proposals",
+        "bootstrap_project", "detect_project_toolchain",
     },
     AgentMode.REVIEW: {
         "list_files", "read_file", "search_files", "get_file_metadata",
@@ -774,4 +777,40 @@ register_agent_tool(AgentTool(
     side_effect=SideEffect.NONE,
     risk=ToolRisk.LOW,
     timeout_s=5,
+))
+
+
+register_agent_tool(AgentTool(
+    name="detect_project_toolchain",
+    description="Detect which project toolchain to use (python, node, vite, nextjs, angular, html) from a user request.",
+    input_schema=_s({
+        "request": {"type": "string", "description": "User request text", "maxLength": 2000},
+        "explicit": {"type": "string", "description": "Optional explicit toolchain"},
+    }, required=["request"]),
+    capability=None,
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.LOW,
+    timeout_s=5,
+))
+
+register_agent_tool(AgentTool(
+    name="bootstrap_project",
+    description=(
+        "Create a new project with governed scaffold + dependency install. "
+        "Supports python, node, vite, nextjs, angular, html. "
+        "Does not claim the project works solely because files were written."
+    ),
+    input_schema=_s({
+        "project_name": {"type": "string", "maxLength": 64},
+        "request": {"type": "string", "description": "What to build", "maxLength": 2000},
+        "toolchain": {"type": "string", "description": "python|node|vite|nextjs|angular|html"},
+        "run_install": {"type": "boolean"},
+        "run_build": {"type": "boolean"},
+        "run_test": {"type": "boolean"},
+    }, required=["project_name"]),
+    capability="ucip:filesystem.write",
+    side_effect=SideEffect.LOCAL,
+    risk=ToolRisk.MEDIUM,
+    timeout_s=300,
+    durable=True,
 ))

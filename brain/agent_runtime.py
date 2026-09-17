@@ -1186,6 +1186,8 @@ class AgentRuntime:
                 "propose_skill", "detect_missing_capability", "list_skill_proposals",
             ):
                 return await self._skill_acquisition_tool(name, args)
+            if name in ("bootstrap_project", "detect_project_toolchain"):
+                return await self._project_bootstrap_tool(name, args)
             try:
                 from governance.skill_acquisition import run_dynamic_skill_handler
                 dyn = run_dynamic_skill_handler(name, args)
