@@ -128,6 +128,14 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
     # Production path: use configured default provider (OmniRoute-native).
     # Do not rely on BrainLLM falling back silently; make the contract explicit.
     from core.config import settings as _settings
+    ucip_caps = None
+    if req.effective_caps:
+        try:
+            from brain.capability_canon import to_ucip
+            ucip_caps = {to_ucip(c) for c in req.effective_caps if c}
+        except Exception:
+            ucip_caps = None
+    tool_allow = set(req.runtime_tools) if req.runtime_tools else None
     runtime = AgentRuntime(
         user_id=req.user_id,
         project_id=req.workspace_id or "default",
@@ -135,9 +143,11 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
         provider=getattr(_settings, "DEFAULT_PROVIDER", None) or "omniroute",
         model=None,  # provider defaults / user prefs resolve inside BrainLLM
         mode=AgentMode.AGENT,
+        capabilities=ucip_caps,
         persona_system_prompt=(req.persona_system_prompt or ""),
         persona_id=req.persona_id or "",
         agent_id=req.agent_id or "",
+        allowed_tool_names=tool_allow,
     )
     context = AgentContext(
         project_id=req.workspace_id or "default",

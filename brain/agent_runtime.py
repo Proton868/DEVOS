@@ -388,6 +388,7 @@ class AgentRuntime:
         persona_system_prompt: str = "",
         persona_id: str = "",
         agent_id: str = "",
+        allowed_tool_names: Optional[set[str]] = None,
     ):
         self.user_id = user_id
         self.project_id = project_id
@@ -398,6 +399,11 @@ class AgentRuntime:
         self.persona_system_prompt = persona_system_prompt or ""
         self.persona_id = persona_id or ""
         self.agent_id = agent_id or ""
+        # When set (from Persona ExecutableAgentContract.runtime_tools), restrict
+        # the tool surface beyond mode defaults. None = no extra restriction.
+        self.allowed_tool_names = (
+            set(allowed_tool_names) if allowed_tool_names else None
+        )
 
         # Default capability set for IDE agent: filesystem + vcs write + shell.
         # UCIP still evaluates each call; HITL escalations still apply.
@@ -516,6 +522,15 @@ class AgentRuntime:
                 return
 
         tools_block = tools_for_prompt(self.mode)
+        if self.allowed_tool_names is not None:
+            # Only advertise tools the persona contract allows (avoid LLM tool hallucination)
+            filtered_lines = []
+            for line in tools_block.splitlines():
+                name = line[2:].split(":", 1)[0].strip() if line.startswith("- ") else ""
+                if name and name in self.allowed_tool_names:
+                    filtered_lines.append(line)
+            if filtered_lines:
+                tools_block = "\n".join(filtered_lines)
         system = SYSTEM_PROMPT.format(tools=tools_block)
         if getattr(self, "persona_system_prompt", None):
             system = (
@@ -562,7 +577,30 @@ class AgentRuntime:
                     except Exception as _prov_exc:
                         from brain.llm import ProviderExhaustedError
                         if isinstance(_prov_exc, ProviderExhaustedError) or "All providers failed" in str(_prov_exc):
-                            text = f"All providers failed. {_prov_exc}"
+                            # Structured provider failure — never treat as successful content
+                            task.status = AgentTaskStatus.FAILED
+                            pub = (
+                                _prov_exc.to_public_dict()
+                                if isinstance(_prov_exc, ProviderExhaustedError)
+                                else {
+                                    "error_type": "provider_exhausted",
+                                    "message": str(_prov_exc),
+                                    "category": "rate_limited" if "429" in str(_prov_exc) else "exhausted",
+                                    "retryable": "429" in str(_prov_exc),
+                                }
+                            )
+                            task.error = pub.get("message") or str(_prov_exc)
+                            task.completed_at = datetime.now(timezone.utc).isoformat()
+                            yield _emit(task, "agent.error", {
+                                "message": task.error,
+                                **{k: v for k, v in pub.items() if k != "message"},
+                            })
+                            yield _emit(task, "agent.completed", {
+                                "summary": task.error,
+                                "success": False,
+                                "provider_failure": pub,
+                            })
+                            return
                         else:
                             raise
                 except Exception as e:
@@ -584,7 +622,18 @@ class AgentRuntime:
                     task.status = AgentTaskStatus.FAILED
                     task.error = text
                     task.completed_at = datetime.now(timezone.utc).isoformat()
-                    yield _emit(task, "agent.error", {"message": text})
+                    cat = "rate_limited" if "429" in text else "exhausted"
+                    yield _emit(task, "agent.error", {
+                        "message": text,
+                        "category": cat,
+                        "retryable": cat == "rate_limited",
+                        "error_type": "provider_exhausted",
+                    })
+                    yield _emit(task, "agent.completed", {
+                        "summary": text,
+                        "success": False,
+                        "provider_failure": {"category": cat, "retryable": cat == "rate_limited"},
+                    })
                     return
 
                 call = _parse_tool_call(text)
@@ -699,22 +748,25 @@ class AgentRuntime:
                 if thought:
                     yield _emit(task, "agent.thinking", {"message": thought, "step": step + 1})
 
-                # Mode filter (UX only)
+                # Mode filter + optional persona contract tool allowlist
                 allowed = list_agent_tools(self.mode)
                 allowed_names = {t["name"] for t in allowed}
+                if self.allowed_tool_names is not None:
+                    allowed_names = allowed_names & self.allowed_tool_names
                 if action not in allowed_names:
                     messages.append({"role": "assistant", "content": text})
                     messages.append({
                         "role": "user",
                         "content": (
-                            f"Tool '{action}' is not available in mode '{self.mode.value}'. "
+                            f"Tool '{action}' is not available for this agent "
+                            f"(mode={self.mode.value}, persona={self.persona_id or 'none'}). "
                             f"Allowed: {sorted(allowed_names)}. Choose another tool or finish."
                         ),
                     })
                     yield _emit(task, "agent.tool_result", {
                         "tool": action,
                         "ok": False,
-                        "error": f"tool not allowed in mode {self.mode.value}",
+                        "error": f"tool not allowed for persona/mode",
                     })
                     continue
 
