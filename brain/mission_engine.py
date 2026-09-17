@@ -634,7 +634,16 @@ async def run_mission_parallel(plan, max_parallel: Optional[int] = None) -> obje
                     except Exception:
                         pass
                 plan.emit("orchestration.cancelled", {"error": str(e)[:200]})
-            plan.status = "cancelled"
+            try:
+                from brain.mission_authority import apply_plan_terminal
+                apply_plan_terminal(
+                    plan, desired="cancelled",
+                    mission_id=getattr(plan, "mission_id", None) or plan.id,
+                    cancelled=True,
+                    user_id=getattr(plan, "user_id", None),
+                )
+            except Exception:
+                plan.status = "cancelled"
             await persist_plan(plan)
             return plan
 
@@ -673,12 +682,36 @@ async def run_mission_parallel(plan, max_parallel: Optional[int] = None) -> obje
                         apply_revision(plan, failed, FailureClass(decision.failure_class or "unknown"))
                         await persist_plan(plan)
                         continue
-                plan.status = "failed"
+                try:
+                    from brain.mission_authority import apply_plan_terminal
+                    apply_plan_terminal(
+                        plan, desired="failed",
+                        mission_id=getattr(plan, "mission_id", None) or plan.id,
+                        execution_ok=False,
+                        user_id=getattr(plan, "user_id", None),
+                    )
+                except Exception:
+                    plan.status = "failed"
                 await persist_plan(plan)
                 return plan
             if all(s in ("completed", "verified", "cancelled") for s in statuses if s):
-                plan.status = "completed"
-                plan.emit("orchestration.completed", {"plan_id": plan.id})
+                try:
+                    from brain.mission_authority import apply_plan_terminal
+                    decision = apply_plan_terminal(
+                        plan,
+                        desired="completed",
+                        mission_id=getattr(plan, "mission_id", None) or plan.id,
+                        execution_ok=True,
+                        user_id=getattr(plan, "user_id", None),
+                    )
+                    plan.emit("orchestration.completed", {
+                        "plan_id": plan.id,
+                        "authority": decision.get("authority"),
+                        "status": decision.get("status"),
+                    })
+                except Exception:
+                    plan.status = "completed"
+                    plan.emit("orchestration.completed", {"plan_id": plan.id})
                 await persist_plan(plan)
                 return plan
             # blocked waiting
@@ -686,7 +719,16 @@ async def run_mission_parallel(plan, max_parallel: Optional[int] = None) -> obje
                 plan.status = "waiting_for_user"
                 await persist_plan(plan)
                 return plan
-            plan.status = "failed"
+            try:
+                from brain.mission_authority import apply_plan_terminal
+                apply_plan_terminal(
+                    plan, desired="failed",
+                    mission_id=getattr(plan, "mission_id", None) or plan.id,
+                    execution_ok=False,
+                    user_id=getattr(plan, "user_id", None),
+                )
+            except Exception:
+                plan.status = "failed"
             plan.emit("job.failed", {"reason": "no ready nodes"})
             await persist_plan(plan)
             return plan
@@ -711,7 +753,17 @@ async def run_mission_parallel(plan, max_parallel: Optional[int] = None) -> obje
                 await persist_plan(plan)
                 return plan
             if r.get("cancelled"):
-                plan.status = "cancelled"
+                try:
+                    from brain.mission_authority import apply_plan_terminal
+                    apply_plan_terminal(
+                        plan,
+                        desired="cancelled",
+                        mission_id=getattr(plan, "mission_id", None) or plan.id,
+                        cancelled=True,
+                        user_id=getattr(plan, "user_id", None),
+                    )
+                except Exception:
+                    plan.status = "cancelled"
                 await persist_plan(plan)
                 return plan
             if not r.get("success"):

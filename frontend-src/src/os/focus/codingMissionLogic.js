@@ -22,14 +22,27 @@ export function mergeCodingSnapshot(prev, incoming) {
   return base;
 }
 
-/** Display status — failed stays failed; success only if acceptance.ok */
+/**
+ * Display status — failed stays failed.
+ * Final success ONLY when backend sets final_success or
+ * (status completed/accepted AND acceptance.ok).
+ * Never infer success from progress, CodingLoop ACCEPT, or agent.completed alone.
+ */
 export function codingDisplayStatus(snap, missionStatus) {
   if (!snap && !missionStatus) return "idle";
   const st = (snap && snap.status) || missionStatus || "";
   if (st === "failed" || st === "cancelled") return st;
-  if (snap && snap.acceptance && snap.acceptance.ok === true) return "accepted";
+  // Authoritative final_success from mission_authority / coding_progress projection
+  if (snap && snap.final_success === true) return "accepted";
+  if (snap && snap.final_success === false && (st === "completed" || st === "succeeded")) {
+    if (snap.acceptance && snap.acceptance.ok === false) return "failed";
+    return "pending_acceptance";
+  }
+  if (snap && snap.acceptance && snap.acceptance.ok === true
+      && (st === "completed" || st === "accepted" || st === "succeeded")) {
+    return "accepted";
+  }
   if (st === "completed" || st === "succeeded") {
-    // completed without acceptance still not "success" for UI badge
     if (snap && snap.acceptance && snap.acceptance.ok === false) return "failed";
     if (snap && snap.acceptance && snap.acceptance.ok === true) return "accepted";
     return "pending_acceptance";

@@ -507,3 +507,90 @@ def child_cannot_complete_mission(source: str) -> bool:
         "node_execution_result",
         "execution_job",
     }
+
+
+def apply_plan_terminal(
+    plan,
+    *,
+    desired: str,
+    mission_id: Optional[str] = None,
+    acceptance: Optional[dict] = None,
+    provider_exhausted: bool = False,
+    cancelled: bool = False,
+    execution_ok: Optional[bool] = None,
+    files_changed: Optional[list] = None,
+    coding_evidence: Optional[dict] = None,
+    user_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Align orchestration plan.status with checkpoint authority when present.
+
+    - If a MissionCheckpoint exists for mission_id (or plan.id), terminal
+      outcomes go through declare_mission_outcome.
+    - If no checkpoint, plan.status is set directly (orchestration-only plans).
+    Returns decision dict for logging/SSE.
+    """
+    mid = mission_id or getattr(plan, "mission_id", None) or getattr(plan, "id", None)
+    cp = get_checkpoint(str(mid)) if mid else None
+    desired_l = (desired or "").lower().strip()
+
+    if cp is None:
+        # No coding checkpoint — plan-local status only
+        if desired_l in ("completed", "complete", "succeeded", "success"):
+            plan.status = "completed"
+        elif desired_l in ("cancelled", "canceled"):
+            plan.status = "cancelled"
+        elif desired_l in ("failed", "failure", "error"):
+            plan.status = "failed"
+        else:
+            plan.status = desired_l or plan.status
+        return {
+            "ok": True,
+            "status": plan.status,
+            "authority": "plan_only",
+            "mission_id": mid,
+        }
+
+    # Map desired → lifecycle
+    if cancelled or desired_l in ("cancelled", "canceled"):
+        target = MissionLifecycle.CANCELLED
+    elif provider_exhausted:
+        target = MissionLifecycle.FAILED
+    elif desired_l in ("completed", "complete", "succeeded", "success"):
+        target = MissionLifecycle.COMPLETED
+    elif desired_l in ("failed", "failure", "error"):
+        target = MissionLifecycle.FAILED
+    else:
+        try:
+            target = MissionLifecycle(desired_l)
+        except Exception:
+            target = MissionLifecycle.FAILED
+
+    decision = declare_mission_outcome(
+        cp,
+        desired=target,
+        acceptance=acceptance,
+        execution_ok=execution_ok,
+        provider_exhausted=provider_exhausted,
+        cancelled=cancelled or target == MissionLifecycle.CANCELLED,
+        files_changed=files_changed,
+        coding_evidence=coding_evidence,
+        user_id=user_id or getattr(plan, "user_id", None),
+    )
+    # Mirror authoritative status onto plan projection
+    plan.status = decision.status
+    return {
+        **decision.to_dict(),
+        "authority": "mission_checkpoint",
+        "mission_id": mid,
+        "plan_id": getattr(plan, "id", None),
+    }
+
+
+async def persist_authoritative_checkpoint(
+    cp: MissionCheckpoint,
+    *,
+    expected_version: Optional[int] = None,
+) -> bool:
+    """Persist checkpoint with optimistic version check."""
+    from brain.mission_checkpoint import persist_checkpoint_to_mission
+    return await persist_checkpoint_to_mission(cp, expected_version=expected_version)

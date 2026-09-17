@@ -13,5 +13,7 @@ assert(codingDisplayStatus({ status: "failed" }, null) === "failed", "failed vis
 assert(isFailedCoding({ status: "failed" }, "failed") === true, "is failed");
 assert(codingDisplayStatus({ status: "completed", acceptance: { ok: true } }, "completed") === "accepted", "accepted");
 assert(codingDisplayStatus({ status: "completed" }, "completed") === "pending_acceptance", "no premature success");
+assert(codingDisplayStatus({ status: "executing", final_success: true }, null) === "accepted", "final_success wins");
+assert(codingDisplayStatus({ status: "completed", final_success: false, acceptance: { ok: false } }, "completed") === "failed", "final_success false");
 
 console.log("codingMissionLogic tests ok");

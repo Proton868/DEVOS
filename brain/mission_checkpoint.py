@@ -511,8 +511,17 @@ def complete_mission(cp: MissionCheckpoint, *, verified: bool = True) -> Mission
     return cp
 
 
-async def persist_checkpoint_to_mission(cp: MissionCheckpoint) -> bool:
-    """Write checkpoint into Mission.meta['coding_checkpoint'] (Postgres SoT)."""
+async def persist_checkpoint_to_mission(
+    cp: MissionCheckpoint,
+    *,
+    expected_version: Optional[int] = None,
+) -> bool:
+    """Write checkpoint into Mission.meta['coding_checkpoint'] (Postgres SoT).
+
+    Optimistic concurrency: if expected_version is set, reject when the stored
+    checkpoint version differs (stale worker). Always refuse to overwrite a
+    sticky terminal status (completed/cancelled) with a non-matching status.
+    """
     try:
         from core.database import AsyncSessionLocal, Mission
         from sqlalchemy import select
@@ -525,10 +534,29 @@ async def persist_checkpoint_to_mission(cp: MissionCheckpoint) -> bool:
                 _CHECKPOINTS[cp.mission_id] = cp
                 return True
             meta = dict(row.meta or {})
+            raw = meta.get("coding_checkpoint")
+            if isinstance(raw, dict):
+                stored_ver = int(raw.get("version") or 0)
+                stored_status = str(raw.get("status") or "")
+                if expected_version is not None and stored_ver != int(expected_version):
+                    logger.warning(
+                        "persist_checkpoint version_conflict mission=%s stored=%s expected=%s",
+                        cp.mission_id, stored_ver, expected_version,
+                    )
+                    return False
+                # Sticky terminal: do not allow stale non-terminal overwrite
+                if stored_status in ("completed", "cancelled"):
+                    new_st = cp.status.value if isinstance(cp.status, MissionLifecycle) else str(cp.status)
+                    if new_st != stored_status:
+                        logger.warning(
+                            "persist_checkpoint refused terminal overwrite mission=%s stored=%s new=%s",
+                            cp.mission_id, stored_status, new_st,
+                        )
+                        return False
             meta["coding_checkpoint"] = cp.to_dict()
             row.meta = meta
             # Keep Mission.status aligned with lifecycle (truthful)
-            row.status = cp.status.value
+            row.status = cp.status.value if isinstance(cp.status, MissionLifecycle) else str(cp.status)
             row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             await db.commit()
             _CHECKPOINTS[cp.mission_id] = cp

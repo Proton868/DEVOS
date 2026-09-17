@@ -183,3 +183,47 @@ def test_duplicate_destructive_skip():
     assert should_skip_destructive(cp, "ik-1") is False
     mark_step_completed(cp, "s1", artifact_ref="f:a.py")
     assert should_skip_destructive(cp, "ik-1") is True
+
+
+def test_apply_plan_terminal_uses_checkpoint_when_present():
+    from brain.mission_authority import apply_plan_terminal
+    from types import SimpleNamespace
+    cp = _cp(MissionLifecycle.EXECUTING, mission_id="plan-auth-1")
+    plan = SimpleNamespace(id="plan-auth-1", mission_id="plan-auth-1", status="running", user_id="u1")
+    d = apply_plan_terminal(
+        plan,
+        desired="completed",
+        mission_id="plan-auth-1",
+        acceptance={"ok": True, "reason": "ok"},
+        execution_ok=True,
+    )
+    assert d.get("authority") == "mission_checkpoint"
+    assert plan.status == MissionLifecycle.COMPLETED.value
+    assert cp.status == MissionLifecycle.COMPLETED
+
+
+def test_apply_plan_terminal_plan_only_without_checkpoint():
+    from brain.mission_authority import apply_plan_terminal
+    from brain.mission_checkpoint import reset_checkpoints_for_tests
+    from types import SimpleNamespace
+    reset_checkpoints_for_tests()
+    plan = SimpleNamespace(id="no-cp-1", mission_id="no-cp-1", status="running", user_id="u1")
+    d = apply_plan_terminal(plan, desired="completed", mission_id="no-cp-1", execution_ok=True)
+    assert d.get("authority") == "plan_only"
+    assert plan.status == "completed"
+
+
+def test_apply_plan_terminal_cancel_wins():
+    from brain.mission_authority import apply_plan_terminal
+    from types import SimpleNamespace
+    cp = _cp(MissionLifecycle.EXECUTING, mission_id="plan-cancel-1")
+    plan = SimpleNamespace(id="plan-cancel-1", mission_id="plan-cancel-1", status="running")
+    d = apply_plan_terminal(plan, desired="completed", mission_id="plan-cancel-1",
+                            acceptance={"ok": True}, cancelled=True)
+    assert plan.status == MissionLifecycle.CANCELLED.value
+    assert cp.status == MissionLifecycle.CANCELLED
+
+
+def test_child_sources_documented():
+    assert child_cannot_complete_mission("coding_loop_accept")
+    assert child_cannot_complete_mission("agent.completed")
