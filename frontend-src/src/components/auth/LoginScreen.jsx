@@ -90,8 +90,14 @@ const MODE = {
   PHONE: "phone",
 };
 
+function isValidEmailAddress(value) {
+  const v = (value || "").trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+}
+
+
 export default function LoginScreen() {
-  const [username, setUsername] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
@@ -102,12 +108,12 @@ export default function LoginScreen() {
   const [supabaseReady, setSupabaseReady] = useState(false);
   const [localLoginAvailable, setLocalLoginAvailable] = useState(true);
   const [useLocalLogin, setUseLocalLogin] = useState(false);
-  const usernameRef = useRef(null);
+  const identifierRef = useRef(null);
   const phoneRef = useRef(null);
   const setUser = useStore((s) => s.setUser);
 
   useEffect(() => {
-    usernameRef.current?.focus();
+    identifierRef.current?.focus();
   }, []);
 
   useEffect(() => {
@@ -200,21 +206,39 @@ export default function LoginScreen() {
 
   async function handlePasswordSubmit(e) {
     e.preventDefault();
-    if (!username.trim() || !password) {
-      setError(supabaseReady && !useLocalLogin
-        ? "Enter email and password."
-        : "Enter both a username and password.");
+    const id = identifier.trim();
+    if (!id || !password) {
+      setError(
+        supabaseReady && !useLocalLogin
+          ? "Enter email and password."
+          : "Enter both a username and password."
+      );
       return;
     }
-    setSubmitting(true);
-    setError(null);
 
     // Supabase Auth is the primary user-facing path when configured.
     if (supabaseReady && !useLocalLogin) {
+      if (!isValidEmailAddress(id)) {
+        setError("Enter a valid email address for Supabase sign-in.");
+        return;
+      }
+      setSubmitting(true);
+      setError(null);
       try {
-        const { data, error: supaErr } = await supabaseSignIn(username.trim(), password);
+        const { data, error: supaErr } = await supabaseSignIn(id, password);
         if (supaErr) {
-          setError(supaErr.message || "Invalid email or password.");
+          // Do not fall back to local login — keep this a Supabase failure.
+          const msg = (supaErr.message || "").toLowerCase();
+          if (msg.includes("invalid login credentials") || msg.includes("invalid email or password")) {
+            setError(
+              "Invalid Supabase email or password. " +
+                "Use the email registered in Supabase Auth (not a local DevOS username)."
+            );
+          } else if (msg.includes("email not confirmed")) {
+            setError("This email has not been confirmed in Supabase Auth yet.");
+          } else {
+            setError(supaErr.message || "Supabase sign-in failed.");
+          }
           setSubmitting(false);
           return;
         }
@@ -235,8 +259,10 @@ export default function LoginScreen() {
     }
 
     // Local DevOS username/password only when explicitly selected or Supabase absent.
+    setSubmitting(true);
+    setError(null);
     try {
-      const user = await login(username.trim(), password);
+      const user = await login(id, password);
       setUser(user.user || user);
     } catch (err) {
       setError(err.message || "Login failed. Please try again.");
@@ -246,6 +272,9 @@ export default function LoginScreen() {
 
 
   const supabaseConfigured = supabaseReady;
+  const isSupabasePasswordMode = Boolean(supabaseConfigured && !useLocalLogin);
+
+
 
   return (
     <div className="login-screen">
@@ -331,16 +360,20 @@ export default function LoginScreen() {
           {mode === MODE.PASSWORD ? (
             <>
               <label className="login-field">
-                <span className="login-field-label">Username</span>
+                <span className="login-field-label">
+                  {isSupabasePasswordMode ? "Email" : "Username"}
+                </span>
                 <input
-                  ref={usernameRef}
-                  type="text"
-                  name="username"
-                  autoComplete="username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  ref={identifierRef}
+                  id="login-identifier"
+                  type={isSupabasePasswordMode ? "email" : "text"}
+                  name={isSupabasePasswordMode ? "email" : "username"}
+                  autoComplete={isSupabasePasswordMode ? "email" : "username"}
+                  inputMode={isSupabasePasswordMode ? "email" : "text"}
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
                   disabled={submitting}
-                  placeholder="admin"
+                  placeholder={isSupabasePasswordMode ? "you@example.com" : "admin"}
                   required
                 />
               </label>
