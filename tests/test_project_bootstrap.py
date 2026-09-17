@@ -118,7 +118,7 @@ def test_repair_then_install():
 
     async def runner(cmd, ctx):
         calls.append(cmd)
-        if cmd.startswith("python -m pip install -r") and calls.count(cmd) == 1:
+        if "pip install -r" in cmd and calls.count(cmd) == 1:
             return {"ok": False, "exit_code": 1, "stdout": "", "stderr": "fail", "command": cmd}
         return {"ok": True, "exit_code": 0, "stdout": "ok", "stderr": "", "command": cmd}
 
@@ -141,7 +141,8 @@ def test_scaffold_alone_validation_marks_scaffold_only():
     fs = FileService("testuser", "struct1")
     written, err = scaffold_project(fs=fs, kind=ToolchainKind.NODE, project_name="n1")
     assert not err
-    profile = PROFILES[ToolchainKind.NODE]
+    from brain.project_bootstrap import get_profile
+    profile = get_profile(ToolchainKind.NODE)
     v = validate_project(fs, profile, written)
     assert v["structure_ok"] is True
     assert v["scaffold_only"] is True

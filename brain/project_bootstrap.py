@@ -28,83 +28,172 @@ CommandRunner = Callable[[str, dict], Awaitable[dict]]
 class ToolchainKind(str, Enum):
     PYTHON = "python"
     NODE = "node"
+    JAVASCRIPT = "javascript"  # alias of node for detection
+    TYPESCRIPT = "typescript"
     VITE = "vite"
     NEXTJS = "nextjs"
     ANGULAR = "angular"
     HTML = "html"
+    SHELL = "shell"  # Makefile / shell scripts
+    # Extension kinds (e.g. flutter) register via register_toolchain_profile
 
 
 @dataclass
 class ToolchainProfile:
-    """Common project/toolchain abstraction."""
+    """Common project/toolchain abstraction — single execution surface."""
 
-    kind: ToolchainKind
-    runtime: str  # python3 | node | browser
-    package_manager: str  # pip | npm | none
+    kind: ToolchainKind | str
+    runtime: str  # binary name: python3 | node | browser | make | flutter
+    package_manager: str  # pip | npm | none | flutter
     install_cmd: Optional[str]
     build_cmd: Optional[str]
     test_cmd: Optional[str]
     validate_files: list[str]
     repair_hints: list[str] = field(default_factory=list)
+    typecheck_cmd: Optional[str] = None
+    lint_cmd: Optional[str] = None
+    required_binaries: list[str] = field(default_factory=list)
+    # Files that indicate this ecosystem is present on disk
+    detect_markers: list[str] = field(default_factory=list)
+    # If True, install must succeed before claimed_working
+    requires_install: bool = True
+
+    def kind_value(self) -> str:
+        k = self.kind
+        return k.value if isinstance(k, ToolchainKind) else str(k)
 
     def to_dict(self) -> dict:
         d = asdict(self)
-        d["kind"] = self.kind.value
+        d["kind"] = self.kind_value()
         return d
 
 
-PROFILES: dict[ToolchainKind, ToolchainProfile] = {
-    ToolchainKind.PYTHON: ToolchainProfile(
+PROFILES: dict[str, ToolchainProfile] = {}
+
+
+def _put_profile(profile: ToolchainProfile) -> None:
+    key = profile.kind_value()
+    PROFILES[key] = profile
+    # Enum alias when applicable
+    try:
+        PROFILES[ToolchainKind(key)] = profile  # type: ignore[index]
+    except Exception:
+        pass
+
+
+def register_toolchain_profile(profile: ToolchainProfile) -> ToolchainProfile:
+    """Extension point for additional ecosystems (e.g. Flutter) without a new agent."""
+    if not profile.required_binaries and profile.runtime and profile.runtime != "browser":
+        profile.required_binaries = [profile.runtime]
+    _put_profile(profile)
+    return profile
+
+
+def _seed_builtin_profiles() -> None:
+    if PROFILES:
+        return
+    register_toolchain_profile(ToolchainProfile(
         kind=ToolchainKind.PYTHON,
         runtime="python3",
         package_manager="pip",
-        install_cmd="python -m pip install -r requirements.txt",
-        build_cmd="python -m compileall -q .",
-        test_cmd="python -m pytest -q",
+        install_cmd="python3 -m pip install -r requirements.txt",
+        build_cmd="python3 -m compileall -q .",
+        test_cmd="python3 -m pytest -q",
+        typecheck_cmd=None,
+        lint_cmd=None,
         validate_files=["main.py", "requirements.txt", "README.md"],
-        repair_hints=["pip install --upgrade pip", "python -m pip install -r requirements.txt"],
-    ),
-    ToolchainKind.NODE: ToolchainProfile(
+        repair_hints=["python3 -m pip install --upgrade pip", "python3 -m pip install -r requirements.txt"],
+        required_binaries=["python3"],
+        detect_markers=["requirements.txt", "pyproject.toml", "setup.py", "main.py"],
+        requires_install=True,
+    ))
+    register_toolchain_profile(ToolchainProfile(
         kind=ToolchainKind.NODE,
         runtime="node",
         package_manager="npm",
         install_cmd="npm install --no-audit --no-fund",
         build_cmd="npm run build",
         test_cmd="npm test -- --watchAll=false",
+        typecheck_cmd=None,
+        lint_cmd=None,
         validate_files=["package.json", "src/index.js", "README.md"],
         repair_hints=["rm -rf node_modules package-lock.json", "npm install --no-audit --no-fund"],
-    ),
-    ToolchainKind.VITE: ToolchainProfile(
+        required_binaries=["node", "npm"],
+        detect_markers=["package.json"],
+        requires_install=True,
+    ))
+    # JavaScript shares Node profile (same runtime)
+    js = ToolchainProfile(
+        kind=ToolchainKind.JAVASCRIPT,
+        runtime="node",
+        package_manager="npm",
+        install_cmd="npm install --no-audit --no-fund",
+        build_cmd="npm run build",
+        test_cmd="npm test -- --watchAll=false",
+        validate_files=["package.json", "src/index.js", "README.md"],
+        repair_hints=["npm install --no-audit --no-fund"],
+        required_binaries=["node", "npm"],
+        detect_markers=["package.json", "src/index.js"],
+        requires_install=True,
+    )
+    register_toolchain_profile(js)
+    register_toolchain_profile(ToolchainProfile(
+        kind=ToolchainKind.TYPESCRIPT,
+        runtime="node",
+        package_manager="npm",
+        install_cmd="npm install --no-audit --no-fund",
+        build_cmd="npm run build",
+        test_cmd="npm test -- --watchAll=false",
+        typecheck_cmd="npx tsc --noEmit",
+        lint_cmd="npx eslint . --max-warnings 0",
+        validate_files=["package.json", "tsconfig.json", "README.md"],
+        repair_hints=["npm install --no-audit --no-fund", "npx tsc --noEmit"],
+        required_binaries=["node", "npm"],
+        detect_markers=["tsconfig.json", "package.json"],
+        requires_install=True,
+    ))
+    register_toolchain_profile(ToolchainProfile(
         kind=ToolchainKind.VITE,
         runtime="node",
         package_manager="npm",
         install_cmd="npm install --no-audit --no-fund",
         build_cmd="npm run build",
-        test_cmd="npm run build",
-        validate_files=["package.json", "index.html", "vite.config.js", "src/main.js"],
+        test_cmd="npm test -- --watchAll=false",
+        typecheck_cmd="npx tsc --noEmit",
+        validate_files=["package.json", "vite.config.js", "index.html", "README.md"],
         repair_hints=["npm install --no-audit --no-fund"],
-    ),
-    ToolchainKind.NEXTJS: ToolchainProfile(
+        required_binaries=["node", "npm"],
+        detect_markers=["vite.config.js", "vite.config.ts", "package.json"],
+        requires_install=True,
+    ))
+    register_toolchain_profile(ToolchainProfile(
         kind=ToolchainKind.NEXTJS,
         runtime="node",
         package_manager="npm",
         install_cmd="npm install --no-audit --no-fund",
         build_cmd="npm run build",
-        test_cmd="npm run lint",
-        validate_files=["package.json", "next.config.mjs", "app/page.jsx", "app/layout.jsx"],
+        test_cmd="npm test -- --watchAll=false",
+        typecheck_cmd="npx tsc --noEmit",
+        validate_files=["package.json", "next.config.js", "README.md"],
         repair_hints=["npm install --no-audit --no-fund"],
-    ),
-    ToolchainKind.ANGULAR: ToolchainProfile(
+        required_binaries=["node", "npm"],
+        detect_markers=["next.config.js", "next.config.mjs", "next.config.ts"],
+        requires_install=True,
+    ))
+    register_toolchain_profile(ToolchainProfile(
         kind=ToolchainKind.ANGULAR,
         runtime="node",
         package_manager="npm",
         install_cmd="npm install --no-audit --no-fund",
         build_cmd="npm run build",
-        test_cmd="npm test -- --watch=false --browsers=ChromeHeadless",
-        validate_files=["package.json", "angular.json", "src/main.ts", "src/app/app.component.ts"],
+        test_cmd="npm test -- --watchAll=false",
+        validate_files=["package.json", "angular.json", "README.md"],
         repair_hints=["npm install --no-audit --no-fund"],
-    ),
-    ToolchainKind.HTML: ToolchainProfile(
+        required_binaries=["node", "npm"],
+        detect_markers=["angular.json"],
+        requires_install=True,
+    ))
+    register_toolchain_profile(ToolchainProfile(
         kind=ToolchainKind.HTML,
         runtime="browser",
         package_manager="none",
@@ -113,47 +202,282 @@ PROFILES: dict[ToolchainKind, ToolchainProfile] = {
         test_cmd=None,
         validate_files=["index.html", "style.css", "script.js", "README.md"],
         repair_hints=[],
-    ),
-}
+        required_binaries=[],  # no host runtime required for static files
+        detect_markers=["index.html"],
+        requires_install=False,
+    ))
+    register_toolchain_profile(ToolchainProfile(
+        kind=ToolchainKind.SHELL,
+        runtime="make",
+        package_manager="none",
+        install_cmd=None,
+        build_cmd="make",
+        test_cmd="make test",
+        validate_files=["Makefile", "README.md"],
+        repair_hints=[],
+        required_binaries=["make"],
+        detect_markers=["Makefile", "makefile"],
+        requires_install=False,
+    ))
+    # Example extension registration pattern (Flutter) — not enabled by default:
+    # register_toolchain_profile(ToolchainProfile(
+    #     kind="flutter", runtime="flutter", package_manager="flutter",
+    #     install_cmd="flutter pub get", build_cmd="flutter build apk --debug",
+    #     test_cmd="flutter test", validate_files=["pubspec.yaml"],
+    #     required_binaries=["flutter"], detect_markers=["pubspec.yaml"],
+    # ))
 
 
-def detect_toolchain(request: str, explicit: Optional[str] = None) -> ToolchainKind:
+_seed_builtin_profiles()
+
+
+
+def get_profile(kind: ToolchainKind | str) -> ToolchainProfile:
+    _seed_builtin_profiles()
+    key = kind.value if isinstance(kind, ToolchainKind) else str(kind).lower().strip()
+    # aliases
+    aliases = {
+        "js": "javascript",
+        "nodejs": "node",
+        "py": "python",
+        "ts": "typescript",
+        "makefile": "shell",
+        "make": "shell",
+    }
+    key = aliases.get(key, key)
+    if key not in PROFILES:
+        raise KeyError(f"unsupported_ecosystem:{key}")
+    return PROFILES[key]
+
+
+def detect_toolchain(request: str, explicit: Optional[str] = None) -> ToolchainKind | str:
+    """Map user request / explicit name to a registered toolchain kind."""
+    _seed_builtin_profiles()
     if explicit:
-        key = explicit.lower().strip().replace(".", "").replace(" ", "")
-        for k in ToolchainKind:
-            if k.value.replace("_", "") == key or k.value == explicit.lower():
-                return k
+        key = explicit.lower().strip().replace(" ", "")
         aliases = {
-            "nodejs": ToolchainKind.NODE,
-            "js": ToolchainKind.NODE,
-            "javascript": ToolchainKind.NODE,
-            "py": ToolchainKind.PYTHON,
-            "next": ToolchainKind.NEXTJS,
-            "static": ToolchainKind.HTML,
-            "htmlcssjs": ToolchainKind.HTML,
+            "nodejs": "node",
+            "js": "javascript",
+            "javascript": "javascript",
+            "py": "python",
+            "ts": "typescript",
+            "typescript": "typescript",
+            "makefile": "shell",
+            "make": "shell",
+            "sh": "shell",
         }
-        if key in aliases:
-            return aliases[key]
+        key = aliases.get(key, key)
+        if key in PROFILES:
+            try:
+                return ToolchainKind(key)
+            except Exception:
+                return key
+        raise KeyError(f"unsupported_ecosystem:{key}")
 
-    t = (request or "").lower()
-    if re.search(r"\bnext(?:\.?js)?\b", t):
-        return ToolchainKind.NEXTJS
-    if re.search(r"\bangular\b", t):
-        return ToolchainKind.ANGULAR
-    if re.search(r"\bvite\b", t):
-        return ToolchainKind.VITE
-    if re.search(r"\bpython\b|\bflask\b|\bfastapi\b|\bdjango\b", t):
-        return ToolchainKind.PYTHON
-    if re.search(r"\bhtml\b|\bcss\b|static site|landing page", t):
-        return ToolchainKind.HTML
-    if re.search(r"\bnode\b|\bnpm\b|\bexpress\b", t):
-        return ToolchainKind.NODE
+    text = (request or "").lower()
+    rules = [
+        (ToolchainKind.NEXTJS, ("next.js", "nextjs", "next app")),
+        (ToolchainKind.ANGULAR, ("angular",)),
+        (ToolchainKind.VITE, ("vite",)),
+        (ToolchainKind.TYPESCRIPT, ("typescript", " ts ", ".ts ")),
+        (ToolchainKind.SHELL, ("makefile", " make ", "shell script")),
+        (ToolchainKind.PYTHON, ("python", "pytest", "django", "flask", "fastapi")),
+        (ToolchainKind.NODE, ("node.js", "nodejs", "express", "npm ")),
+        (ToolchainKind.JAVASCRIPT, ("javascript",)),
+        (ToolchainKind.HTML, ("html", "static site", "landing page", "website")),
+    ]
+    for kind, keys in rules:
+        if any(k in text for k in keys):
+            return kind
     return ToolchainKind.HTML
 
 
-def _templates(kind: ToolchainKind, name: str) -> dict[str, str]:
+def detect_project_toolchain(fs) -> dict:
+    """
+    Infer toolchain from workspace files — does NOT claim runtime availability.
+    """
+    _seed_builtin_profiles()
+    try:
+        tree = fs.tree(max_depth=4) if hasattr(fs, "tree") else []
+        paths = {
+            (i.get("path") or "").replace("\\", "/").lstrip("./")
+            for i in (tree or [])
+            if i.get("type") == "file"
+        }
+    except Exception:
+        paths = set()
+
+    scores: dict[str, int] = {}
+    for key, profile in list(PROFILES.items()):
+        if not isinstance(key, str):
+            continue
+        score = 0
+        for marker in profile.detect_markers or []:
+            if marker in paths or any(p.endswith("/" + marker) or p == marker for p in paths):
+                score += 2
+            # basename match
+            for p in paths:
+                if p.split("/")[-1] == marker:
+                    score += 2
+                    break
+        if score:
+            scores[key] = scores.get(key, 0) + score
+    if not scores:
+        return {
+            "kind": None,
+            "profile": None,
+            "markers_found": [],
+            "message": "no_known_project_markers",
+        }
+    best = max(scores, key=scores.get)
+    profile = PROFILES[best]
+    return {
+        "kind": best,
+        "profile": profile.to_dict(),
+        "markers_found": list(profile.detect_markers or []),
+        "score": scores[best],
+        "message": f"detected:{best}",
+    }
+
+
+def check_runtime_available(
+    profile: ToolchainProfile,
+    *,
+    which_fn=None,
+) -> dict:
+    """
+    Verify host binaries exist. Never claims availability from project files alone.
+    """
+    import shutil
+
+    which = which_fn or shutil.which
+    required = list(profile.required_binaries or [])
+    if not required and profile.runtime and profile.runtime != "browser":
+        required = [profile.runtime]
+
+    missing = []
+    present = []
+    for bin_name in required:
+        path = which(bin_name)
+        if path:
+            present.append({"binary": bin_name, "path": path})
+        else:
+            missing.append(bin_name)
+
+    ok = len(missing) == 0
+    out = {
+        "ok": ok,
+        "runtime": profile.runtime,
+        "required_binaries": required,
+        "present": present,
+        "missing": missing,
+        "toolchain": profile.kind_value(),
+    }
+    if not ok:
+        out["error"] = "toolchain_unavailable"
+        out["message"] = (
+            f"Required toolchain binaries missing: {', '.join(missing)}. "
+            "DevOS will not silently install system-level software."
+        )
+    return out
+
+
+def execution_plan(profile: ToolchainProfile) -> dict:
+    """Structured governed commands for this toolchain."""
+    cmds = {
+        "install": profile.install_cmd,
+        "build": profile.build_cmd,
+        "test": profile.test_cmd,
+        "typecheck": profile.typecheck_cmd,
+        "lint": profile.lint_cmd,
+    }
+    return {
+        "toolchain": profile.kind_value(),
+        "runtime": profile.runtime,
+        "package_manager": profile.package_manager,
+        "commands": {k: v for k, v in cmds.items() if v},
+        "validate_files": list(profile.validate_files or []),
+        "requires_install": bool(profile.requires_install),
+        "repair_hints": list(profile.repair_hints or []),
+    }
+
+
+def resolve_toolchain(
+    *,
+    request: str = "",
+    explicit: Optional[str] = None,
+    fs=None,
+) -> dict:
+    """
+    Full resolution: what project, what toolchain, is runtime available, what commands.
+    """
+    detected = detect_project_toolchain(fs) if fs is not None else None
+    try:
+        kind = detect_toolchain(request, explicit=explicit)
+    except KeyError as e:
+        return {
+            "ok": False,
+            "error": "unsupported_ecosystem",
+            "message": str(e),
+            "detected": detected,
+        }
+    # Prefer workspace detection when no explicit request signal
+    if detected and detected.get("kind") and not explicit and not (request or "").strip():
+        kind = detected["kind"]
+    try:
+        profile = get_profile(kind)
+    except KeyError as e:
+        return {
+            "ok": False,
+            "error": "unsupported_ecosystem",
+            "message": str(e),
+            "detected": detected,
+        }
+    runtime = check_runtime_available(profile)
+    plan = execution_plan(profile)
+    return {
+        "ok": runtime["ok"],
+        "kind": profile.kind_value(),
+        "profile": profile.to_dict(),
+        "runtime": runtime,
+        "plan": plan,
+        "detected": detected,
+        "error": None if runtime["ok"] else "toolchain_unavailable",
+        "message": runtime.get("message") if not runtime["ok"] else "toolchain_ready",
+    }
+
+
+def _templates(kind: ToolchainKind | str, name: str) -> dict[str, str]:
     """Minimal viable file set per toolchain (not framework-specific engines)."""
     safe = re.sub(r"[^a-zA-Z0-9_-]+", "-", name).strip("-") or "app"
+    kind_key = kind.value if isinstance(kind, ToolchainKind) else str(kind)
+    if kind_key in ("javascript", ToolchainKind.JAVASCRIPT.value):
+        kind = ToolchainKind.NODE  # same scaffold as node
+    if kind_key == ToolchainKind.TYPESCRIPT.value or kind is ToolchainKind.TYPESCRIPT:
+        return {
+            "package.json": json.dumps({
+                "name": safe.lower(),
+                "version": "0.1.0",
+                "private": True,
+                "scripts": {"build": "tsc", "test": "echo \"no tests\""},
+                "devDependencies": {"typescript": "^5.4.0"},
+            }, indent=2) + "\n",
+            "tsconfig.json": json.dumps({
+                "compilerOptions": {"target": "ES2020", "module": "commonjs", "strict": True, "outDir": "dist"},
+                "include": ["src/**/*"],
+            }, indent=2) + "\n",
+            "src/index.ts": f'console.log("hello from {safe}");\n',
+            "README.md": f"# {safe}\n\nTypeScript project bootstrapped by DevOS.\n",
+        }
+    if kind_key == ToolchainKind.SHELL.value or kind is ToolchainKind.SHELL:
+        return {
+            "Makefile": (
+                f".PHONY: all test\nall:\n\t@echo hello from {safe}\n"
+                "test:\n\t@echo ok\n"
+            ),
+            "README.md": f"# {safe}\n\nMakefile project bootstrapped by DevOS.\n",
+            "scripts/run.sh": "#!/bin/sh\necho hello\n",
+        }
     if kind == ToolchainKind.PYTHON:
         return {
             "main.py": (
@@ -348,7 +672,7 @@ async def _default_runner(command: str, ctx: dict) -> dict:
 def scaffold_project(
     *,
     fs,
-    kind: ToolchainKind,
+    kind: ToolchainKind | str,
     project_name: str,
 ) -> tuple[list[str], list[str]]:
     """Write template files via FileService. Returns (written_paths, errors)."""
@@ -421,19 +745,57 @@ async def bootstrap_project(
     claimed_working is True only when install (if required) and validation pass
     and optional build/test succeed when requested.
     """
-    kind = detect_toolchain(request, explicit=toolchain)
-    profile = PROFILES[kind]
+    try:
+        kind = detect_toolchain(request, explicit=toolchain)
+        profile = get_profile(kind)
+    except KeyError as e:
+        result = BootstrapResult(ok=False, toolchain=str(toolchain or "unknown"), profile={})
+        result.errors.append("unsupported_ecosystem")
+        result.validation = {
+            "structure_ok": False,
+            "works": False,
+            "scaffold_only": True,
+            "error": "unsupported_ecosystem",
+            "message": str(e),
+        }
+        return result
     runner = command_runner or _default_runner
     ctx = {"user_id": user_id, "project_id": project_id, "timeout_s": 180}
 
     from execution.files import FileService
     fs = FileService(user_id, project_id)
 
+    kind_value = profile.kind_value()
     result = BootstrapResult(
         ok=False,
-        toolchain=kind.value,
+        toolchain=kind_value,
         profile=profile.to_dict(),
     )
+
+    # Runtime availability — never claim toolchain exists from files alone
+    runtime = check_runtime_available(profile)
+    result.validation = {"runtime": runtime}
+    if not runtime.get("ok"):
+        result.errors.append("toolchain_unavailable")
+        result.validation.update({
+            "structure_ok": False,
+            "works": False,
+            "scaffold_only": True,
+            "error": "toolchain_unavailable",
+            "message": runtime.get("message"),
+            "missing_binaries": runtime.get("missing"),
+        })
+        result.claimed_working = False
+        result.evidence_id = _evidence(
+            "project.bootstrap", actor_id, "failed",
+            {
+                "stage": "runtime",
+                "toolchain": kind_value,
+                "missing": runtime.get("missing"),
+                "tenant_id": tenant_id,
+            },
+        )
+        return result
 
     written, sc_errors = scaffold_project(fs=fs, kind=kind, project_name=project_name)
     result.files_written = written
@@ -444,7 +806,7 @@ async def bootstrap_project(
         result.errors.append("scaffold_failed")
         result.evidence_id = _evidence(
             "project.bootstrap", actor_id, "failed",
-            {"stage": "scaffold", "toolchain": kind.value, "tenant_id": tenant_id},
+            {"stage": "scaffold", "toolchain": kind_value, "tenant_id": tenant_id},
         )
         return result
 
@@ -470,7 +832,7 @@ async def bootstrap_project(
                     "project.bootstrap", actor_id, "failed",
                     {
                         "stage": "install",
-                        "toolchain": kind.value,
+                        "toolchain": kind_value,
                         "exit_code": (result.install or {}).get("exit_code"),
                         "tenant_id": tenant_id,
                     },
@@ -502,7 +864,7 @@ async def bootstrap_project(
     validation["build_ok"] = build_ok
     validation["test_ok"] = test_ok
     # HTML/static: structure is delivery of files only — never "works" without runtime proof.
-    if kind == ToolchainKind.HTML:
+    if kind == ToolchainKind.HTML or kind_value == "html":
         validation["works"] = False
         validation["scaffold_only"] = True
         validation["message"] = (
@@ -524,9 +886,9 @@ async def bootstrap_project(
     result.claimed_working = bool(validation.get("works"))
     result.ok = result.scaffold_ok and install_ok and (
         # HTML: structure is enough for ok=true of bootstrap delivery, still claimed_working only if works
-        kind == ToolchainKind.HTML or install_ok
+        kind == ToolchainKind.HTML or kind_value == "html" or install_ok
     )
-    if result.errors and kind != ToolchainKind.HTML:
+    if result.errors and kind != ToolchainKind.HTML and kind_value != "html":
         result.ok = result.scaffold_ok and install_ok and "install_failed" not in result.errors
 
     # Tighten: ok means bootstrap pipeline finished without hard failure
@@ -541,7 +903,7 @@ async def bootstrap_project(
         actor_id,
         "success" if result.ok else "failed",
         {
-            "toolchain": kind.value,
+            "toolchain": kind_value,
             "files": written,
             "claimed_working": result.claimed_working,
             "errors": result.errors,

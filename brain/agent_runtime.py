@@ -1205,6 +1205,47 @@ class AgentRuntime:
 
 
 
+
+    async def _project_bootstrap_tool(self, name: str, args: dict) -> dict:
+        """Toolchain detection and governed project bootstrap."""
+        from brain.project_bootstrap import (
+            bootstrap_project,
+            detect_toolchain,
+            get_profile,
+            resolve_toolchain,
+            check_runtime_available,
+            execution_plan,
+        )
+        args = args if isinstance(args, dict) else {}
+        if name == "detect_project_toolchain":
+            explicit = args.get("explicit") or args.get("toolchain")
+            request = str(args.get("request") or args.get("query") or "")
+            try:
+                fs = self._fs()
+            except Exception:
+                fs = None
+            resolved = resolve_toolchain(request=request, explicit=explicit, fs=fs)
+            return {"ok": bool(resolved.get("ok")), **resolved}
+
+        # bootstrap_project
+        project_name = str(args.get("project_name") or args.get("name") or "app")
+        request = str(args.get("request") or args.get("description") or "")
+        toolchain = args.get("toolchain")
+        result = await bootstrap_project(
+            user_id=self.user_id,
+            project_id=self.project_id,
+            project_name=project_name,
+            request=request,
+            toolchain=toolchain,
+            run_install=bool(args.get("run_install", True)),
+            run_build=bool(args.get("run_build", True)),
+            run_test=bool(args.get("run_test", False)),
+            allow_repair=bool(args.get("allow_repair", True)),
+            actor_id=getattr(self, "agent_id", None) or self.user_id or "agent",
+            tenant_id=getattr(self, "tenant_id", None) or "default",
+        )
+        return result.to_dict() if hasattr(result, "to_dict") else dict(result)
+
     async def _skill_acquisition_tool(self, name: str, args: dict) -> dict:
         """Governed skill acquisition meta-tools — never grants unrestricted authority."""
         from governance.skill_acquisition import (
