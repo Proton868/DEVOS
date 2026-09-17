@@ -154,3 +154,50 @@ Cluster 4 does **not** mean the full product is release-green. Remaining example
 
 - Confirm progress panel on `dev.carai.agency` during a real chat mission
 - Optional: rebuild/deploy frontend static assets on Prime after pull
+
+## Authentication — Supabase Auth user-facing login (2026-09-16)
+
+### Architecture
+
+| Layer | Responsibility |
+|-------|----------------|
+| **Supabase Auth** | User authentication (email/password, optional OAuth/phone) |
+| **DevOS** | Authorization, tenants, roles, UCIP, ownership, governance |
+| **`/api/auth/supabase/sync`** | Validate Supabase JWT (JWKS/legacy), map `sub`→`User.supabase_id`, issue DevOS JWT |
+| **`/api/auth/public-config`** | Browser-safe `{supabase_url, supabase_anon_key}` only — never service_role |
+
+Identity flow:
+
+```
+Browser → Supabase Auth → access_token
+  → POST /api/auth/supabase/sync (server verifies JWT)
+  → DevOS User (existing id preserved; link by supabase_id then email)
+  → DevOS JWT (cookie + localStorage) for API Authorization
+```
+
+Local username/password (`POST /api/auth/login`) remains available when `AUTH_MODE` is `dual` or `local` via an explicit UI toggle — not the primary path when Supabase is configured.
+
+### Account linking
+
+1. Match `User.supabase_id` to JWT `sub`
+2. Else match `User.email` (deterministic link of pre-provisioned accounts)
+3. Else create User with `hashed_password=None` (Supabase-only)
+
+Never trust browser-supplied user_id / tenant_id / role for authorization.
+
+### Security
+
+- Frontend uses **anon/publishable** key only (`REACT_APP_SUPABASE_ANON_KEY` or public-config)
+- `SUPABASE_KEY` / service_role never returned by public-config
+- JWT verified server-side (JWKS RS256/ES256 or `SUPABASE_JWT_SECRET` HS256)
+- `user_metadata` is not an authorization source
+
+### Verification status
+
+| Gate | Status |
+|------|--------|
+| Repository tests (`test_supabase_auth_login`, `test_auth_mode`, …) | LOCAL |
+| Frontend production build | LOCAL (if run) |
+| Prime deploy | **NOT VERIFIED** in this pass |
+| https://dev.carai.agency live login | **NOT VERIFIED** in this pass |
+

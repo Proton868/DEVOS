@@ -153,7 +153,9 @@ class Settings(BaseSettings):
 
     # Supabase
     SUPABASE_URL: str = ""
-    SUPABASE_KEY: str = ""
+    SUPABASE_KEY: str = ""  # server-side (never expose to browser)
+    # Browser-safe publishable key only — returned by /api/auth/public-config
+    SUPABASE_ANON_KEY: str = ""
     # Optional: only needed to verify legacy HS256 Supabase access tokens
     # (pre-2024 Supabase projects). Found in the Supabase Dashboard under
     # Settings -> API -> JWT Secret. Newer Supabase projects sign tokens

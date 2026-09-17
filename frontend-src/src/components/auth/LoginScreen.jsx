@@ -2,7 +2,13 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Loader, AlertCircle, ArrowRight, Shield, Smartphone, Mail } from "lucide-react";
 import useStore from "../../store/useStore";
 import { login, syncSupabaseSession } from "../../services/api";
-import { supabase, signInWithGoogle, signInWithPhone, verifyPhoneOtp } from "../../services/supabase";
+import {
+  ensureSupabase,
+  signInWithPassword as supabaseSignIn,
+  signInWithGoogle,
+  signInWithPhone,
+  verifyPhoneOtp,
+} from "../../services/supabase";
 import MenorahLogo from "../../os/MenorahLogo";
 import "./LoginScreen.css";
 
@@ -93,12 +99,37 @@ export default function LoginScreen() {
   const [otpSent, setOtpSent] = useState(false);
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [supabaseReady, setSupabaseReady] = useState(false);
+  const [localLoginAvailable, setLocalLoginAvailable] = useState(true);
+  const [useLocalLogin, setUseLocalLogin] = useState(false);
   const usernameRef = useRef(null);
   const phoneRef = useRef(null);
   const setUser = useStore((s) => s.setUser);
 
   useEffect(() => {
     usernameRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const client = await ensureSupabase();
+        if (cancelled) return;
+        setSupabaseReady(!!client);
+        const r = await fetch("/api/auth/public-config");
+        if (r.ok) {
+          const cfg = await r.json();
+          if (!cancelled) {
+            setLocalLoginAvailable(!!cfg.local_login_available);
+            if (cfg.supabase_configured) setSupabaseReady(true);
+          }
+        }
+      } catch (_) {
+        if (!cancelled) setSupabaseReady(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -170,30 +201,40 @@ export default function LoginScreen() {
   async function handlePasswordSubmit(e) {
     e.preventDefault();
     if (!username.trim() || !password) {
-      setError("Enter both a username and password.");
+      setError(supabaseReady && !useLocalLogin
+        ? "Enter email and password."
+        : "Enter both a username and password.");
       return;
     }
     setSubmitting(true);
     setError(null);
 
-    if (supabase) {
+    // Supabase Auth is the primary user-facing path when configured.
+    if (supabaseReady && !useLocalLogin) {
       try {
-        const { data, error: supaErr } = await supabase.auth.signInWithPassword({
-          email: username.trim(),
-          password,
-        });
-        if (supaErr) throw supaErr;
-        if (data?.session) {
-          const user = await syncSupabaseSession();
-      if (user?.token) localStorage.setItem("devos_token", user.token);
-          setUser(user.user || user);
+        const { data, error: supaErr } = await supabaseSignIn(username.trim(), password);
+        if (supaErr) {
+          setError(supaErr.message || "Invalid email or password.");
+          setSubmitting(false);
           return;
         }
+        if (!data?.session) {
+          setError("Sign-in succeeded but no session was returned.");
+          setSubmitting(false);
+          return;
+        }
+        const user = await syncSupabaseSession();
+        if (user?.token) localStorage.setItem("devos_token", user.token);
+        setUser(user.user || user);
+        return;
       } catch (err) {
-        // Fall through to local auth below
+        setError(err.message || "Supabase sign-in failed.");
+        setSubmitting(false);
+        return;
       }
     }
 
+    // Local DevOS username/password only when explicitly selected or Supabase absent.
     try {
       const user = await login(username.trim(), password);
       setUser(user.user || user);
@@ -203,7 +244,8 @@ export default function LoginScreen() {
     }
   }
 
-  const supabaseConfigured = !!supabase;
+
+  const supabaseConfigured = supabaseReady;
 
   return (
     <div className="login-screen">
@@ -359,6 +401,18 @@ export default function LoginScreen() {
             <AlertCircle size={14} />
             <span>{error}</span>
           </div>
+        )}
+
+
+        {supabaseConfigured && localLoginAvailable && (
+          <button
+            type="button"
+            className="login-local-toggle"
+            onClick={() => { setUseLocalLogin((v) => !v); setError(null); }}
+            disabled={submitting}
+          >
+            {useLocalLogin ? "Use Supabase email sign-in" : "Use local DevOS account"}
+          </button>
         )}
 
         <button type="submit" className="login-submit" disabled={submitting}>

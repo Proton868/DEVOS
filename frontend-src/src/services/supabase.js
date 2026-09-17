@@ -1,48 +1,112 @@
+/**
+ * Browser Supabase client — publishable/anon key only.
+ * Never import or embed SUPABASE_SERVICE_ROLE_KEY or JWT secrets here.
+ */
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL  = process.env.REACT_APP_SUPABASE_URL  || "";
-const SUPABASE_ANON = process.env.REACT_APP_SUPABASE_ANON_KEY || "";
+let _client = null;
+let _initPromise = null;
 
-export const supabase = SUPABASE_URL && SUPABASE_ANON
-  ? createClient(SUPABASE_URL, SUPABASE_ANON, {
-      auth: { persistSession: true, autoRefreshToken: true, storageKey: "devos-auth" },
-    })
-  : null;
-
-export async function getToken() {
-  // Prefer the locally-issued DevOS token when present; this is what
-  // /api/auth/supabase/exchange issues after verifying a Supabase token.
-  const local = localStorage.getItem("devos_token");
-  if (local) return local;
-  if (!supabase) return null;
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    return session?.access_token || null;
-  } catch { return null; }
-}
-
-export async function signInWithGoogle() {
-  if (!supabase) return { error: new Error("Supabase not configured") };
-  return supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      // Redirect back to the same origin/path the app is served from.
-      redirectTo: window.location.origin + window.location.pathname,
+function clientFrom(url, anon) {
+  if (!url || !anon) return null;
+  return createClient(url, anon, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      storageKey: "devos-auth",
     },
   });
 }
 
+/** Build-time env (CRA) when present. */
+function envClient() {
+  const url = process.env.REACT_APP_SUPABASE_URL || "";
+  const anon = process.env.REACT_APP_SUPABASE_ANON_KEY || "";
+  return clientFrom(url, anon);
+}
+
+_client = envClient();
+
+/**
+ * Ensure client is ready. Fetches /api/auth/public-config when build-time
+ * env is missing so production can inject anon key without a secret rebuild.
+ */
+export async function ensureSupabase() {
+  if (_client) return _client;
+  if (_initPromise) return _initPromise;
+  _initPromise = (async () => {
+    try {
+      const r = await fetch("/api/auth/public-config", { credentials: "same-origin" });
+      if (!r.ok) return null;
+      const cfg = await r.json();
+      if (cfg.supabase_url && cfg.supabase_anon_key) {
+        _client = clientFrom(cfg.supabase_url, cfg.supabase_anon_key);
+      }
+      return _client;
+    } catch {
+      return null;
+    } finally {
+      _initPromise = null;
+    }
+  })();
+  return _initPromise;
+}
+
+/** Sync accessor — may be null until ensureSupabase() resolves. */
+export const supabase = _client;
+
+export async function getToken() {
+  const local = localStorage.getItem("devos_token");
+  if (local) return local;
+  const client = (await ensureSupabase()) || _client;
+  if (!client) return null;
+  try {
+    const {
+      data: { session },
+    } = await client.auth.getSession();
+    return session?.access_token || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function signInWithPassword(email, password) {
+  const client = (await ensureSupabase()) || _client;
+  if (!client) return { data: null, error: new Error("Supabase Auth is not configured") };
+  return client.auth.signInWithPassword({ email: email.trim(), password });
+}
+
+export async function signInWithGoogle() {
+  const client = (await ensureSupabase()) || _client;
+  if (!client) return { error: new Error("Supabase not configured") };
+  return client.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: window.location.origin + window.location.pathname },
+  });
+}
+
 export async function signInWithPhone(phone) {
-  if (!supabase) return { error: new Error("Supabase not configured") };
-  return supabase.auth.signInWithOtp({ phone });
+  const client = (await ensureSupabase()) || _client;
+  if (!client) return { error: new Error("Supabase not configured") };
+  return client.auth.signInWithOtp({ phone });
 }
 
 export async function verifyPhoneOtp(phone, token) {
-  if (!supabase) return { error: new Error("Supabase not configured") };
-  return supabase.auth.verifyOtp({ phone, token, type: "sms" });
+  const client = (await ensureSupabase()) || _client;
+  if (!client) return { error: new Error("Supabase not configured") };
+  return client.auth.verifyOtp({ phone, token, type: "sms" });
 }
 
 export async function signOutSupabase() {
-  if (!supabase) return { error: null };
-  return supabase.auth.signOut();
+  const client = (await ensureSupabase()) || _client;
+  if (!client) return { error: null };
+  return client.auth.signOut();
+}
+
+export async function getSession() {
+  const client = (await ensureSupabase()) || _client;
+  if (!client) return null;
+  const { data } = await client.auth.getSession();
+  return data?.session || null;
 }

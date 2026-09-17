@@ -109,8 +109,11 @@ export async function login(username, password) {
 // runs (security-audit P2c/P2f). Returns the same user shape login() does,
 // plus `supabase_linked: true`.
 export async function syncSupabaseSession() {
-  const { getToken: getSupabaseToken } = await import("./supabase");
-  const token = await getSupabaseToken();
+  const { ensureSupabase, getSession } = await import("./supabase");
+  await ensureSupabase();
+  // Prefer the live Supabase access token — not a stale local DevOS JWT.
+  const session = await getSession();
+  const token = session?.access_token;
   if (!token) throw new Error("No active Supabase session");
   const r = await fetch(`${BASE}/api/auth/supabase/sync`, {
     method: "POST",
@@ -121,8 +124,7 @@ export async function syncSupabaseSession() {
     throw new Error(err.detail || `Supabase sync failed: HTTP ${r.status}`);
   }
   const data = await r.json();
-  // If the backend issued a local token, persist it so resolveAuthToken()
-  // prefers it on subsequent calls.
+  // Backend issues a DevOS JWT after validating Supabase identity.
   if (data?.token) setToken(data.token);
   return data;
 }

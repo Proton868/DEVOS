@@ -451,6 +451,25 @@ async def supabase_exchange(req: SupabaseTokenReq, response: Response, db: Async
                                             "supabase_linked": True}}
 
 
+
+@router.get("/public-config")
+async def auth_public_config():
+    """Browser-safe auth configuration. Never includes service_role, JWT secrets,
+    or database credentials. Used by the SPA to initialize Supabase Auth when
+    REACT_APP_* was not baked in at build time.
+    """
+    anon = (getattr(settings, "SUPABASE_ANON_KEY", None) or "").strip()
+    url = (settings.SUPABASE_URL or "").strip()
+    # Never fall back to SUPABASE_KEY — it may be a privileged key.
+    return {
+        "auth_mode": settings.AUTH_MODE,
+        "auth_enabled": bool(settings.AUTH_ENABLED),
+        "supabase_configured": bool(url and anon),
+        "supabase_url": url if anon else "",
+        "supabase_anon_key": anon,
+        "local_login_available": settings.AUTH_MODE in ("dual", "local"),
+    }
+
 @router.get("/me")
 async def me(request: Request, db: AsyncSession = Depends(get_db)):
     user = await get_current_user(request, db)
@@ -474,7 +493,7 @@ class SupabaseTokenReq(BaseModel):
 
 
 @router.post("/supabase/sync")
-async def supabase_sync(request: Request, db: AsyncSession = Depends(get_db)):
+async def supabase_sync(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     """Called by the frontend right after a successful
     supabase.auth.signInWithPassword() (or on session restore), so the
     backend gets a chance to create/update the local User row before the
@@ -493,10 +512,35 @@ async def supabase_sync(request: Request, db: AsyncSession = Depends(get_db)):
 
     from governance.audit import AuditLogger, AuditEventType
     user = await sync_supabase_user(db, payload)
+    local_token = make_jwt(user.id, user.is_admin)
+    response.set_cookie(
+        "devos_token", local_token, httponly=True, samesite="lax",
+        secure=not settings.DEBUG,
+        max_age=settings.JWT_EXPIRE_HOURS * 3600,
+    )
     AuditLogger().log(AuditEventType.AUTH, actor_id=user.id, tenant_id="default",
                        action="supabase_sync", outcome="success")
-    return {"id": user.id, "username": user.username, "email": user.email,
-            "is_admin": user.is_admin, "supabase_linked": True}
+    return {
+        "token": local_token,
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "is_admin": user.is_admin,
+        "default_tenant_id": getattr(user, "default_tenant_id", None),
+        "role": getattr(user, "role", None),
+        "plan": getattr(user, "plan", None),
+        "supabase_linked": True,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "is_admin": user.is_admin,
+            "default_tenant_id": getattr(user, "default_tenant_id", None),
+            "role": getattr(user, "role", None),
+            "plan": getattr(user, "plan", None),
+            "supabase_linked": True,
+        },
+    }
 
 
 class ChangePasswordReq(BaseModel):
