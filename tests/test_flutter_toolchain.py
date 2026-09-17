@@ -117,12 +117,19 @@ def test_no_sudo():
     assert not assert_no_system_package_manager("sudo apt install flutter")
 
 def test_success(tmp_path):
+    import hashlib
     root = tmp_path/"sdk"; staging = tmp_path/"arch"/"flutter"/"bin"; staging.mkdir(parents=True)
     (staging/"flutter").write_text("#!/bin/sh\necho Flutter 3.24.5\n"); (staging/"flutter").chmod(0o755)
     (staging/"dart").write_text("#!/bin/sh\necho version: 3.5.0\n"); (staging/"dart").chmod(0o755)
     archive = tmp_path/"sdk.tar"
     with tarfile.open(archive, "w") as tf: tf.add(tmp_path/"arch"/"flutter", arcname="flutter")
-    r = provision_flutter_sdk(ProvisionRequest(authorized=True, sdk_root=root, download_fn=lambda u,d: d.write_bytes(archive.read_bytes())))
+    data = archive.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    r = provision_flutter_sdk(ProvisionRequest(
+        authorized=True, sdk_root=root,
+        download_fn=lambda u, d: d.write_bytes(data),
+        checksum_fn=lambda u: digest,  # match synthetic archive (pins would otherwise reject)
+    ))
     assert r.ok and Path(r.flutter_path).is_file()
 
 def test_platform_limits():

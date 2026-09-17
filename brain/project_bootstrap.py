@@ -226,6 +226,105 @@ def _seed_builtin_profiles() -> None:
         detect_markers=["Makefile", "makefile"],
         requires_install=False,
     ))
+    # Additional ecosystems (same registration pattern — no AgentRuntime changes)
+    register_toolchain_profile(ToolchainProfile(
+        kind="rust",
+        runtime="cargo",
+        package_manager="cargo",
+        install_cmd="cargo fetch",
+        build_cmd="cargo build",
+        test_cmd="cargo test",
+        typecheck_cmd="cargo check",
+        lint_cmd="cargo clippy -- -D warnings",
+        validate_files=["Cargo.toml", "src/main.rs", "README.md"],
+        repair_hints=["Install Rust via rustup on the host (not via agent apt/sudo)", "cargo fetch"],
+        required_binaries=["cargo", "rustc"],
+        detect_markers=["Cargo.toml", "src/main.rs"],
+        requires_install=True,
+    ))
+    register_toolchain_profile(ToolchainProfile(
+        kind="go",
+        runtime="go",
+        package_manager="go",
+        install_cmd="go mod download",
+        build_cmd="go build ./...",
+        test_cmd="go test ./...",
+        typecheck_cmd="go vet ./...",
+        lint_cmd=None,
+        validate_files=["go.mod", "README.md"],
+        repair_hints=["Install Go SDK on the host (not via agent apt/sudo)", "go mod tidy"],
+        required_binaries=["go"],
+        detect_markers=["go.mod", "go.sum"],
+        requires_install=True,
+    ))
+    register_toolchain_profile(ToolchainProfile(
+        kind="java",
+        runtime="java",
+        package_manager="maven",
+        install_cmd="mvn -q -DskipTests dependency:resolve",
+        build_cmd="mvn -q -DskipTests package",
+        test_cmd="mvn -q test",
+        typecheck_cmd=None,
+        lint_cmd=None,
+        validate_files=["pom.xml", "README.md"],
+        repair_hints=["Install JDK + Maven on the host", "Or use Gradle with build.gradle markers"],
+        required_binaries=["java", "mvn"],
+        detect_markers=["pom.xml", "build.gradle", "build.gradle.kts"],
+        requires_install=True,
+    ))
+    register_toolchain_profile(ToolchainProfile(
+        kind="kotlin",
+        runtime="java",
+        package_manager="gradle",
+        install_cmd="./gradlew dependencies --quiet",
+        build_cmd="./gradlew build -x test",
+        test_cmd="./gradlew test",
+        validate_files=["build.gradle.kts", "README.md"],
+        repair_hints=["Requires JDK; prefer project gradlew wrapper", "Do not install system packages via agent"],
+        required_binaries=["java"],
+        detect_markers=["build.gradle.kts", "settings.gradle.kts"],
+        requires_install=True,
+    ))
+    register_toolchain_profile(ToolchainProfile(
+        kind="dotnet",
+        runtime="dotnet",
+        package_manager="dotnet",
+        install_cmd="dotnet restore",
+        build_cmd="dotnet build --no-restore",
+        test_cmd="dotnet test --no-build",
+        validate_files=["README.md"],
+        repair_hints=["Install .NET SDK on the host (not via agent)", "dotnet restore"],
+        required_binaries=["dotnet"],
+        detect_markers=["*.csproj", "*.fsproj", "*.sln"],
+        requires_install=True,
+    ))
+    register_toolchain_profile(ToolchainProfile(
+        kind="php",
+        runtime="php",
+        package_manager="composer",
+        install_cmd="composer install --no-interaction",
+        build_cmd=None,
+        test_cmd="phpunit",
+        validate_files=["composer.json", "README.md"],
+        repair_hints=["Install PHP + Composer on the host"],
+        required_binaries=["php", "composer"],
+        detect_markers=["composer.json"],
+        requires_install=True,
+    ))
+    register_toolchain_profile(ToolchainProfile(
+        kind="ruby",
+        runtime="ruby",
+        package_manager="bundler",
+        install_cmd="bundle install",
+        build_cmd=None,
+        test_cmd="bundle exec rspec",
+        validate_files=["Gemfile", "README.md"],
+        repair_hints=["Install Ruby + Bundler on the host"],
+        required_binaries=["ruby", "bundle"],
+        detect_markers=["Gemfile", "Gemfile.lock"],
+        requires_install=True,
+    ))
+
     # Flutter: project deps via governed execution; SDK install is never silent.
     # Missing flutter binary → fail-closed report (required_binaries), not apt/sudo.
     register_toolchain_profile(ToolchainProfile(
@@ -307,6 +406,13 @@ def detect_toolchain(request: str, explicit: Optional[str] = None) -> ToolchainK
         (ToolchainKind.TYPESCRIPT, ("typescript", " ts ", ".ts ")),
         (ToolchainKind.SHELL, ("makefile", " make ", "shell script")),
         ("flutter", ("flutter", "dart mobile", "android app", "ios app", "pubspec")),
+        ("rust", ("rust", "cargo", "crate")),
+        ("go", ("golang", " go ", "go module")),
+        ("java", ("maven", "spring boot", "java project")),
+        ("kotlin", ("kotlin",)),
+        ("dotnet", (".net", "dotnet", "csharp", "c#")),
+        ("php", ("php", "composer", "laravel")),
+        ("ruby", ("ruby", "rails", "bundler")),
         (ToolchainKind.PYTHON, ("python", "pytest", "django", "flask", "fastapi")),
         (ToolchainKind.NODE, ("node.js", "nodejs", "express", "npm ")),
         (ToolchainKind.JAVASCRIPT, ("javascript",)),
@@ -332,6 +438,38 @@ def detect_project_toolchain(fs) -> dict:
         }
     except Exception:
         paths = set()
+
+    # Marker-based detection for additional ecosystems
+    marker_map = {
+        "Cargo.toml": "rust",
+        "go.mod": "go",
+        "pom.xml": "java",
+        "build.gradle.kts": "kotlin",
+        "composer.json": "php",
+        "Gemfile": "ruby",
+    }
+    for marker, kind in marker_map.items():
+        if any(p == marker or p.endswith("/" + marker) for p in paths):
+            profile = PROFILES.get(kind)
+            if profile:
+                return {
+                    "kind": kind,
+                    "profile": profile.to_dict() if profile else None,
+                    "markers_found": [marker],
+                    "score": 8,
+                    "message": f"detected:{kind}",
+                }
+        # csproj
+    if any(p.endswith(".csproj") or p.endswith(".sln") for p in paths):
+        profile = PROFILES.get("dotnet")
+        if profile:
+            return {
+                "kind": "dotnet",
+                "profile": profile.to_dict(),
+                "markers_found": ["*.csproj"],
+                "score": 8,
+                "message": "detected:dotnet",
+            }
 
     try:
         from execution.flutter_toolchain import detect_flutter_project

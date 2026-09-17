@@ -179,3 +179,18 @@ python3 -c "import json;d=json.load(open('/tmp/pc.json')); assert 'supabase_anon
 ```
 
 Record: **PASS** / **FAIL** / **UNPROVEN**
+
+## Strong isolation (untrusted project commands)
+
+Live health must show `suitable_for_untrusted_code: true` before Flutter/npm/pytest
+project commands can run under policy.
+
+```bash
+# On prime (operator)
+bash ops/enable_strong_isolation.sh
+# typical: apt install bubblewrap  OR  Docker + DEVOS_USE_DOCKER_SANDBOX=1
+systemctl restart devos
+curl -fsS https://dev.carai.agency/api/health | jq .isolation
+```
+
+Do **not** set `DEVOS_ALLOW_DEGRADED_ISOLATION=1` to force host execution.

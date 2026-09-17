@@ -11,7 +11,7 @@ logger = logging.getLogger('devos.flutter_toolchain')
 DEFAULT_SDK_ROOT = Path(os.environ.get('DEVOS_FLUTTER_SDK_ROOT') or (Path('data') / 'toolchains' / 'flutter')).resolve()
 _ALLOWED_HOSTS = frozenset({'storage.googleapis.com'})
 _ALLOWED_PATH_PREFIX = '/flutter_infra_release/releases/'
-DEFAULT_FLUTTER_VERSION = os.environ.get('DEVOS_FLUTTER_VERSION', '3.24.5')
+DEFAULT_FLUTTER_VERSION = os.environ.get('DEVOS_FLUTTER_VERSION', '3.47.4')
 CAP_FLUTTER_SDK_PROVISION = 'ucip:toolchain.flutter_sdk_provision'
 CHECKSUMS_PATH = Path(os.environ.get('DEVOS_FLUTTER_CHECKSUMS') or (Path('data') / 'toolchains' / 'flutter_checksums.json'))
 _INSTALL_LOCKS: dict = {}
@@ -438,10 +438,12 @@ def provision_flutter_sdk(req: ProvisionRequest) -> ProvisionResult:
         digest = _sha256_file(archive_path)
         evidence['sha256'] = digest
         expected = resolve_expected_checksum(url, req.checksum_fn)
+        # Production pins: if a pin exists for this URL, enforce it (even if require_checksum=False).
         if expected is not None:
             evidence['sha256_expected'] = expected
             if digest.lower() != str(expected).lower():
                 return ProvisionResult(False, 'checksum_mismatch', 'checksum_failure', evidence=evidence)
+            evidence['checksum_enforced'] = True
         elif req.require_checksum:
             return ProvisionResult(False, 'checksum_required_but_missing', 'checksum_required', evidence=evidence)
         extract_dir = staging / 'extract'; extract_dir.mkdir(parents=True, exist_ok=True)
