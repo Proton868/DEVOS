@@ -640,10 +640,22 @@ class BrainLLM:
         http_status = None
         retryable = None
         category = None
-        if last_error and "429" in str(last_error):
-            http_status = 429
-            retryable = True
-            category = "rate_limited"
+        # Prefer structured classification from last exception text / status codes
+        for token in (detail, str(last_error or "")):
+            for code in (429, 503, 502, 500, 401, 403, 400, 404, 422, 408):
+                if f"{code}" in token or f" {code} " in f" {token} ":
+                    meta = classify_provider_http_status(code)
+                    http_status = meta["http_status"]
+                    retryable = meta["retryable"]
+                    category = meta["category"]
+                    break
+            if http_status is not None:
+                break
+        if http_status is None and last_error and "429" in str(last_error):
+            meta = classify_provider_http_status(429)
+            http_status = meta["http_status"]
+            retryable = meta["retryable"]
+            category = meta["category"]
         raise ProviderExhaustedError(
             f"All providers failed. Last error: {detail}",
             last_error=detail,

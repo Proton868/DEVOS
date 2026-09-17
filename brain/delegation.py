@@ -609,9 +609,28 @@ async def run_delegated_mission(
                 continue
             except Exception as ie:
                 logger.debug("completion identity: %s", ie)
-            # Accepted — only now Nuha treats as success
+            # Accepted only after authoritative mission acceptance (not model/provider alone)
+            from brain.mission_acceptance import evaluate_mission_acceptance
+
+            acceptance = evaluate_mission_acceptance(
+                execution_ok=True,
+                status="accepted",
+                files_changed=files,
+                ponytail=gate.to_dict() if hasattr(gate, "to_dict") else {
+                    "passed": bool(getattr(gate, "passed", False)),
+                    "evidence_id": getattr(gate, "evidence_id", None),
+                    "applicable": getattr(gate, "applicable", True),
+                },
+                evidence_refs=evidence_refs,
+                user_id=user_id,
+                mission_id=mission_id,
+            )
+            if not acceptance.get("ok"):
+                last_error = acceptance.get("reason") or "mission_acceptance_failed"
+                logger.info("mission acceptance denied after Ponytail: %s", last_error)
+                continue
             return DelegationResult(
-            plan_id=_plan_id,
+                plan_id=_plan_id,
                 ok=True,
                 mission_id=mission_id,
                 task_id=task_id,
@@ -621,7 +640,7 @@ async def run_delegated_mission(
                 files_changed=files,
                 evidence_refs=evidence_refs,
                 a2a_message_ids=msg_ids,
-                ponytail=gate.to_dict(),
+                ponytail=gate.to_dict() if hasattr(gate, "to_dict") else {"passed": True},
                 rounds=round_i,
             )
 
