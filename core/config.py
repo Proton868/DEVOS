@@ -135,13 +135,6 @@ class Settings(BaseSettings):
     # fields directly instead of regex-parsing free text.
     LOG_FORMAT: str = "text"  # "text" | "json"
 
-    def model_post_init(self, __context):
-        """If JWT_SECRET wasn't set in .env, fall back to a persisted secret
-        that survives process restarts. This closes the bug where every restart
-        silently generated a new random secret, invalidating all sessions and
-        making all encrypted secrets undecryptable."""
-        if not self.JWT_SECRET:
-            self.JWT_SECRET = _get_or_create_persisted_secret()
     JWT_EXPIRE_HOURS: int = 168
     PREVIEW_ORIGIN: str = ""  # e.g. https://preview.example.com
     VERCEL_TOKEN: str = ""
@@ -244,6 +237,30 @@ class Settings(BaseSettings):
         u = (self.DATABASE_URL or "").lower()
         return u.startswith("postgresql") or u.startswith("postgres")
 
+    def model_post_init(self, __context) -> None:
+        """Post-load settings hardening.
+
+        - Persist JWT_SECRET across restarts when unset in env.
+        - Resolve browser-safe Supabase anon key from alternate env names.
+        - NEVER promote SUPABASE_KEY → SUPABASE_ANON_KEY (may be service_role).
+        """
+        if not self.JWT_SECRET:
+            object.__setattr__(self, "JWT_SECRET", _get_or_create_persisted_secret())
+        if not (self.SUPABASE_ANON_KEY or "").strip():
+            import os
+            for name in (
+                "SUPABASE_ANON_KEY",
+                "SUPABASE_PUBLISHABLE_KEY",
+                "REACT_APP_SUPABASE_ANON_KEY",
+                "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+                "SUPABASE_PUBLIC_KEY",
+            ):
+                val = (os.environ.get(name) or "").strip()
+                if val:
+                    object.__setattr__(self, "SUPABASE_ANON_KEY", val)
+                    break
+
+    @property
     def has_supabase(self) -> bool:
         return bool(self.SUPABASE_URL and self.SUPABASE_KEY)
 

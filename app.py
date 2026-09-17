@@ -640,11 +640,29 @@ app.include_router(jobs_router)
 
 @app.get("/{full_path:path}", response_class=HTMLResponse)
 async def spa(request: Request, full_path: str):
-    # Skip Jinja2 templating — index.html is a static React build
-    # that doesn't need template rendering, and Starlette 0.37.2
-    # has a cache-key bug with newer Jinja2 versions.
-    from fastapi.responses import FileResponse
+    """SPA shell for non-API paths only.
+
+    API routes are registered above; this catch-all must NEVER return HTML for
+    `/api/*` (or clients see index.html with content-type text/html for JSON
+    endpoints such as /api/auth/public-config).
+    """
+    from fastapi.responses import FileResponse, JSONResponse
     import os
+
+    path = (full_path or "").lstrip("/")
+    # Defense in depth: refuse to spa-fallback any API/OpenAPI path.
+    if (
+        path == "api"
+        or path.startswith("api/")
+        or path in ("docs", "redoc", "openapi.json")
+        or path.startswith("docs/")
+        or path.startswith("redoc/")
+    ):
+        return JSONResponse(
+            status_code=404,
+            content={"detail": f"API route not found: /{path}"},
+        )
+
     index_path = os.path.join(os.path.dirname(__file__), "frontend", "templates", "index.html")
     if os.path.exists(index_path):
         return FileResponse(

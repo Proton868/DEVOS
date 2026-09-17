@@ -123,3 +123,16 @@ def test_login_screen_prefers_supabase_path():
     assert "Use local DevOS account" in src
     # Must not silently ignore Supabase errors and fall through without message
     assert "Invalid email or password" in src or "supaErr" in src
+
+
+def test_spa_does_not_fallback_api_paths():
+    """Catch-all SPA must return JSON 404 for /api/*, never index.html."""
+    src = (ROOT / "app.py").read_text()
+    assert 'path.startswith("api/")' in src or "startswith('api/')" in src
+    assert "API route not found" in src
+
+
+def test_config_never_aliases_service_key_to_anon():
+    src = (ROOT / "core" / "config.py").read_text()
+    assert "NEVER promote SUPABASE_KEY" in src or "never promote SUPABASE_KEY" in src.lower()
+    assert "SUPABASE_PUBLISHABLE_KEY" in src
