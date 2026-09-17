@@ -382,9 +382,11 @@ class BrainLLM:
         elif provider == "ollama":
             return await self._ollama(messages)
         elif provider == "openrouter":
+            # Production policy: OpenRouter free tier model only (not paid model ids).
+            or_model = (settings.OPENROUTER_DEFAULT_MODEL or "openrouter/free").strip()
             return await self._openai_compat(
                 settings.OPENROUTER_BASE_URL, self._key_for("openrouter"),
-                self.model or settings.OPENROUTER_DEFAULT_MODEL, messages,
+                or_model, messages,
                 extra_headers={"HTTP-Referer": "https://devos.local", "X-Title": "DevOS"},
             )
         elif provider == "deepseek":
@@ -457,11 +459,13 @@ class BrainLLM:
             raise RuntimeError("OmniRoute is not configured (OMNIROUTE_BASE_URL is empty)")
         model = (self.model or settings.OMNIROUTE_DEFAULT_MODEL or "").strip()
         if not model:
-            # Prefer first discovered model if no default configured
+            # Prefer free models from OmniRoute catalog, then any discovered model
             try:
                 models = await self.list_models("omniroute")
-                if models:
-                    model = models[0]["id"]
+                free = [m for m in (models or []) if m.get("free")]
+                pool = free or list(models or [])
+                if pool:
+                    model = pool[0]["id"]
             except Exception:
                 pass
         if not model:
@@ -614,57 +618,153 @@ class BrainLLM:
         # Never grant completion/capability from an unparseable model blob.
         return None
 
+    def _extract_http_status(self, exc: BaseException) -> int | None:
+        resp = getattr(exc, "response", None)
+        if resp is not None and getattr(resp, "status_code", None) is not None:
+            try:
+                return int(resp.status_code)
+            except Exception:
+                pass
+        text = str(exc)
+        for code in (429, 503, 502, 500, 401, 403, 400, 404, 422, 408):
+            if str(code) in text:
+                return code
+        return None
+
+    def _is_rate_limited(self, exc: BaseException) -> bool:
+        code = self._extract_http_status(exc)
+        if code == 429:
+            return True
+        low = str(exc).lower()
+        return "429" in low or "rate limit" in low or "rate-limit" in low or "too many requests" in low
+
+    async def _model_candidates_for_provider(self, provider: str) -> list[str]:
+        """Models to try for a provider. Never a single hard-coded free model globally.
+
+        OpenRouter is pinned to OPENROUTER_DEFAULT_MODEL (openrouter/free).
+        OmniRoute uses configured default plus discovered free models.
+        """
+        if provider == "openrouter":
+            return [(settings.OPENROUTER_DEFAULT_MODEL or "openrouter/free").strip()]
+        if provider == "omniroute":
+            ordered: list[str] = []
+            explicit = (self.model or settings.OMNIROUTE_DEFAULT_MODEL or "").strip()
+            if explicit:
+                ordered.append(explicit)
+            try:
+                models = await self.list_models("omniroute")
+                free_ids = [m["id"] for m in (models or []) if m.get("free") and m.get("id")]
+                any_ids = [m["id"] for m in (models or []) if m.get("id")]
+                for mid in free_ids + any_ids:
+                    if mid and mid not in ordered:
+                        ordered.append(mid)
+            except Exception:
+                pass
+            return ordered or [explicit] if explicit else ordered
+        # Other providers: single default from call path / self.model
+        if self.model:
+            return [self.model]
+        defaults = {
+            "deepseek": settings.DEEPSEEK_DEFAULT_MODEL,
+            "gemini": settings.GEMINI_DEFAULT_MODEL,
+            "openai": "gpt-4o-mini",
+            "huggingface": settings.HUGGINGFACE_DEFAULT_MODEL,
+            "nararouter": settings.NARAROUTER_DEFAULT_MODEL,
+            "ollama": settings.OLLAMA_DEFAULT_MODEL,
+        }
+        d = (defaults.get(provider) or "").strip()
+        return [d] if d else [""]
+
+    async def _call_with_model(self, provider: str, messages: list[dict], model: str) -> str:
+        """Invoke provider using a specific model (temporarily overrides self.model)."""
+        prev = self.model
+        try:
+            if model:
+                self.model = model
+            return await self._call(provider, messages)
+        finally:
+            self.model = prev
+
     async def stream_chat(self, messages: list[dict], *, allow_fallback: bool = True) -> str:
         """Call the configured provider (and optionally fall back).
 
-        On total failure raises ProviderExhaustedError — never returns a
-        synthetic "All providers failed" assistant message that callers might
-        treat as successful model content.
+        Rate-limited (HTTP 429) responses are retryable provider exhaustion for
+        that provider/model only: try other models (OmniRoute free catalog) and
+        other configured providers. Never returns a synthetic success string.
+        On total failure raises ProviderExhaustedError.
         """
         primary = self.provider
         providers = [primary]
         if allow_fallback:
-            providers = [primary] + [p for p in self._all_providers() if p != primary]
+            rest = [p for p in self._all_providers() if p != primary]
+            # Prefer OmniRoute as routing/fallback layer when configured
+            if "omniroute" in rest:
+                rest = ["omniroute"] + [p for p in rest if p != "omniroute"]
+            providers = [primary] + rest
+
         last_error = None
         tried: list[str] = []
+        last_http_status = None
+        last_retryable = None
+        last_category = None
+        last_provider = None
+        last_model = None
+        saw_rate_limit = False
+
         for provider in providers:
-            tried.append(provider)
-            try:
-                return await self._call(provider, messages)
-            except Exception as e:
-                # Never log raw secrets; exception messages are already redacted upstream where possible
-                last_error = f"{provider}: {type(e).__name__}: {e}"
-                self.last_error = last_error
-                logger.warning("Chat provider %s failed: %s", provider, type(e).__name__)
+            models = await self._model_candidates_for_provider(provider)
+            if not models:
+                models = [""]
+            for model in models:
+                label = f"{provider}:{model or 'default'}"
+                tried.append(label)
+                try:
+                    return await self._call_with_model(provider, messages, model)
+                except Exception as e:
+                    code = self._extract_http_status(e)
+                    meta = classify_provider_http_status(code) if code else {
+                        "retryable": self._is_rate_limited(e),
+                        "category": "rate_limited" if self._is_rate_limited(e) else "error",
+                        "http_status": code,
+                    }
+                    last_error = f"{label}: {type(e).__name__}: {e}"
+                    self.last_error = last_error
+                    last_http_status = meta.get("http_status")
+                    last_retryable = meta.get("retryable")
+                    last_category = meta.get("category")
+                    last_provider = provider
+                    last_model = model or getattr(self, "model", None)
+                    if self._is_rate_limited(e) or meta.get("category") == "rate_limited":
+                        saw_rate_limit = True
+                        logger.warning(
+                            "Chat provider %s model %s rate-limited (retryable); trying next",
+                            provider, model or "default",
+                        )
+                        continue
+                    # Non-retryable for this model: still try other models/providers
+                    logger.warning(
+                        "Chat provider %s failed (%s); trying next",
+                        label, type(e).__name__,
+                    )
+                    # Auth failures on a provider: skip remaining models for that provider
+                    if code in (401, 403):
+                        break
+                    continue
+
         detail = last_error or "no providers attempted"
-        http_status = None
-        retryable = None
-        category = None
-        # Prefer structured classification from last exception text / status codes
-        for token in (detail, str(last_error or "")):
-            for code in (429, 503, 502, 500, 401, 403, 400, 404, 422, 408):
-                if f"{code}" in token or f" {code} " in f" {token} ":
-                    meta = classify_provider_http_status(code)
-                    http_status = meta["http_status"]
-                    retryable = meta["retryable"]
-                    category = meta["category"]
-                    break
-            if http_status is not None:
-                break
-        if http_status is None and last_error and "429" in str(last_error):
-            meta = classify_provider_http_status(429)
-            http_status = meta["http_status"]
-            retryable = meta["retryable"]
-            category = meta["category"]
+        if saw_rate_limit and last_category is None:
+            last_category = "rate_limited"
+            last_retryable = True
+            last_http_status = last_http_status or 429
         raise ProviderExhaustedError(
             f"All providers failed. Last error: {detail}",
             last_error=detail,
             providers_tried=tried,
-            http_status=http_status,
-            retryable=retryable,
-            provider=tried[-1] if tried else None,
-            model=getattr(self, "model", None),
-            category=category,
+            http_status=last_http_status,
+            retryable=last_retryable if last_retryable is not None else saw_rate_limit,
+            provider=last_provider,
+            model=last_model,
+            category=last_category or ("rate_limited" if saw_rate_limit else None),
         )
 
     async def list_models(self, provider: Optional[str] = None) -> list[dict]:
