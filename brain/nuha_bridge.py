@@ -92,14 +92,32 @@ def mission_truth(
 
 
 def should_auto_orchestrate(text: str) -> bool:
-    """Executable work only — not greetings or short Q&A."""
+    """True only for roles that require plan+delegate (not conversation/advice)."""
     if is_trivial_chat(text):
         return False
     try:
-        from brain.personas import should_orchestrate_execution
-        return should_orchestrate_execution(text)
+        from brain.nuha_role import classify_nuha_role, NuhaRole
+        d = classify_nuha_role(text)
+        # Conversation and pure reporting never auto-start missions.
+        if d.role in (NuhaRole.CONVERSATION, NuhaRole.REPORTING):
+            return False
+        # Plan-only: orchestrate plan creation but caller must not treat as completion.
+        # Execution/verification: full delegated path.
+        # Plan-only is handled by explicit plan requests in orchestration UI;
+        # chat auto-path only runs when specialist delegation is required.
+        return bool(d.should_delegate)
     except Exception:
-        return False
+        try:
+            from brain.personas import should_orchestrate_execution
+            return should_orchestrate_execution(text)
+        except Exception:
+            return False
+
+
+def classify_chat_role(text: str) -> dict:
+    """Public helper for chat SSE / tests — role decision dict."""
+    from brain.nuha_role import classify_nuha_role
+    return classify_nuha_role(text).to_dict()
 
 
 async def recall_for_prompt(user_id: str, query: str, *, limit: int = 5) -> list[dict]:

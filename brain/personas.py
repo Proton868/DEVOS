@@ -421,13 +421,28 @@ def classify_intent_heuristic(text: str) -> list[str]:
 
 
 def should_orchestrate_execution(text: str) -> bool:
-    """True when Nuha should prefer agent/workflow machinery over chat-only answers."""
+    """True when Nuha should prefer agent/workflow machinery over chat-only answers.
+
+    Conversation/advice never returns True. Destructive work still requires
+    downstream UCIP + (when flagged) explicit confirm — this is not a grant.
+    """
+    try:
+        from brain.nuha_role import classify_nuha_role, NuhaRole
+        d = classify_nuha_role(text)
+        if d.role == NuhaRole.CONVERSATION:
+            return False
+        if d.role == NuhaRole.REPORTING:
+            return False
+        return bool(d.should_delegate)
+    except Exception:
+        pass
     classes = set(classify_intent_heuristic(text))
-    # RESEARCH included when the user asks for substantive investigation (not a one-liner).
     if classes & {"CREATION", "EXECUTION", "AUTOMATION", "MULTI-DOMAIN"}:
         return True
     if "RESEARCH" in classes and len((text or "").split()) >= 6:
-        return True
+        # Research alone is not tool execution unless action verbs present
+        from brain.nuha_role import classify_nuha_role
+        return classify_nuha_role(text).should_delegate
     return False
 
 

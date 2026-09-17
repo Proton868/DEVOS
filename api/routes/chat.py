@@ -355,7 +355,12 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
             yield f"data: {json.dumps({'status': 'received', 'session_id': session.id})}\n\n"
             await asyncio.sleep(0)
 
-            yield f"data: {json.dumps({'status': 'classifying', 'session_id': session.id})}\n\n"
+            try:
+                from brain.nuha_role import classify_nuha_role
+                _nuha_role = classify_nuha_role(req.message).to_dict()
+            except Exception:
+                _nuha_role = {"role": "conversation"}
+            yield f"data: {json.dumps({'status': 'classifying', 'session_id': session.id, 'nuha_role': _nuha_role})}\n\n"
 
             force_website = _is_website_goal(req.message)
             if should_auto_orchestrate(req.message) or force_website:

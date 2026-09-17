@@ -371,11 +371,22 @@ def list_plans_for_user(user_id: str, limit: int = 20) -> list[OrchestrationPlan
 
 
 def detect_mode(goal: str, explicit: Optional[str] = None) -> NuhaMode:
+    """Map Nuha executive role onto legacy NuhaMode (chat | plan | action)."""
     if explicit:
         try:
             return NuhaMode(explicit.lower())
         except ValueError:
             pass
+    try:
+        from brain.nuha_role import classify_nuha_role, NuhaRole
+        d = classify_nuha_role(goal)
+        if d.role == NuhaRole.PLANNING:
+            return NuhaMode.PLAN
+        if d.role in (NuhaRole.EXECUTION, NuhaRole.VERIFICATION):
+            return NuhaMode.ACTION
+        return NuhaMode.CHAT
+    except Exception:
+        pass
     g = (goal or "").lower().strip()
     plan_cues = (
         "plan ", "plan a", "plan the", "create a plan", "implementation plan",
