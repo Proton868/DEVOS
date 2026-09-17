@@ -385,6 +385,9 @@ class AgentRuntime:
         mode: AgentMode = AgentMode.AGENT,
         trust_level: TrustLevel = TrustLevel.OPERATOR,
         capabilities: Optional[set[str]] = None,
+        persona_system_prompt: str = "",
+        persona_id: str = "",
+        agent_id: str = "",
     ):
         self.user_id = user_id
         self.project_id = project_id
@@ -392,6 +395,9 @@ class AgentRuntime:
         self.provider = provider
         self.model = model
         self.mode = mode
+        self.persona_system_prompt = persona_system_prompt or ""
+        self.persona_id = persona_id or ""
+        self.agent_id = agent_id or ""
 
         # Default capability set for IDE agent: filesystem + vcs write + shell.
         # UCIP still evaluates each call; HITL escalations still apply.
@@ -511,6 +517,13 @@ class AgentRuntime:
 
         tools_block = tools_for_prompt(self.mode)
         system = SYSTEM_PROMPT.format(tools=tools_block)
+        if getattr(self, "persona_system_prompt", None):
+            system = (
+                system
+                + "\n\n--- PERSONA INSTRUCTIONS ---\n"
+                + str(self.persona_system_prompt).strip()
+                + "\n--- END PERSONA INSTRUCTIONS ---\n"
+            )
         messages: list[dict] = [
             {"role": "system", "content": system},
             {

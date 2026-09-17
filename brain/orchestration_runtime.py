@@ -30,6 +30,10 @@ class NodeExecutionRequest:
     crawl_id: str = ""
     job_id: str = ""
     force_refresh: bool = False
+    # Persona executable binding (resolved by delegation layer)
+    persona_system_prompt: str = ""
+    runtime_tools: list[str] = field(default_factory=list)
+    agent_id: str = ""
 
 
 @dataclass
@@ -131,6 +135,9 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
         provider=getattr(_settings, "DEFAULT_PROVIDER", None) or "omniroute",
         model=None,  # provider defaults / user prefs resolve inside BrainLLM
         mode=AgentMode.AGENT,
+        persona_system_prompt=(req.persona_system_prompt or ""),
+        persona_id=req.persona_id or "",
+        agent_id=req.agent_id or "",
     )
     context = AgentContext(
         project_id=req.workspace_id or "default",

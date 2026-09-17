@@ -110,9 +110,27 @@ async def _run_agent_node(
     objective: str,
     effective_caps: Optional[list] = None,
 ) -> dict:
+    """Execute specialist via AgentRuntime bound to Persona executable contract."""
     from brain.orchestration_runtime import NodeExecutionRequest, run_node_on_agent_runtime
+    from brain.personas import get_persona
+    from brain.executable_agents import build_contract_for_persona
 
-    caps = effective_caps or ["fs.read", "fs.write", "shell.exec"]
+    persona = get_persona(persona_id)
+    persona_prompt = ""
+    agent_id = f"agent:{persona_id}"
+    runtime_tools: list = []
+    if persona is not None:
+        contract = build_contract_for_persona(persona)
+        agent_id = contract.agent_id
+        runtime_tools = list(contract.runtime_tools or [])
+        persona_prompt = (persona.system_prompt or "").strip()
+        if effective_caps is None:
+            caps = list(contract.capabilities) if contract.capabilities else ["fs.read", "fs.write"]
+        else:
+            caps = list(effective_caps)
+    else:
+        caps = effective_caps or ["fs.read", "fs.write", "shell.exec"]
+
     req = NodeExecutionRequest(
         plan_id=plan_id,
         node_id=node_id,
@@ -122,9 +140,15 @@ async def _run_agent_node(
         objective=objective,
         effective_caps=caps,
         authorization_decision="allow",
+        persona_system_prompt=persona_prompt,
+        runtime_tools=runtime_tools,
+        agent_id=agent_id,
     )
     result = await run_node_on_agent_runtime(req)
-    return result.to_dict()
+    out = result.to_dict()
+    out["persona_id"] = persona_id
+    out["agent_id"] = agent_id
+    return out
 
 
 async def _emit_progress(on_progress, payload: dict) -> None:

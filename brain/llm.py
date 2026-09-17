@@ -21,10 +21,58 @@ class ProviderExhaustedError(RuntimeError):
     that grants capabilities or completes a mission.
     """
 
-    def __init__(self, message: str, *, last_error: str | None = None, providers_tried: list | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        last_error: str | None = None,
+        providers_tried: list | None = None,
+        http_status: int | None = None,
+        retryable: bool | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        category: str | None = None,
+    ):
         super().__init__(message)
         self.last_error = last_error
         self.providers_tried = list(providers_tried or [])
+        self.http_status = http_status
+        self.retryable = retryable
+        self.provider = provider
+        self.model = model
+        self.category = category
+
+    def to_public_dict(self) -> dict:
+        return {
+            "error_type": "provider_exhausted",
+            "message": str(self),
+            "last_error": self.last_error,
+            "providers_tried": list(self.providers_tried),
+            "http_status": self.http_status,
+            "retryable": self.retryable,
+            "provider": self.provider,
+            "model": self.model,
+            "category": self.category,
+        }
+
+
+def classify_provider_http_status(code: int) -> dict:
+    """Classify upstream HTTP status for retry/fallback policy (no secrets)."""
+    try:
+        code = int(code)
+    except Exception:
+        return {"retryable": False, "category": "unknown", "http_status": None}
+    if code == 429:
+        return {"retryable": True, "category": "rate_limited", "http_status": 429}
+    if code in (408, 500, 502, 503, 504):
+        return {"retryable": True, "category": "transient", "http_status": code}
+    if code in (401, 403):
+        return {"retryable": False, "category": "auth", "http_status": code}
+    if code in (400, 404, 422):
+        return {"retryable": False, "category": "client", "http_status": code}
+    if 500 <= code < 600:
+        return {"retryable": True, "category": "server", "http_status": code}
+    return {"retryable": False, "category": "other", "http_status": code}
 
 
 def _redact_provider_error_text(text: str, *, max_len: int = 200) -> str:
@@ -589,10 +637,22 @@ class BrainLLM:
                 self.last_error = last_error
                 logger.warning("Chat provider %s failed: %s", provider, type(e).__name__)
         detail = last_error or "no providers attempted"
+        http_status = None
+        retryable = None
+        category = None
+        if last_error and "429" in str(last_error):
+            http_status = 429
+            retryable = True
+            category = "rate_limited"
         raise ProviderExhaustedError(
             f"All providers failed. Last error: {detail}",
             last_error=detail,
             providers_tried=tried,
+            http_status=http_status,
+            retryable=retryable,
+            provider=tried[-1] if tried else None,
+            model=getattr(self, "model", None),
+            category=category,
         )
 
     async def list_models(self, provider: Optional[str] = None) -> list[dict]:
