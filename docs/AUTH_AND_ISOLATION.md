@@ -1,112 +1,73 @@
-# Authentication, Tenancy & Isolation
+# Authentication and isolation
 
-## AUTH_MODE
+Aligned with codebase tip including Supabase-primary login and dual-mode JWT acceptance.
 
-| Mode | Behavior |
-|------|----------|
-| `dual` (default) | Accept local HS256 JWT **or** Supabase access token |
-| `local` | Local username/password JWT only |
-| `supabase` | Supabase JWT only (hosted production) |
+## Responsibilities
 
-Set in `.env`:
+| Concern | Owner |
+|---------|--------|
+| Human authentication | **Supabase Auth** (email/password; optional OAuth/phone) |
+| API session credential | DevOS JWT and/or verified Supabase access token |
+| Authorization | DevOS (roles, tenants, ownership, UCIP) |
+| Capability grants | UCIP / CapabilityRegistry — never model output |
 
-```bash
-AUTH_MODE=supabase   # production with Supabase
-AUTH_MODE=dual       # migration / mixed
-AUTH_MODE=local      # offline / VPS without Supabase
-```
+Supabase authenticates **who**. DevOS authorizes **what**.
 
-## Supabase + Google OAuth
+## Modes (`AUTH_MODE`)
 
-1. Configure Supabase project URL + anon key (`SUPABASE_URL`, `SUPABASE_KEY`).
-2. Enable Google provider in the Supabase dashboard.
-3. Frontend uses the Supabase JS client; backend verifies the JWT and maps
-   `auth.uid()` → `User.supabase_id` → `User.id`.
-4. On first sign-in, DevOS creates the local `User`, personal `Tenant`, and
-   `Membership`, and sets `User.default_tenant_id`.
+| Value | Behavior |
+|-------|----------|
+| `dual` (default) | Accept local DevOS JWT **or** verified Supabase access token |
+| `supabase` | Supabase tokens only (local `/api/auth/login` JWT rejected) |
+| `local` | Local JWT only (Supabase tokens ignored) |
 
-Service-role keys must **never** ship to the browser. Backend routes still
-filter by `user.id` / tenant membership even if the server uses a service role.
+## User-facing login
 
-## Isolation model
+1. SPA loads Supabase client from `REACT_APP_SUPABASE_*` **or** `GET /api/auth/public-config`.
+2. `signInWithPassword` / OAuth / phone via official Supabase JS client.
+3. `POST /api/auth/supabase/sync` with `Authorization: Bearer <supabase_access_token>`.
+4. Server verifies JWT (JWKS RS256/ES256, or legacy `SUPABASE_JWT_SECRET` HS256).
+5. `sync_supabase_user`: link by `User.supabase_id` → email → create Supabase-only user.
+6. Server issues DevOS JWT + `devos_token` cookie; SPA stores token for API calls.
 
-```
-Supabase auth.uid()  →  User.supabase_id  →  User.id
-                                           →  default_tenant_id
-                                           →  resource.owner_id / user_id / tenant_id
-```
+Local username/password (`POST /api/auth/login`) is available only when `AUTH_MODE` is `dual` or `local`, via an explicit UI control—not silent fallback that hides Supabase errors.
 
-- Client-supplied `user_id`, `tenant_id`, `owner_id`, `trust_level`, `extra_caps`
-  are **not** authoritative.
-- Settings PUT strips governance/authority fields.
-- Secrets list/get never return decrypted values or ciphertext.
+## Public config (browser-safe)
 
-## System vs user provider config
+`GET /api/auth/public-config` returns JSON only:
 
-| Layer | Source | Visible to user |
-|-------|--------|-----------------|
-| System providers | Server `.env` / admin config | configured: true/false |
-| User preferences | `UserSettings.providers` | endpoints, defaults, enabled flags |
-| User credentials | `Secret` rows `PROVIDER_<ID>_KEY` | configured: true only |
+- `auth_mode`, `auth_enabled`, `supabase_configured`
+- `supabase_url`, `supabase_anon_key` (publishable)
+- `local_login_available`
 
-Raw API keys are never returned in JSON responses.
+**Never** returns `SUPABASE_KEY`, service_role, JWT signing secrets, or database passwords.
 
-## Default bootstrap admin (local mode)
+SPA catch-all **must not** serve `index.html` for `/api/*` (see `app.py`).
 
-`ADMIN_USER` / `ADMIN_PASSWORD` (see `.env.example`) create the first admin when
-no admin exists. Change the password before production use.
+## Environment
 
-## Per-user provider credentials
+| Variable | Exposure |
+|----------|----------|
+| `SUPABASE_URL` | Server; also in public-config when anon present |
+| `SUPABASE_ANON_KEY` | Server public-config / frontend build env |
+| `SUPABASE_KEY` | Server only |
+| `SUPABASE_JWT_SECRET` | Server only (legacy HS256) |
+| `JWT_SECRET` | Server only (DevOS-issued tokens) |
 
-```http
-PUT /api/models/providers/{provider_id}/credential
-{"provider":"openrouter","api_key":"..."}
+Aliases resolved into `SUPABASE_ANON_KEY` when empty: `SUPABASE_PUBLISHABLE_KEY`, `REACT_APP_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_PUBLIC_KEY`. **`SUPABASE_KEY` is never promoted to anon.**
 
-→ {"provider":"openrouter","credentials_configured":true}
-```
+## Isolation invariants
 
-Stored as encrypted `Secret` named `PROVIDER_<ID>_KEY` owned by the user.
-System `.env` keys remain admin-only via `PUT /api/models/providers/config` (`is_admin` required).
+- Never trust browser-supplied `user_id`, `tenant_id`, or `role` for authorization.
+- Never use raw `user_metadata` as an authorization source.
+- Resource APIs enforce ownership (task, evidence chain, crawl, graph entity, etc.) — cross-user → 404/403.
+- UCIP evaluates capabilities before consequential side effects.
+- Tenant context comes from server-side membership / personal tenant helpers.
 
-## Workflow ownership
+## Related code
 
-Workflow definitions are stored in `workflow_records` with `owner_id`. List/get/update/delete are owner-scoped.
-
-## Model resolution
-
-```
-Explicit agent/session/request model
-  → User model preference (/api/settings/models)
-  → Provider/system default (.env / DEFAULT_PROVIDER models)
-```
-
-Tenant-level model defaults are **not** implemented. Do not assume a
-tenant default layer exists.
-
-`resolve_user_model()` implements the user preference step; callers that
-pass an explicit model skip user prefs.
-
-## Resource scope classification
-
-| Resource | Scope | Notes |
-|----------|--------|------|
-| Chats, messages | USER | `ChatSession.user_id` |
-| Scripts, runs | USER | `Script.owner_id` |
-| Secrets, provider credentials | USER | `Secret.owner_id` |
-| UserSettings, layouts | USER | `user_id` |
-| Files / VCS | USER project root | `data/projects/{user_id}/{project_id}/` |
-| Workflows (in-memory) | USER | `owner_id`; not durable |
-| Execution jobs / evidence | USER/TENANT when set | `owner_id` / `tenant_id` |
-| Capability registry, stacks | SYSTEM | Global catalog |
-| Workers catalog | SYSTEM | Definitions global; runs may be job-scoped |
-| Memory graph | USER-associated where stored with user context | Backend enforces auth on routes |
-
-## Workflow execution snapshots
-
-- Definitions live in `workflow_records` (DB authoritative).
-- `POST /api/workflows/{id}/execute` creates an `ExecutionJob` with
-  `workflow_id`, `workflow_version`, and an immutable `payload.workflow_snapshot`.
-- Retries/recovery MUST use the job snapshot — never reload the live definition.
-- Deleting a workflow removes the definition only; jobs and evidence retain historical IDs/versions.
-- Workflow `schedule`/`cron` fields are stored but **not** auto-scheduled (script scheduler only).
-- Governance/capability checks remain authoritative at step execution time.
+- `api/routes/auth.py` — login, sync, exchange, public-config, `get_current_user`
+- `frontend-src/src/services/supabase.js` — client + `ensureSupabase()`
+- `frontend-src/src/components/auth/LoginScreen.jsx` — UI
+- `core/config.py` — `AUTH_MODE`, Supabase settings
+- `tests/test_auth_mode.py`, `tests/test_supabase_auth_login.py`

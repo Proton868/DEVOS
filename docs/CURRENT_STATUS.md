@@ -1,6 +1,10 @@
 # DevOS — current status
 
-Aligned with **Governance v1 + Reliability v1** freeze (`main` tip including chaos harness).
+**Docs aligned to git tip including:** `e8b6fa3` (SPA `/api/*` JSON), Supabase Auth login (`5fa048b` / `119dc6e`), Nuha progress UI (`04a736c`), execution_operations `actor_id` (`38949b5`).
+
+**Labels used below:** VERIFIED LOCAL · VERIFIED PRIME LIVE · NOT VERIFIED
+
+---
 
 ## Install (self-contained)
 

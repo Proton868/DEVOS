@@ -1,27 +1,37 @@
 # DevOS — Agency Operating System
 
-**Product vision (source of truth):** [`plans/DEVOS_PRODUCT_VISION.md`](plans/DEVOS_PRODUCT_VISION.md) — unified AI-native Development OS; Nuha orchestrates; specialists execute under governance.
+**Product vision:** [`plans/DEVOS_PRODUCT_VISION.md`](plans/DEVOS_PRODUCT_VISION.md) — unified AI-native Development OS. **Nuha orchestrates; specialist agents execute under UCIP governance.**
 
-Self-contained AI operating system for human-in-the-loop and autonomous work.
+Self-contained AI operating system for human-in-the-loop and autonomous engineering work.
 
-Goals go through a multi-provider **Brain**, **Workers**, **sandboxed execution**, and **UCIP governance** (identity, capabilities, evidence, human-approved autonomy) in a **unified development workspace**. **Postgres/Supabase is the intended production source of truth.** Local/dev install may use SQLite for constrained scenarios only. A prebuilt web UI is included — Node is not required at runtime after install.
+Goals flow through:
+
+```
+Human → Nuha → Mission / A2A → Specialist Agent → AgentRuntime
+  → UCIP / capabilities → Execution → Artifacts → Ponytail → Evidence → Nuha
+```
+
+**Production database authority is Postgres/Supabase only** (`REQUIRE_POSTGRES=true`). SQLite is test-isolation only, never production application state. A prebuilt web UI ships under `frontend/`; Node is not required at runtime after install.
+
+**Current tip (docs alignment):** see [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md). Architecture docs under `docs/` describe intended behavior; prefer code + CURRENT_STATUS over lagging plan files.
 
 ---
 
-## Production VPS (Ubuntu 24.04)
+## Production VPS (Ubuntu)
 
-See **[docs/DEPLOY.md](docs/DEPLOY.md)** and **[ops/README.md](ops/README.md)** for reproducible install/update/verify:
+See **[docs/DEPLOY.md](docs/DEPLOY.md)** and **[ops/README.md](ops/README.md)**:
 
 ```bash
-./ops/install.sh          # venv, deps, migrations (edit .env first for production)
+./ops/install.sh          # venv, deps, migrations (edit .env first)
 ./ops/update.sh           # git ff-only → deps → migrate → restart → verify
 ./ops/verify.sh --production
 ```
 
-Postgres/Supabase is the production database authority. Do not use SQLite in production.
+Typical host path: `/home/ubuntu/devos` · public URL example: `https://dev.carai.agency`
 
-## Quick start (one installer)
+---
 
+## Quick start
 
 ```bash
 git clone https://github.com/Proton868/DEVOS.git
@@ -33,80 +43,115 @@ cd DEVOS
 
 Open **http://localhost:8000**
 
-`install.sh` performs the **complete** DevOS installation: project-local Python `.venv`, Python dependencies, `.env` + `JWT_SECRET`, Node.js 22 (provisioned automatically if needed), frontend `npm ci` + production build, and runtime asset sync into `frontend/static` and `frontend/templates/`. **No separate frontend installation is required.**
+`install.sh` installs a project-local `.venv`, Python deps, `.env` + `JWT_SECRET`, builds the React UI when needed, and syncs assets into `frontend/static` and `frontend/templates/`.
 
-After installation, Node/npm are **not** required to run `./devos start`.
-
-| Check | Command |
-|-------|---------|
-| Health | `./devos doctor` |
-| API health | http://localhost:8000/api/health |
-| Chaos drills (optional) | `./.venv/bin/python scripts/run_chaos_drills.py` |
+| Check | Command / URL |
+|-------|----------------|
+| Health CLI | `./devos doctor` |
+| API health | `GET /api/health` |
+| Auth public config | `GET /api/auth/public-config` (JSON only — never HTML) |
+| Chaos drills | `./.venv/bin/python scripts/run_chaos_drills.py` |
 
 ---
-
 
 ## Requirements
 
 | Need | Minimum |
 |------|---------|
 | **Python** | **3.11+** (3.12 / 3.13 recommended) |
-| **Node** | Not required at runtime (install.sh provisions Node 22 only to build the UI) |
-| **Docker** | Optional |
-| **Postgres / Supabase** | **Production SoT** (required for production-grade deployments) |
-| **SQLite** | Limited local/dev only — not production architecture |
+| **Node** | Install-time only (UI build); not required for `./devos start` |
+| **Postgres / Supabase** | **Required for production** |
+| **SQLite** | Tests only (`REQUIRE_POSTGRES=false` in pytest isolation) |
 | **Redis** | Optional (multi-node / enterprise) |
+| **Docker** | Optional |
 
-LLM: **OmniRoute** gateway (default, `http://127.0.0.1:3000`) routes to configured upstream models. Ollama is optional.
+**Default LLM gateway:** OmniRoute (`DEFAULT_PROVIDER=omniroute`). Ollama remains optional.
 
 ---
 
-## What you get
+## Authentication (user-facing)
 
-### Governance and reliability (architecture in code)
+| Layer | Responsibility |
+|-------|----------------|
+| **Supabase Auth** | Sign-in (email/password; optional OAuth/phone when configured) |
+| **DevOS** | Authorization, tenants, roles, UCIP, ownership, IDOR boundaries |
+| **`GET /api/auth/public-config`** | Browser-safe `{supabase_url, supabase_anon_key}` only |
+| **`POST /api/auth/supabase/sync`** | Verify Supabase JWT server-side → map `User.supabase_id` → issue DevOS JWT |
+
+Flow:
+
+```
+Browser → Supabase Auth → access_token
+  → POST /api/auth/supabase/sync
+  → DevOS User (stable internal id) + tenant/role
+  → DevOS JWT (cookie / localStorage) for API calls
+```
+
+Environment:
+
+| Variable | Where | Notes |
+|----------|-------|--------|
+| `SUPABASE_URL` | Server (+ public-config) | Project URL |
+| `SUPABASE_ANON_KEY` | Server public-config / `REACT_APP_*` | **Publishable only** |
+| `SUPABASE_KEY` | Server only | Never send to browser (may be privileged) |
+| `SUPABASE_JWT_SECRET` | Server only | Legacy HS256 projects; modern projects use JWKS |
+| `AUTH_MODE` | Server | `dual` (default) · `supabase` · `local` |
+
+Local username/password (`POST /api/auth/login`) remains available in `dual` / `local` modes via an explicit UI toggle — not the primary path when Supabase is configured.
+
+Details: [docs/AUTH_AND_ISOLATION.md](docs/AUTH_AND_ISOLATION.md)
+
+---
+
+## Architecture (code)
 
 ```
 Identity → UCI/UCIP capability → PathClass → Isolation
-         → ExecutionJob (durable) → Evidence → Learning signals (non-authoritative)
+         → ExecutionJob / ExecutionOperation → Evidence → HAI cognitive state
 ```
 
-- UCIP capability evaluation and human-gated high-risk operations are **IMPLEMENTED** in code  
-- Workers/personas and earned-autonomy hooks exist; **promotion is not unconstrained self-authorization**  
-- Job durability, leases, and side-effect status classes are **PARTIALLY IMPLEMENTED** / **TESTED BUT NOT LIVE-PROVEN** on many deployments  
-- Chaos pure-logic drills: `python scripts/run_chaos_drills.py`  
-- Staging matrix: [docs/STAGING_DRILLS.md](docs/STAGING_DRILLS.md)  
-- Live production proof is tracked in [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) and [docs/PRODUCTION_GATES.md](docs/PRODUCTION_GATES.md) — unit tests alone are not production success  
+| Area | Status note |
+|------|-------------|
+| UCIP + capability registry | Implemented; fail-closed authorization |
+| AgentRuntime + HAI control | Implemented; verification-aware completion |
+| Consequential operation ledger | Implemented; UNKNOWN is non-retryable |
+| Nuha orchestration / A2A | Implemented path; live proof tracked in CURRENT_STATUS |
+| Ponytail quality gate | Implemented for agent code acceptance |
+| Workflow engine | Durable orchestration; not a second agent runtime |
+| SPA routing | `/api/*` never falls through to React `index.html` |
 
+Honest limits and live proof tables: **[docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md)** and **[docs/PRODUCTION_GATES.md](docs/PRODUCTION_GATES.md)**.
 
 ### Product surfaces
 
 | Area | Role |
 |------|------|
-| Brain + Loop | Plan/execute goals under UCIP |
-| Workers | Specialized personas + earned autonomy |
-| Workflow canvas | Node-based orchestration (scripts, webhooks, chains) |
-| Memory / Evidence | Durable audit and learning |
-| Spatial workspace | DevOS IDE, Copilot, Ghost Terminal, Agency Dashboard, command bar |
-| Files / Git / Search | Contextual overlays in the spatial shell |
+| Nuha (AICopilot) | Orchestrator chat + mission progress (real SSE statuses only) |
+| Spatial workspace | IDE (Monaco), workflow canvas, fleet, files, terminal |
+| Brain + providers | OmniRoute-native multi-provider LLM |
+| Workers / personas | Executable agent registry under governance |
+| Memory / graph | Postgres-backed when SoT enforced |
+| Evidence / audit | Durable proof and governance trail |
 
 ---
 
 ## Repository layout
 
 ```
-app.py, cli.py          Entry points
-api/routes/             HTTP API
-brain/                  LLM router & research
-cognitive/              Decomposer, coordinator, Ponytail
-workers/                WorkerRuntime + job queue
-execution/              Sandbox, scripts, search, terminal
-governance/             UCIP, identity, reliability, side effects
-chaos/                  Pure-logic chaos drills
-memory/                 Memory stores
-frontend/               Prebuilt SPA (served as-is)
-frontend-src/           React sources (optional rebuild)
-scripts/                install helpers, migrate, checklist, chaos
-docs/                   Status, staging drills, hardening
+app.py, cli.py              Entry points (SPA catch-all excludes /api/*)
+api/routes/                 HTTP API (auth, chat, agent, governance, …)
+brain/                      AgentRuntime, task store, tools
+cognitive/                  HAI, strategic/tactical, Ponytail hooks
+workers/                    Job queue / worker runtime
+execution/                  Sandbox, durable store, web_intel
+governance/                 UCIP, capabilities, evidence, observability
+memory/                     Memory + knowledge graph (Postgres SoT)
+frontend/                   Prebuilt SPA (served in production)
+frontend-src/               React sources
+supabase/migrations/        Schema authority (no app-time create_all on Postgres)
+ops/                        Install, migrate, systemd, env validate
+docs/                       Status, deploy, auth, SoT, gates
+tests/                      Pytest suite (isolated SQLite only when allowed)
 ```
 
 ---
@@ -117,26 +162,29 @@ docs/                   Status, staging drills, hardening
 
 | Variable | Purpose |
 |----------|---------|
-| `JWT_SECRET` | Auth + secrets vault seed (auto-generated on install) |
-| `DEFAULT_PROVIDER` | `omniroute` (default), `ollama` (optional), `openrouter`, `openai`, … |
-| `OMNIROUTE_BASE_URL` | OmniRoute OpenAI-compatible base (default `http://127.0.0.1:3000/api/v1`) |
-| `OMNIROUTE_DEFAULT_MODEL` | Optional default model id from OmniRoute catalog |
-| `OLLAMA_HOST` | Default `http://127.0.0.1:11434` |
-| `DATABASE_URL` | Default SQLite under `./data/` |
-| `AUTH_MODE` | `local` / `supabase` / `dual` |
-| `REDIS_URL` | Optional multi-node queue/quotas |
-| `DEVOS_MULTI_NODE` | `true` → Redis required for expensive quotas |
+| `REQUIRE_POSTGRES` | `true` in production (fail-closed) |
+| `DATABASE_URL` | Postgres/Supabase URL in production |
+| `JWT_SECRET` | Local DevOS JWT + vault seed |
+| `AUTH_MODE` | `dual` / `supabase` / `local` |
+| `DEFAULT_PROVIDER` | `omniroute` (default) |
+| `OMNIROUTE_BASE_URL` | OpenAI-compatible gateway |
+| `SUPABASE_URL` / `SUPABASE_ANON_KEY` | Auth + public-config |
+| `SUPABASE_KEY` | Server-side only |
+| `ALLOWED_ORIGINS` | CORS (JSON array or CSV; bracketed CSV accepted) |
+| `REDIS_URL` | Optional multi-node |
+
+Schema is **migration-owned** (`ops/apply_migrations.sh` → `scripts/apply_supabase_migrations.py`). Production Postgres must not rely on SQLAlchemy `create_all()`.
 
 ---
 
 ## Other ways to run
 
-**Manual (without install.sh)**
+**Manual**
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-lite.txt   # or requirements.txt
-cp -n .env.example .env 2>/dev/null || true
+cp -n .env.example .env
 ./devos start
 ```
 
@@ -144,63 +192,36 @@ cp -n .env.example .env 2>/dev/null || true
 
 ```bash
 docker compose up --build
-# http://localhost:8000
 ```
 
-Profiles (`micro` / `standard` / `enterprise`): see [DEPLOYMENT.md](DEPLOYMENT.md).
-
-**Rebuild UI** (optional)
+**Rebuild UI**
 
 ```bash
-cd frontend-src && npm install && npm run build
-cd .. && ./devos build
+cd frontend-src
+# optional: REACT_APP_SUPABASE_URL / REACT_APP_SUPABASE_ANON_KEY for baked-in client
+npm ci && npm run build
 ```
+
+If build-time env is omitted, the SPA loads Supabase via `GET /api/auth/public-config`.
 
 ---
 
-## CLI
-
-```bash
-./devos start      # API + UI on :8000
-./devos doctor     # environment check
-./devos version
-./devos audit      # UCIP audit tail
-```
-
----
-
-## Tests & quality gates
-
-```bash
-# Core unit tests (no live LLM required)
-python -m pytest tests/test_governance_freeze.py tests/test_reliability.py \
-  tests/test_failure_drills.py tests/test_chaos_harness.py -q
-
-# Chaos pure-logic matrix + report
-python scripts/run_chaos_drills.py --out data/chaos/latest_report.json
-
-# Deploy checklist (needs DB; set JWT_SECRET)
-python scripts/production_checklist.py
-```
-
----
-
-## Documentation
+## Documentation map
 
 | Doc | Contents |
 |-----|----------|
-| **[README.md](README.md)** | Install & overview (this file) |
-| [LICENSE](LICENSE) | PolyForm Shield 1.0.0 (unmodified) |
-| [NOTICE](NOTICE) | Copyright & required notice |
-| [TRADEMARKS.md](TRADEMARKS.md) | Trademark guidelines |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Docker profiles, env, production deploy |
-| [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) | What is implemented now |
-| [docs/STAGING_DRILLS.md](docs/STAGING_DRILLS.md) | Production readiness / chaos matrix |
-| [docs/HARDENING.md](docs/HARDENING.md) | Security hardening notes |
-| [PRODUCTION_PLAN.md](PRODUCTION_PLAN.md) | Longer production roadmap |
-| [plans/AGENCY_OS_MASTER_ARCHITECTURE.md](plans/AGENCY_OS_MASTER_ARCHITECTURE.md) | Architecture reference |
+| [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) | Implemented vs live-proven vs remaining gates |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | Production deploy path |
+| [docs/AUTH_AND_ISOLATION.md](docs/AUTH_AND_ISOLATION.md) | Auth, tenants, isolation |
+| [docs/SUPABASE_SOT.md](docs/SUPABASE_SOT.md) | Postgres single source of truth |
+| [docs/PRODUCTION_GATES.md](docs/PRODUCTION_GATES.md) | Release gates |
+| [docs/PRODUCTION_OPERATOR_CHECKLIST.md](docs/PRODUCTION_OPERATOR_CHECKLIST.md) | Operator steps on prime |
+| [docs/HAI_ARCHITECTURE.md](docs/HAI_ARCHITECTURE.md) | Hierarchical agent intelligence |
+| [docs/NUHA_RUNTIME.md](docs/NUHA_RUNTIME.md) | Nuha orchestration |
+| [docs/HARDENING.md](docs/HARDENING.md) | Security hardening |
+| [docs/STAGING_DRILLS.md](docs/STAGING_DRILLS.md) | Staging / chaos matrix |
 
-Historical plans under `plans/` and `record.md` may lag the code — prefer **README + CURRENT_STATUS** for “what runs today.”
+Historical plans under `plans/` may lag the code. Prefer **README + CURRENT_STATUS**.
 
 ---
 
@@ -208,13 +229,10 @@ Historical plans under `plans/` and `record.md` may lag the code — prefer **RE
 
 | Layer | Status |
 |-------|--------|
-| Governance v1 | Frozen |
-| Reliability architecture v1 | Frozen |
-| Next focus | Live staging drills on real Postgres/Redis when scaling out |
-
----
-
----
+| Governance / UCIP contracts | Stable — do not weaken for convenience |
+| Reliability (jobs, UNKNOWN, evidence) | Stable |
+| Auth dual-mode + Supabase-primary UI | Current |
+| Next focus | Live production gates on prime; operator checklist |
 
 ## License
 

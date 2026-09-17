@@ -92,3 +92,18 @@ PYTHONPATH=. python scripts/repo_deploy_simulation.py
 ## E2E acceptance record
 
 See [PRODUCTION_E2E_ACCEPTANCE.md](PRODUCTION_E2E_ACCEPTANCE.md).
+
+## Auth endpoints (post-deploy smoke)
+
+```bash
+# Must be application/json — never text/html (SPA must not capture /api/*)
+curl -sS -D- http://127.0.0.1:8000/api/auth/public-config -o /tmp/public-config.json
+head -c 300 /tmp/public-config.json; echo
+
+curl -sS http://127.0.0.1:8000/api/health
+```
+
+Configure `SUPABASE_URL` + `SUPABASE_ANON_KEY` on the server for browser login.
+Keep `SUPABASE_KEY` server-side only. Prefer `AUTH_MODE=dual` until Supabase-only is proven.
+
+See [AUTH_AND_ISOLATION.md](AUTH_AND_ISOLATION.md).

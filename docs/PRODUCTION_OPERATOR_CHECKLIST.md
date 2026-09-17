@@ -168,3 +168,14 @@ Store for the acceptance log:
 Automated CI / coding-agent sandbox results are **not** production proof.
 
 Mocks and `DEVOS_ORCH_FAKE_RUNTIME` are **forbidden** for production acceptance.
+
+## Auth smoke (after restart)
+
+```bash
+curl -sS -D- http://127.0.0.1:8000/api/auth/public-config -o /tmp/pc.json | head -15
+# Expect: HTTP 200, content-type application/json
+# Body: supabase_configured, supabase_url, supabase_anon_key (no service_role)
+python3 -c "import json;d=json.load(open('/tmp/pc.json')); assert 'supabase_anon_key' in d; print('auth public-config OK')"
+```
+
+Record: **PASS** / **FAIL** / **UNPROVEN**
