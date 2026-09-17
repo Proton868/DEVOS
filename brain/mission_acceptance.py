@@ -36,6 +36,8 @@ def evaluate_mission_acceptance(
     mission_id: Optional[str] = None,
     expected_user_id: Optional[str] = None,
     expected_mission_id: Optional[str] = None,
+    coding_evidence: Optional[dict] = None,
+    require_coding_evidence: bool = False,
 ) -> dict[str, Any]:
     """Return {ok, reason, synthesis_mode, status, checks}.
 
@@ -61,7 +63,31 @@ def evaluate_mission_acceptance(
         "has_evidence": bool(evidence_refs),
         "owner_match": True,
         "mission_match": True,
+        "coding_evidence_ok": None,
     }
+
+    coding_ev = coding_evidence
+    if require_coding_evidence or coding_ev is not None:
+        from brain.coding_evidence import validate_coding_evidence
+        ce_res = validate_coding_evidence(
+            coding_ev or {},
+            expected_mission_id=expected_mission_id or mission_id,
+            expected_user_id=expected_user_id or user_id,
+            require_commands=True,
+            require_files_if_success=bool(execution_ok),
+        )
+        checks["coding_evidence_ok"] = bool(ce_res.get("ok"))
+        checks["coding_evidence_reason"] = ce_res.get("reason")
+        if not ce_res.get("ok"):
+            return _fail(st, f"coding_evidence:{ce_res.get('reason')}", checks)
+        # Bind evidence ref from packet when refs empty
+        if coding_ev and isinstance(coding_ev, dict):
+            eid = coding_ev.get("evidence_id")
+            if eid and eid not in evidence_refs:
+                evidence_refs = list(evidence_refs) + [eid]
+                checks["has_evidence"] = True
+            if coding_ev.get("fabricated"):
+                return _fail(st, "coding_evidence:fabricated_evidence", checks)
 
     if expected_user_id and user_id and expected_user_id != user_id:
         checks["owner_match"] = False
