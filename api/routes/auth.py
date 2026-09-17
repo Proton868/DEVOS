@@ -164,37 +164,93 @@ def _jwks_client_for(jwks_url: str):
     return PyJWKClient(jwks_url, cache_keys=True, lifespan=300)
 
 
-def decode_supabase_token(token: str):
-    """Verify a Supabase-issued access token. Tries modern RS256/ES256
-    verification against Supabase's published JWKS first (no shared secret
-    needed — this is how current Supabase projects sign tokens), then falls
-    back to legacy HS256 + SUPABASE_JWT_SECRET for older Supabase projects
-    that still use a shared JWT secret. Returns the payload dict, or None if
-    neither verification path succeeds (or Supabase isn't configured)."""
-    if not settings.SUPABASE_URL:
+def _supabase_token_alg(token: str) -> str | None:
+    """Return the JWT alg claim from the unprotected header, or None."""
+    try:
+        header = jwt.get_unverified_header(token)
+        alg = header.get("alg")
+        return str(alg) if alg else None
+    except Exception:
         return None
 
-    jwks_url = f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json"
+
+def _decode_supabase_hs256(token: str):
+    """Verify HS256 Supabase access tokens with SUPABASE_JWT_SECRET only.
+
+    Never uses DevOS JWT_SECRET. Returns payload dict or None.
+    """
+    secret = (getattr(settings, "SUPABASE_JWT_SECRET", None) or "").strip()
+    if not secret:
+        return None
+    try:
+        return jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            audience="authenticated",
+            options={"require": ["exp", "sub"]},
+        )
+    except Exception as e:
+        logger.debug("[auth] Supabase HS256 verification failed: %s", type(e).__name__)
+        return None
+
+
+def _decode_supabase_jwks(token: str):
+    """Verify asymmetric Supabase tokens via project JWKS (RS256/ES256)."""
+    url = (settings.SUPABASE_URL or "").strip()
+    if not url:
+        return None
+    jwks_url = f"{url.rstrip('/')}/auth/v1/.well-known/jwks.json"
     try:
         signing_key = _jwks_client_for(jwks_url).get_signing_key_from_jwt(token)
         return jwt.decode(
-            token, signing_key.key,
+            token,
+            signing_key.key,
             algorithms=["RS256", "ES256"],
             audience="authenticated",
+            options={"require": ["exp", "sub"]},
         )
     except Exception as e:
-        logger.debug("[auth] Supabase JWKS verification failed, trying legacy HS256: %s", e)
+        logger.debug("[auth] Supabase JWKS verification failed: %s", type(e).__name__)
+        return None
 
-    if settings.SUPABASE_JWT_SECRET:
-        try:
-            return jwt.decode(
-                token, settings.SUPABASE_JWT_SECRET, algorithms=["HS256"],
-                audience="authenticated",
+
+def decode_supabase_token(token: str):
+    """Verify a Supabase-issued access token.
+
+    Ordering is driven by the token header ``alg``:
+    - HS256 → verify with ``SUPABASE_JWT_SECRET`` (Dashboard JWT Secret).
+      DevOS ``JWT_SECRET`` is never used.
+    - RS256/ES256 (or unknown) → verify against project JWKS, then HS256
+      fallback if ``SUPABASE_JWT_SECRET`` is set.
+
+    Returns the payload dict, or None if verification fails / not configured.
+    """
+    if not token or not (settings.SUPABASE_URL or "").strip():
+        return None
+
+    alg = (_supabase_token_alg(token) or "").upper()
+
+    # Prefer the path that matches the token's declared algorithm.
+    if alg == "HS256":
+        payload = _decode_supabase_hs256(token)
+        if payload is not None:
+            return payload
+        if not (getattr(settings, "SUPABASE_JWT_SECRET", None) or "").strip():
+            logger.warning(
+                "[auth] Supabase access token is HS256 but SUPABASE_JWT_SECRET is not set; "
+                "cannot verify. Set SUPABASE_JWT_SECRET to the Supabase Dashboard JWT Secret "
+                "(Settings → API). Do not use DevOS JWT_SECRET."
             )
-        except Exception as e:
-            logger.debug("[auth] Supabase legacy HS256 verification failed: %s", e)
+        return None
 
-    return None
+    payload = _decode_supabase_jwks(token)
+    if payload is not None:
+        return payload
+
+    # Asymmetric path failed — allow HS256 fallback when secret is configured
+    # (mixed projects / transitional tokens).
+    return _decode_supabase_hs256(token)
 
 
 def verify_any_token(token: str):

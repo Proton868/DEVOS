@@ -217,6 +217,14 @@ def _validate_startup_env():
                 "(never put the service_role key in SUPABASE_ANON_KEY)."
             )
 
+        jwt_sec = (getattr(settings, "SUPABASE_JWT_SECRET", None) or "").strip()
+        if (settings.SUPABASE_URL or "").strip() and not jwt_sec:
+            logger.warning(
+                "[startup] SUPABASE_JWT_SECRET is unset. HS256 Supabase access tokens "
+                "will fail verification until the Dashboard JWT Secret is configured. "
+                "JWKS (RS256/ES256) tokens still work when the project advertises them."
+            )
+
     if not getattr(settings, "AUTH_ENABLED", True) and strict:
         raise RuntimeError("[startup] AUTH_ENABLED must remain true in production")
 
