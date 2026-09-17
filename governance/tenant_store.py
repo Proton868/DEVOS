@@ -83,3 +83,42 @@ async def list_jobs_for_user(db, user_id, tenant_id=None, limit=100):
         return list(r.scalars().all())
     r = await db.execute(select(ExecutionJob).where(ExecutionJob.owner_id==user_id).order_by(ExecutionJob.created_at.desc()).limit(limit))
     return list(r.scalars().all())
+
+
+async def resolve_tenant_for_user(db, user, tenant_id: str | None) -> "Tenant":
+    """Return a tenant the user may access. Rejects foreign tenant_id (IDOR).
+
+    If tenant_id is None/empty/"default", returns personal tenant.
+    """
+    personal = await ensure_personal_tenant(db, user)
+    tid = (tenant_id or "").strip()
+    if not tid or tid in ("default", "personal", personal.id):
+        return personal
+    if not await is_tenant_member(db, user.id, tid):
+        from fastapi import HTTPException
+        raise HTTPException(403, detail={"code": "TENANT_FORBIDDEN", "message": "Not a member of this tenant"})
+    r = await db.execute(select(Tenant).where(Tenant.id == tid, Tenant.is_active == True))  # noqa: E712
+    row = r.scalar_one_or_none()
+    if row is None:
+        from fastapi import HTTPException
+        raise HTTPException(404, detail={"code": "TENANT_NOT_FOUND", "message": "Tenant not found"})
+    return row
+
+
+async def list_memberships_for_user(db, user_id: str) -> list[dict]:
+    r = await db.execute(
+        select(Membership, Tenant)
+        .join(Tenant, Tenant.id == Membership.tenant_id)
+        .where(Membership.user_id == user_id)
+    )
+    out = []
+    for mem, ten in r.all():
+        out.append({
+            "membership_id": mem.id,
+            "tenant_id": ten.id,
+            "tenant_name": ten.name,
+            "tenant_slug": ten.slug,
+            "role": mem.role,
+            "tier": ten.tier,
+        })
+    return out

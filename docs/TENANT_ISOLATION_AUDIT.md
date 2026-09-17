@@ -1,12 +1,17 @@
-# Tenant isolation audit — 2026-09-17
+# Tenant isolation audit — status
 
-Classification: **B** (app-layer safe; RLS completed in migrations). Production schema not verified in audit env.
+Classification: **B+** — app-layer personal isolation; RLS migrations completed for
+notes/documents/layouts; **production schema still unverified**.
 
-Migrations:
+Migrations (apply on staging/production):
+
 - `20260917110000_orm_sql_column_alignment.sql`
 - `20260917120000_tenant_isolation_rls_completion.sql`
+- `20260917180000_notes_documents_layouts_rls.sql`
 
-Apply on staging then verify `pg_policies`.
+Org multi-tenancy: **partial** (membership helpers + enterprise tenant_id gate).
+See `docs/SAAS_READINESS.md`.
 
-Full matrix, threat model, and remediation detail:
-see `docs/AUDIT_AND_TOOLCHAIN_RESULTS_2026-09-17.md`.
+Service role to browser: **CONFIRMED SAFE** (public-config design).
+
+Production-safe multi-tenant SaaS overall: **not certified** until live `pg_policies` verification.

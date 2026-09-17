@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from api.routes.auth import get_current_user
-from governance.tenant_store import ensure_personal_tenant
+from governance.tenant_store import ensure_personal_tenant, resolve_tenant_for_user, list_memberships_for_user
 from api.deps import tenant_ctx
 
 from core.database import get_db
@@ -28,13 +28,10 @@ async def rbac_check(
 ):
     """Check if the current user can perform a capability."""
     user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
+    tenant = await resolve_tenant_for_user(db, user, tenant_id)
     from governance.identity_context import IdentityContext, TenantTier
     from governance.rbac import evaluate_rbac
 
-    user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
-    # Read the user's actual trust tier from the database, defaulting to TENANT_USER
     actual_tier = TenantTier.TENANT_USER
     try:
         if hasattr(user, "trust_tier") and user.trust_tier:
@@ -44,7 +41,7 @@ async def rbac_check(
 
     identity = IdentityContext(
         actor_id=user.username if hasattr(user, "username") else "user",
-        tenant_id=tenant_id,
+        tenant_id=tenant.id,
         trust_tier=actual_tier,
     )
     result = evaluate_rbac(identity, capability)
@@ -198,3 +195,10 @@ async def marketplace_get(slug: str, request: Request, db=Depends(get_db)):
         raise HTTPException(404, f"Marketplace entry not found: {slug}")
     get_marketplace().record_download(slug)
     return {"entry": entry.to_dict()}
+
+@router.get("/tenants/mine")
+async def my_tenants(request: Request, db=Depends(get_db)):
+    """List tenants the authenticated user belongs to (personal + org memberships)."""
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    return {"memberships": await list_memberships_for_user(db, user.id)}
