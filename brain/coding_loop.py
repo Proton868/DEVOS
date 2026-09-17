@@ -73,6 +73,7 @@ class CodingLoopState:
     error: Optional[str] = None
     started_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
+    meta: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -91,8 +92,32 @@ class CodingLoopState:
             "error": self.error,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "meta": dict(self.meta or {}),
             "elapsed_s": (self.finished_at or time.time()) - self.started_at,
         }
+
+    @classmethod
+    def from_dict(cls, data: Optional[dict]) -> "CodingLoopState":
+        if not data:
+            return cls()
+        return cls(
+            stage=str(data.get("stage") or CodingStage.INSPECT.value),
+            attempt=int(data.get("attempt") or 0),
+            max_attempts=int(data.get("max_attempts") or DEFAULT_MAX_ATTEMPTS),
+            inspection=data.get("inspection"),
+            plan=data.get("plan"),
+            files_changed=list(data.get("files_changed") or []),
+            last_command=data.get("last_command"),
+            diagnosis=data.get("diagnosis"),
+            validation=data.get("validation"),
+            evidence_id=data.get("evidence_id"),
+            acceptance=data.get("acceptance"),
+            events=list(data.get("events") or [])[-100:],
+            error=data.get("error"),
+            started_at=float(data.get("started_at") or time.time()),
+            finished_at=data.get("finished_at"),
+            meta=dict(data.get("meta") or {}),
+        )
 
 
 @dataclass

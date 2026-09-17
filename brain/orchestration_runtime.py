@@ -49,6 +49,7 @@ class NodeExecutionResult:
     raw_terminal: Optional[dict] = None
     provider_failure: Optional[dict] = None
     commands: list = field(default_factory=list)
+    coding_loop: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return {
@@ -62,6 +63,7 @@ class NodeExecutionResult:
             "events_seen": list(self.events_seen or []),
             "provider_failure": self.provider_failure,
             "commands": list(self.commands or []),
+            "coding_loop": self.coding_loop,
         }
 
 
@@ -178,6 +180,66 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
     )
 
     result = NodeExecutionResult(success=False, status="running")
+    # Production coding path: CodingLoop drives inspect→…→accept (provisional)
+    try:
+        from brain.coding_loop_bridge import is_coding_objective, run_production_coding_loop, coding_loop_to_node_result
+        use_coding_loop = is_coding_objective(req.objective or "", req.persona_id or "")
+    except Exception:
+        use_coding_loop = False
+
+    if use_coding_loop:
+        resume_state = None
+        try:
+            from brain.coding_loop import CodingLoopState
+            if req.plan_id:
+                raw = await _load_coding_loop_state(req.plan_id, req.user_id)
+                if raw:
+                    resume_state = CodingLoopState.from_dict(raw)
+        except Exception:
+            resume_state = None
+
+        def _cancel():
+            return False  # AgentRuntime cancel flags handled inside attempt
+
+        try:
+            loop_state = await run_production_coding_loop(
+                runtime=runtime,
+                context=context,
+                objective=objective,
+                user_id=req.user_id,
+                project_id=req.workspace_id or "default",
+                mission_id=req.plan_id,
+                persona_id=req.persona_id or "",
+                agent_id=req.agent_id or "",
+                resume=resume_state,
+                cancel_check=_cancel,
+            )
+            mapped = coding_loop_to_node_result(loop_state)
+            result.success = bool(mapped.get("success"))
+            result.status = str(mapped.get("status") or "failed")
+            result.summary = str(mapped.get("summary") or "")[:2000]
+            result.files_changed = list(mapped.get("files_changed") or [])
+            result.tools_used = list(mapped.get("tools_used") or [])
+            result.commands = list(mapped.get("commands") or [])
+            result.error = mapped.get("error")
+            result.events_seen = list(mapped.get("events_seen") or [])
+            result.task_id = mapped.get("task_id")
+            result.coding_loop = mapped.get("coding_loop")
+            # Persist CodingLoopState on Mission.meta for resume (Postgres SoT)
+            try:
+                await _persist_coding_loop_state(
+                    mission_id=req.plan_id,
+                    user_id=req.user_id,
+                    loop_state=loop_state,
+                )
+            except Exception:
+                pass
+            return result
+        except Exception as e:
+            logger.exception("coding loop bridge failed; falling back to direct AgentRuntime")
+            result.error = f"coding_loop_error:{type(e).__name__}"
+            # fall through to direct runtime
+
     try:
         async for event in runtime.run(objective, context):
             et = (event or {}).get("type") or ""
