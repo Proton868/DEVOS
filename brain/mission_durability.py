@@ -21,6 +21,16 @@ PHASE_FAILED = "failed"
 PHASE_BLOCKED = "blocked"
 PHASE_CANCELLED = "cancelled"
 
+# Long-running coding mission lifecycle (see brain/mission_checkpoint.py)
+PHASE_QUEUED = "queued"
+PHASE_PLANNING = "planning"
+PHASE_EXECUTING = "executing"
+PHASE_WAITING = "waiting"
+PHASE_RETRYING = "retrying"
+PHASE_VALIDATING = "validating"
+PHASE_COMPLETED = "completed"
+PHASE_RECOVERY = "recovery"
+
 
 def scoped_idempotency_key(*, user_id: str, client_key: str, scope: str = "mission") -> str:
     """Owner-scoped idempotency key. Never global-only."""
@@ -119,8 +129,12 @@ def reconcile_mission_state(
     if execution_ok and not files:
         return {"action": "resume_execution", "target_status": "running", "reason": "no_artifact_yet"}
 
-    if st in ("delegated", "running", "pending", "plan_ready"):
-        return {"action": "resume_execution", "target_status": st or "running", "reason": "interrupted"}
+    if st in ("delegated", "running", "pending", "plan_ready",
+              "queued", "planning", "executing", "waiting", "retrying", "recovery"):
+        return {"action": "resume_execution", "target_status": st or "executing", "reason": "interrupted"}
+
+    if st == "validating":
+        return {"action": "resume_ponytail", "target_status": "validating", "reason": "validation_interrupted"}
 
     return {"action": "noop", "target_status": st, "reason": "unknown"}
 
