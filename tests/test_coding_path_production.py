@@ -122,3 +122,58 @@ def test_fabricated_coding_evidence_cannot_accept():
         },
     )
     assert acc["ok"] is False
+
+
+def test_run_command_in_project_exists_and_scopes():
+    import asyncio
+    from execution.runner import run_command_in_project
+    from execution.files import FileService
+
+    async def _run():
+        fs = FileService("cmduser", "cmdproj")
+        fs.write("a.txt", "ok\n")
+        r = await run_command_in_project("cmduser", "cmdproj", "cat a.txt", timeout_s=15)
+        assert r["ok"] is True
+        assert "ok" in r["stdout"]
+        bad = await run_command_in_project("..", "x", "echo hi")
+        assert bad["ok"] is False
+
+    asyncio.run(_run())
+
+
+def test_persist_coding_evidence_uses_real_chain_api():
+    from brain.coding_evidence import build_coding_evidence, persist_coding_evidence
+    from governance.evidence import EvidenceChainManager
+
+    ev = build_coding_evidence(
+        mission_id="m-persist-1",
+        project_id="p1",
+        user_id="u1",
+        agent_id="agent:code",
+        files_changed=["a.py"],
+        commands=[{"command": "true", "exit_code": 0, "ok": True}],
+        validation={"ok": True},
+        success=True,
+    )
+    eid = persist_coding_evidence(ev)
+    assert eid == ev.evidence_id
+    chain = EvidenceChainManager.load(f"coding-{ev.mission_id}")
+    assert chain is not None
+    assert len(chain.nodes) >= 1
+
+
+def test_file_only_coding_evidence_valid_without_commands():
+    from brain.coding_evidence import build_coding_evidence, validate_coding_evidence
+
+    ev = build_coding_evidence(
+        mission_id="m-files",
+        project_id="p",
+        agent_id="web",
+        files_changed=["index.html"],
+        commands=[],
+        validation={"ok": True, "structure_ok": True},
+        success=True,
+    )
+    res = validate_coding_evidence(ev, require_commands=True)
+    assert res["ok"] is True
+    assert res["checks"].get("commands_optional_file_mission") is True

@@ -121,8 +121,8 @@ const useOsStore = create((set, get) => ({
   setCodingMission: (snap) => set({ codingMission: snap || null }),
   mergeCodingMission: (partial) =>
     set((s) => {
+      if (partial == null) return { codingMission: null };
       const prev = s.codingMission || {};
-      if (!partial) return { codingMission: prev };
       const next = { ...prev, ...partial, success_implied: false };
       if (Array.isArray(partial.files_changed)) {
         const set = new Set([...(prev.files_changed || []), ...partial.files_changed]);

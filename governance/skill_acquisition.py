@@ -311,25 +311,29 @@ def requires_hitl(defn: SkillDefinition) -> bool:
 def _evidence(action: str, actor_id: str, status: str, metadata: dict) -> str:
     node_id = f"skillacq-{uuid.uuid4().hex[:12]}"
     try:
-        from governance.evidence import EvidenceNode, EvidenceChainManager
+        from governance.evidence import EvidenceChain, EvidenceChainManager
 
-        mgr = EvidenceChainManager()
-        chain = mgr.get_or_create_chain(
-            chain_id=f"skill-acq-{metadata.get('tenant_id', 'default')}",
-            label="skill_acquisition",
-        )
-        node = EvidenceNode(
-            node_id=node_id,
-            chain_id=chain.chain_id if hasattr(chain, "chain_id") else "skill-acq",
+        chain_id = f"skill-acq-{metadata.get('tenant_id') or metadata.get('user_id') or 'default'}"
+        chain = EvidenceChainManager.load(chain_id)
+        if chain is None:
+            chain = EvidenceChain(
+                chain_id=chain_id,
+                goal="skill_acquisition",
+                identity_context={
+                    "user_id": str(metadata.get("user_id") or ""),
+                    "actor_id": actor_id or "system",
+                    "tenant_id": str(metadata.get("tenant_id") or ""),
+                },
+            )
+        meta = {k: v for k, v in (metadata or {}).items() if k not in ("token", "password", "secret")}
+        meta["evidence_id"] = node_id
+        chain.add_node(
             action=action,
             actor_id=actor_id or "system",
             status=status,
-            metadata={k: v for k, v in metadata.items() if k not in ("token", "password", "secret")},
+            metadata=meta,
         )
-        if hasattr(chain, "add_node"):
-            chain.add_node(node)
-        elif hasattr(mgr, "append"):
-            mgr.append(node)
+        chain.save()
     except Exception as e:
         logger.debug("evidence write skipped: %s", type(e).__name__)
     try:

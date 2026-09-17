@@ -34,7 +34,7 @@ def test_html_scaffold_not_claimed_working_without_proof():
     async def runner(cmd, ctx):
         return {"ok": True, "exit_code": 0, "stdout": "ok", "stderr": "", "command": cmd}
 
-    result = asyncio.get_event_loop().run_until_complete(bootstrap_project(
+    result = asyncio.run(bootstrap_project(
         user_id="testuser",
         project_id="htmlproj1",
         project_name="Landing",
@@ -57,7 +57,7 @@ def test_python_install_failure_not_working():
             return {"ok": False, "exit_code": 1, "stdout": "", "stderr": "network error", "command": cmd}
         return {"ok": True, "exit_code": 0, "stdout": "", "stderr": "", "command": cmd}
 
-    result = asyncio.get_event_loop().run_until_complete(bootstrap_project(
+    result = asyncio.run(bootstrap_project(
         user_id="testuser",
         project_id="pyfail1",
         project_name="Svc",
@@ -77,7 +77,7 @@ def test_python_success_path():
     async def runner(cmd, ctx):
         return {"ok": True, "exit_code": 0, "stdout": "ok", "stderr": "", "command": cmd}
 
-    result = asyncio.get_event_loop().run_until_complete(bootstrap_project(
+    result = asyncio.run(bootstrap_project(
         user_id="testuser",
         project_id="pyok1",
         project_name="Svc",
@@ -100,7 +100,7 @@ def test_vite_template_files():
     async def runner(cmd, ctx):
         return {"ok": True, "exit_code": 0, "stdout": "", "stderr": "", "command": cmd}
 
-    result = asyncio.get_event_loop().run_until_complete(bootstrap_project(
+    result = asyncio.run(bootstrap_project(
         user_id="testuser",
         project_id="vite1",
         project_name="Web",
@@ -122,7 +122,7 @@ def test_repair_then_install():
             return {"ok": False, "exit_code": 1, "stdout": "", "stderr": "fail", "command": cmd}
         return {"ok": True, "exit_code": 0, "stdout": "ok", "stderr": "", "command": cmd}
 
-    result = asyncio.get_event_loop().run_until_complete(bootstrap_project(
+    result = asyncio.run(bootstrap_project(
         user_id="testuser",
         project_id="pyrepair1",
         project_name="Svc",
@@ -152,12 +152,12 @@ def test_nextjs_and_angular_detect_and_scaffold():
     async def runner(cmd, ctx):
         return {"ok": True, "exit_code": 0, "stdout": "", "stderr": "", "command": cmd}
 
-    r1 = asyncio.get_event_loop().run_until_complete(bootstrap_project(
+    r1 = asyncio.run(bootstrap_project(
         user_id="testuser", project_id="next1", project_name="N",
         toolchain="nextjs", run_install=False, run_build=False, command_runner=runner,
     ))
     assert "app/page.jsx" in r1.files_written
-    r2 = asyncio.get_event_loop().run_until_complete(bootstrap_project(
+    r2 = asyncio.run(bootstrap_project(
         user_id="testuser", project_id="ang1", project_name="A",
         toolchain="angular", run_install=False, run_build=False, command_runner=runner,
     ))

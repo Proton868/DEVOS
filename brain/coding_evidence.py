@@ -291,8 +291,12 @@ def validate_coding_evidence(
         return {"ok": False, "reason": "agent_missing", "checks": checks}
 
     if require_commands and not checks["has_commands"]:
-        # Failure evidence may still be useful with error-only, but acceptance needs commands
-        return {"ok": False, "reason": "commands_missing", "checks": checks}
+        # File-tool missions (create_file/apply_patch only) may have no shell commands.
+        # Allow when files + validation are present; still reject empty success claims.
+        if checks["has_files"] and checks["has_validation"]:
+            checks["commands_optional_file_mission"] = True
+        else:
+            return {"ok": False, "reason": "commands_missing", "checks": checks}
     if not checks["commands_have_exit_codes"] and checks["has_commands"]:
         return {"ok": False, "reason": "exit_codes_missing", "checks": checks}
 
@@ -340,34 +344,37 @@ def attach_acceptance(ev: CodingEvidence, decision: dict) -> CodingEvidence:
 
 
 def persist_coding_evidence(ev: CodingEvidence) -> str:
-    """Best-effort durable record via EvidenceChainManager; returns evidence_id."""
+    """Best-effort durable record via EvidenceChain; returns evidence_id."""
     try:
-        from governance.evidence import EvidenceNode, EvidenceChainManager
-        mgr = EvidenceChainManager()
-        chain = mgr.get_or_create_chain(
-            chain_id=f"coding-{ev.mission_id}",
-            label="coding_mission",
-        )
-        node = EvidenceNode(
-            node_id=ev.evidence_id,
-            chain_id=getattr(chain, "chain_id", f"coding-{ev.mission_id}"),
+        from governance.evidence import EvidenceChain, EvidenceChainManager
+        chain_id = f"coding-{ev.mission_id}" if ev.mission_id else None
+        chain = EvidenceChainManager.load(chain_id) if chain_id else None
+        if chain is None:
+            chain = EvidenceChain(
+                chain_id=chain_id,
+                goal=f"coding mission {ev.mission_id or ''}".strip(),
+                identity_context={
+                    "user_id": ev.user_id or "",
+                    "actor_id": ev.agent_id or "agent",
+                    "mission_id": ev.mission_id or "",
+                },
+            )
+        chain.add_node(
             action="coding.evidence",
             actor_id=ev.agent_id or "agent",
             status="success" if ev.success else "failed",
             metadata={
+                "evidence_id": ev.evidence_id,
                 "mission_id": ev.mission_id,
                 "project_id": ev.project_id,
                 "user_id": ev.user_id,
                 "tenant_id": ev.tenant_id,
-                "files_changed": ev.files_changed[:50],
+                "files_changed": list(ev.files_changed or [])[:50],
                 "command_count": len(ev.commands or []),
                 "fabricated": False,
             },
         )
-        if hasattr(chain, "add_node"):
-            chain.add_node(node)
-        if hasattr(mgr, "save_chain"):
-            mgr.save_chain(chain)
+        chain.save()
     except Exception:
         pass
     return ev.evidence_id

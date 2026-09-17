@@ -39,7 +39,7 @@ def test_detect_checks_python_project():
     async def runner(cmd, ctx):
         return {"ok": True, "exit_code": 0, "stdout": "", "stderr": "", "command": cmd}
 
-    asyncio.get_event_loop().run_until_complete(bootstrap_project(
+    asyncio.run(bootstrap_project(
         user_id="chkuser",
         project_id="pydetect",
         project_name="P",
@@ -61,7 +61,7 @@ def test_detect_checks_vite_project():
     async def runner(cmd, ctx):
         return {"ok": True, "exit_code": 0, "stdout": "", "stderr": "", "command": cmd}
 
-    asyncio.get_event_loop().run_until_complete(bootstrap_project(
+    asyncio.run(bootstrap_project(
         user_id="chkuser",
         project_id="vitedetect",
         project_name="V",
@@ -83,7 +83,7 @@ def test_successful_build():
         return {"ok": True, "exit_code": 0, "stdout": "ok", "stderr": "", "command": cmd}
 
     check = CheckCommand(kind=CheckKind.BUILD, command="npm run build", adapter="vite")
-    result = asyncio.get_event_loop().run_until_complete(run_check(check, runner=runner))
+    result = asyncio.run(run_check(check, runner=runner))
     assert result.ok is True
     assert result.failure is None
 
@@ -99,7 +99,7 @@ def test_failed_build_parses():
         }
 
     check = CheckCommand(kind=CheckKind.BUILD, command="npm run build", adapter="vite")
-    result = asyncio.get_event_loop().run_until_complete(run_check(check, runner=runner))
+    result = asyncio.run(run_check(check, runner=runner))
     assert result.ok is False
     assert result.failure is not None
     assert "ELIFECYCLE" in result.failure.error_codes or result.failure.likely_files
@@ -130,12 +130,12 @@ def test_debug_loop_success_after_repair():
     async def boot_runner(cmd, ctx):
         return {"ok": True, "exit_code": 0, "stdout": "", "stderr": "", "command": cmd}
 
-    asyncio.get_event_loop().run_until_complete(bootstrap_project(
+    asyncio.run(bootstrap_project(
         user_id="chkuser", project_id="repairloop", project_name="R",
         toolchain="python", run_install=False, run_build=False, command_runner=boot_runner,
     ))
     fs = FileService("chkuser", "repairloop")
-    loop = asyncio.get_event_loop().run_until_complete(debug_check_loop(
+    loop = asyncio.run(debug_check_loop(
         fs=fs,
         kind=CheckKind.TEST,
         runner=runner_wrap,
@@ -164,12 +164,12 @@ def test_debug_loop_exhausted():
     async def boot_runner(cmd, ctx):
         return {"ok": True, "exit_code": 0, "stdout": "", "stderr": "", "command": cmd}
 
-    asyncio.get_event_loop().run_until_complete(bootstrap_project(
+    asyncio.run(bootstrap_project(
         user_id="chkuser", project_id="exhaustloop", project_name="E",
         toolchain="python", run_install=False, run_build=False, command_runner=boot_runner,
     ))
     fs = FileService("chkuser", "exhaustloop")
-    loop = asyncio.get_event_loop().run_until_complete(debug_check_loop(
+    loop = asyncio.run(debug_check_loop(
         fs=fs,
         kind="test",
         runner=runner,
@@ -185,7 +185,7 @@ def test_nextjs_angular_adapters_detected():
     async def runner(cmd, ctx):
         return {"ok": True, "exit_code": 0, "stdout": "", "stderr": "", "command": cmd}
 
-    asyncio.get_event_loop().run_until_complete(bootstrap_project(
+    asyncio.run(bootstrap_project(
         user_id="chkuser", project_id="nextchk", project_name="N",
         toolchain="nextjs", run_install=False, run_build=False, command_runner=runner,
     ))

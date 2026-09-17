@@ -55,8 +55,9 @@ def test_build_includes_required_fields():
 
 
 def test_incomplete_missing_commands_rejected():
-    ev = _full_evidence(commands=[], success=True)
-    res = validate_coding_evidence(ev, require_commands=True)
+    # Without files+validation, missing commands still fail closed
+    ev = _full_evidence(commands=[], files_changed=[], artifacts=[], validation=None, success=False)
+    res = validate_coding_evidence(ev, require_commands=True, require_files_if_success=False)
     assert res["ok"] is False
     assert res["reason"] == "commands_missing"
 

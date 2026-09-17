@@ -243,3 +243,119 @@ class ExecutionLayer:
         )
         stdout, _ = await proc.communicate()
         return [line.split("==")[0] for line in stdout.decode().splitlines() if "==" in line]
+
+
+
+async def run_command_in_project(
+    user_id: str,
+    project_id: str,
+    command: str,
+    *,
+    timeout_s: int = 120,
+) -> dict:
+    """Run a shell command scoped to a user project root.
+
+    Workspace-safe: cwd is data/projects/{user_id}/{project_id}.
+    Does not authorize UCIP — callers must already be on a governed path.
+    Returns {ok, exit_code, stdout, stderr, command, duration_ms, status}.
+    """
+    import re
+    from execution.files import PROJECTS_DIR, PathViolation, _safe_scope_segment
+
+    if not command or not str(command).strip():
+        return {
+            "ok": False,
+            "exit_code": 2,
+            "stdout": "",
+            "stderr": "empty command",
+            "command": command or "",
+            "status": "failed",
+        }
+    # Refuse obvious path escapes in the command string
+    cmd = str(command).strip()
+    if "\x00" in cmd:
+        return {"ok": False, "exit_code": 2, "stdout": "", "stderr": "invalid command", "command": cmd, "status": "failed"}
+
+    try:
+        uid = _safe_scope_segment(user_id, label="user_id")
+        pid = _safe_scope_segment(project_id, label="project_id")
+    except PathViolation as e:
+        return {
+            "ok": False,
+            "exit_code": 2,
+            "stdout": "",
+            "stderr": str(e),
+            "command": cmd,
+            "status": "failed",
+        }
+
+    root = (PROJECTS_DIR / uid / pid).resolve()
+    base = PROJECTS_DIR.resolve()
+    try:
+        root.relative_to(base)
+    except ValueError:
+        return {
+            "ok": False,
+            "exit_code": 2,
+            "stdout": "",
+            "stderr": "project root escapes projects directory",
+            "command": cmd,
+            "status": "failed",
+        }
+    root.mkdir(parents=True, exist_ok=True)
+
+    timeout = max(1, min(int(timeout_s or 120), 600))
+    started = time.monotonic()
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            cwd=str(root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+                await proc.communicate()
+            except Exception:
+                pass
+            return {
+                "ok": False,
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": f"command timed out after {timeout}s",
+                "command": cmd,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "status": "timeout",
+            }
+        stdout = stdout_b.decode("utf-8", errors="replace")
+        stderr = stderr_b.decode("utf-8", errors="replace")
+        MAX = 50_000
+        if len(stdout) > MAX:
+            stdout = stdout[-MAX:] + f"\n[...truncated to last {MAX} chars]"
+        if len(stderr) > MAX:
+            stderr = stderr[-MAX:] + f"\n[...truncated]"
+        code = int(proc.returncode if proc.returncode is not None else 1)
+        return {
+            "ok": code == 0,
+            "exit_code": code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "command": cmd,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "status": "success" if code == 0 else "failed",
+        }
+    except Exception as e:
+        logger.warning("run_command_in_project failed: %s", type(e).__name__)
+        return {
+            "ok": False,
+            "exit_code": 127,
+            "stdout": "",
+            "stderr": f"runner_error:{type(e).__name__}",
+            "command": cmd,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "status": "failed",
+        }

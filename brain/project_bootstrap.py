@@ -288,22 +288,26 @@ class BootstrapResult:
 def _evidence(action: str, actor: str, status: str, meta: dict) -> str:
     eid = f"bootstrap-{uuid.uuid4().hex[:12]}"
     try:
-        from governance.evidence import EvidenceNode, EvidenceChainManager
-        mgr = EvidenceChainManager()
-        chain = mgr.get_or_create_chain(
-            chain_id=f"bootstrap-{meta.get('tenant_id', 'default')}",
-            label="project_bootstrap",
-        )
-        node = EvidenceNode(
-            node_id=eid,
-            chain_id=getattr(chain, "chain_id", "bootstrap"),
+        from governance.evidence import EvidenceChain, EvidenceChainManager
+        chain_id = f"bootstrap-{meta.get('tenant_id') or meta.get('user_id') or 'default'}"
+        chain = EvidenceChainManager.load(chain_id)
+        if chain is None:
+            chain = EvidenceChain(
+                chain_id=chain_id,
+                goal="project_bootstrap",
+                identity_context={
+                    "user_id": str(meta.get("user_id") or ""),
+                    "actor_id": actor or "agent",
+                    "tenant_id": str(meta.get("tenant_id") or ""),
+                },
+            )
+        chain.add_node(
             action=action,
             actor_id=actor or "agent",
             status=status,
-            metadata=meta,
+            metadata={**dict(meta or {}), "evidence_id": eid},
         )
-        if hasattr(chain, "add_node"):
-            chain.add_node(node)
+        chain.save()
     except Exception:
         pass
     return eid
