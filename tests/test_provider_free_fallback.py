@@ -15,7 +15,9 @@ def test_openrouter_default_model_is_free():
     assert "OPENROUTER_DEFAULT_MODEL" in llm
     assert "openrouter/free" in llm
     assert "_model_candidates_for_provider" in llm
-    assert "rate-limited (retryable)" in llm or "rate-limited" in llm
+    routing = (ROOT / "brain" / "provider_routing.py").read_text()
+    assert "rate_limited" in routing
+    assert "route_chat_with_fallback" in llm or "route_chat_with_fallback" in routing
 
 
 def test_classify_429_retryable_isolated():
@@ -61,7 +63,7 @@ def test_stream_chat_429_falls_back_to_next_provider():
     brain._model_candidates_for_provider = fake_models
     brain._all_providers = lambda: ["openrouter", "omniroute"]
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         brain.stream_chat([{"role": "user", "content": "hi"}], allow_fallback=True)
     )
     assert out == "ok-from-omniroute"
@@ -91,7 +93,7 @@ def test_stream_chat_all_rate_limited_raises_exhausted_retryable():
     brain._all_providers = lambda: ["openrouter", "omniroute"]
 
     try:
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             brain.stream_chat([{"role": "user", "content": "x"}], allow_fallback=True)
         )
         assert False, "expected ProviderExhaustedError"
@@ -120,7 +122,7 @@ def test_omniroute_model_candidates_prefer_free():
     with patch("brain.llm.settings") as st:
         st.OMNIROUTE_DEFAULT_MODEL = ""
         st.OPENROUTER_DEFAULT_MODEL = "openrouter/free"
-        cands = asyncio.get_event_loop().run_until_complete(
+        cands = asyncio.run(
             brain._model_candidates_for_provider("omniroute")
         )
     assert cands[0] == "vendor/free-small"
@@ -137,7 +139,7 @@ def test_openrouter_candidates_only_free_default():
     brain.user_id = None
     with patch("brain.llm.settings") as st:
         st.OPENROUTER_DEFAULT_MODEL = "openrouter/free"
-        cands = asyncio.get_event_loop().run_until_complete(
+        cands = asyncio.run(
             brain._model_candidates_for_provider("openrouter")
         )
     assert cands == ["openrouter/free"]

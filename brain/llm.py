@@ -68,7 +68,9 @@ def classify_provider_http_status(code: int) -> dict:
         return {"retryable": True, "category": "transient", "http_status": code}
     if code in (401, 403):
         return {"retryable": False, "category": "auth", "http_status": code}
-    if code in (400, 404, 422):
+    if code == 404:
+        return {"retryable": False, "category": "model_unavailable", "http_status": code}
+    if code in (400, 422):
         return {"retryable": False, "category": "client", "http_status": code}
     if 500 <= code < 600:
         return {"retryable": True, "category": "server", "http_status": code}
@@ -654,13 +656,14 @@ class BrainLLM:
             try:
                 models = await self.list_models("omniroute")
                 free_ids = [m["id"] for m in (models or []) if m.get("free") and m.get("id")]
-                any_ids = [m["id"] for m in (models or []) if m.get("id")]
-                for mid in free_ids + any_ids:
+                paid_ids = [m["id"] for m in (models or []) if m.get("id") and not m.get("free")]
+                # Free candidates before paid/non-free
+                for mid in free_ids + paid_ids:
                     if mid and mid not in ordered:
                         ordered.append(mid)
             except Exception:
                 pass
-            return ordered or [explicit] if explicit else ordered
+            return ordered if ordered else ([explicit] if explicit else ordered)
         # Other providers: single default from call path / self.model
         if self.model:
             return [self.model]
@@ -685,86 +688,34 @@ class BrainLLM:
         finally:
             self.model = prev
 
-    async def stream_chat(self, messages: list[dict], *, allow_fallback: bool = True) -> str:
-        """Call the configured provider (and optionally fall back).
+    async def stream_chat(
+        self,
+        messages: list[dict],
+        *,
+        allow_fallback: bool = True,
+        free_only: bool = True,
+        attempt_state: dict | None = None,
+        mission_id: str | None = None,
+    ) -> str:
+        """Call the configured provider with production free-model fallback.
 
-        Rate-limited (HTTP 429) responses are retryable provider exhaustion for
-        that provider/model only: try other models (OmniRoute free catalog) and
-        other configured providers. Never returns a synthetic success string.
-        On total failure raises ProviderExhaustedError.
+        OpenRouter uses openrouter/free. OmniRoute prefers free catalog models.
+        HTTP 429 rotates candidates (does not declare exhaustion after one 429).
+        Auth failures skip the provider. Secrets are redacted in error state.
+        Raises ProviderExhaustedError when every candidate fails — never success.
         """
-        primary = self.provider
-        providers = [primary]
-        if allow_fallback:
-            rest = [p for p in self._all_providers() if p != primary]
-            # Prefer OmniRoute as routing/fallback layer when configured
-            if "omniroute" in rest:
-                rest = ["omniroute"] + [p for p in rest if p != "omniroute"]
-            providers = [primary] + rest
+        from brain.provider_routing import ProviderAttemptState, route_chat_with_fallback
 
-        last_error = None
-        tried: list[str] = []
-        last_http_status = None
-        last_retryable = None
-        last_category = None
-        last_provider = None
-        last_model = None
-        saw_rate_limit = False
-
-        for provider in providers:
-            models = await self._model_candidates_for_provider(provider)
-            if not models:
-                models = [""]
-            for model in models:
-                label = f"{provider}:{model or 'default'}"
-                tried.append(label)
-                try:
-                    return await self._call_with_model(provider, messages, model)
-                except Exception as e:
-                    code = self._extract_http_status(e)
-                    meta = classify_provider_http_status(code) if code else {
-                        "retryable": self._is_rate_limited(e),
-                        "category": "rate_limited" if self._is_rate_limited(e) else "error",
-                        "http_status": code,
-                    }
-                    last_error = f"{label}: {type(e).__name__}: {e}"
-                    self.last_error = last_error
-                    last_http_status = meta.get("http_status")
-                    last_retryable = meta.get("retryable")
-                    last_category = meta.get("category")
-                    last_provider = provider
-                    last_model = model or getattr(self, "model", None)
-                    if self._is_rate_limited(e) or meta.get("category") == "rate_limited":
-                        saw_rate_limit = True
-                        logger.warning(
-                            "Chat provider %s model %s rate-limited (retryable); trying next",
-                            provider, model or "default",
-                        )
-                        continue
-                    # Non-retryable for this model: still try other models/providers
-                    logger.warning(
-                        "Chat provider %s failed (%s); trying next",
-                        label, type(e).__name__,
-                    )
-                    # Auth failures on a provider: skip remaining models for that provider
-                    if code in (401, 403):
-                        break
-                    continue
-
-        detail = last_error or "no providers attempted"
-        if saw_rate_limit and last_category is None:
-            last_category = "rate_limited"
-            last_retryable = True
-            last_http_status = last_http_status or 429
-        raise ProviderExhaustedError(
-            f"All providers failed. Last error: {detail}",
-            last_error=detail,
-            providers_tried=tried,
-            http_status=last_http_status,
-            retryable=last_retryable if last_retryable is not None else saw_rate_limit,
-            provider=last_provider,
-            model=last_model,
-            category=last_category or ("rate_limited" if saw_rate_limit else None),
+        state = ProviderAttemptState.from_dict(attempt_state) if attempt_state else ProviderAttemptState()
+        if mission_id:
+            state.mission_id = mission_id
+        state.preferred_provider = self.provider
+        return await route_chat_with_fallback(
+            self,
+            messages,
+            allow_fallback=allow_fallback,
+            free_only=free_only,
+            state=state,
         )
 
     async def list_models(self, provider: Optional[str] = None) -> list[dict]:
