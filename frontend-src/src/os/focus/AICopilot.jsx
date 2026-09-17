@@ -4,6 +4,8 @@
  */
 import NuhaEdgeControls from "./NuhaEdgeControls";
 import NuhaTaskProgress from "./NuhaTaskProgress";
+import CodingMissionPanel from "./CodingMissionPanel";
+import { mergeCodingSnapshot } from "./codingMissionLogic";
 import React, { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -32,7 +34,7 @@ export default function AICopilot({ floating = false }) {
     copilot, closeCopilot, nodes, editor, chatMode, toggleChatMode,
     activePersonaId, setActivePersona, openPersonaProfile,
     nuhaMode, setActivePlanId, setOrchestrationStatus, applyOrchestrationPlan,
-    orchestrationStatus,
+    orchestrationStatus, mergeCodingMission, codingMission,
   } = useOsStore();
   const [pos, setPos] = useState({ x: null, y: null });
   const nuhaHostRef = useRef(null);
@@ -45,6 +47,7 @@ export default function AICopilot({ floating = false }) {
   const [streaming, setStreaming] = useState(false);
   const [taskStartedAt, setTaskStartedAt] = useState(null);
   const [seenStatuses, setSeenStatuses] = useState([]);
+  const [codingSnap, setCodingSnap] = useState(null);
   const [taskDetail, setTaskDetail] = useState(null);
   const [taskHeadline, setTaskHeadline] = useState(null);
   const [personaMeta, setPersonaMeta] = useState({ name: "Nuha", id: "nuha" });
@@ -137,6 +140,8 @@ export default function AICopilot({ floating = false }) {
     setStreamState("open");
     setTaskStartedAt(Date.now());
     setSeenStatuses([]);
+      setCodingSnap(null);
+      try { useOsStore.getState().setCodingMission?.(null); } catch (_) {}
     setTaskDetail(null);
     setTaskHeadline(text.length > 120 ? `${text.slice(0, 120)}…` : text);
     try { abortRef.current?.abort(); } catch (_) {}
@@ -230,6 +235,14 @@ export default function AICopilot({ floating = false }) {
           } catch (_) { /* store optional */ }
         }
         // Truthful lifecycle + artifact → IDE/Preview
+        if (evt.coding) {
+          setCodingSnap((prev) => mergeCodingSnapshot(prev, evt.coding));
+          try { mergeCodingMission?.(evt.coding); } catch (_) {}
+        }
+        if (evt.status === "failed" || evt.status === "cancelled") {
+          setCodingSnap((prev) => mergeCodingSnapshot(prev, { status: evt.status, error: evt.error, acceptance: { ok: false, reason: evt.status } }));
+          try { mergeCodingMission?.({ status: evt.status, error: evt.error, acceptance: { ok: false, reason: evt.status } }); } catch (_) {}
+        }
         if (evt.status && ["planning","plan_created","delegating","worker_completed","validation_started","validation_completed","artifact_created","agent_progress","failed","cancelled","completed","responding"].includes(evt.status)) {
           try {
             setSeenStatuses((prev) => (prev.includes(evt.status) ? prev : [...prev, evt.status]));
@@ -395,6 +408,7 @@ export default function AICopilot({ floating = false }) {
         <NuhaTaskProgress
           currentStatus={orchestrationStatus}
           seenStatuses={seenStatuses}
+          coding={codingSnap || codingMission}
           active={streaming}
           startedAt={taskStartedAt}
           personaName={personaMeta.name}

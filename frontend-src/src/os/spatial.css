@@ -2192,3 +2192,19 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
   .sp-nuha-task { padding: 10px; }
   .sp-nuha-task-desc { font-size: 11px; }
 }
+
+/* Coding mission panel (SSE-driven) */
+.sp-coding-mission { margin-top: 10px; padding: 10px; border-radius: 10px; background: rgba(20,24,30,0.55); border: 1px solid rgba(255,255,255,0.06); font-size: 12px; }
+.sp-coding-mission.is-failed { border-color: rgba(255,80,80,0.35); }
+.sp-coding-mission-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.sp-coding-mission-title { font-weight: 600; color: #e8eaed; }
+.sp-coding-mission-badge { margin-left: auto; text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; padding: 2px 6px; border-radius: 999px; background: rgba(0,255,179,0.12); color: #00ffb3; }
+.sp-coding-mission-badge.st-failed, .sp-coding-mission-badge.st-cancelled { background: rgba(255,80,80,0.15); color: #ff8a8a; }
+.sp-coding-mission-badge.st-pending_acceptance { background: rgba(255,200,80,0.12); color: #ffc850; }
+.sp-coding-mission-grid { display: grid; grid-template-columns: 88px 1fr; gap: 4px 10px; margin: 0; }
+.sp-coding-mission-grid dt { color: rgba(255,255,255,0.45); }
+.sp-coding-mission-grid dd { margin: 0; color: #e8eaed; word-break: break-word; }
+.sp-coding-mission-grid .mono { font-family: ui-monospace, monospace; font-size: 11px; }
+.sp-coding-mission-grid .err { color: #ff8a8a; }
+.sp-coding-file-list { margin: 0; padding-left: 1.1em; }
+.sp-coding-mission-log { margin: 8px 0 0; max-height: 120px; overflow: auto; padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.35); font-size: 11px; color: rgba(255,255,255,0.7); }

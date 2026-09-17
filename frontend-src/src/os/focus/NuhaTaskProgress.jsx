@@ -3,6 +3,7 @@
  * Does not invent backend steps, percentages, or fake activity.
  */
 import React, { useEffect, useMemo, useState } from "react";
+import CodingMissionPanel from "./CodingMissionPanel";
 import {
   PHASE_DEFS,
   refineStates,
@@ -33,6 +34,7 @@ export default function NuhaTaskProgress({
   headline = null,
   detail = null,
   streamState = null,
+  coding = null,
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -123,6 +125,7 @@ export default function NuhaTaskProgress({
       {detail && detail !== description && (
         <div className="sp-nuha-task-detail">{detail}</div>
       )}
+      <CodingMissionPanel coding={coding} missionStatus={currentStatus} />
     </div>
   );
 }

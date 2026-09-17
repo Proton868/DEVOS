@@ -116,6 +116,24 @@ const useOsStore = create((set, get) => ({
   // Live mission snapshot for canvas glow + Agency Dashboard (not a second shell)
   orchestrationMission: null, // { planId, status, goal, nodes[], edges[], updatedAt }
   setOrchestrationMission: (mission) => set({ orchestrationMission: mission || null }),
+  // Durable coding-mission snapshot (SSE-driven; survives panel focus changes)
+  codingMission: null,
+  setCodingMission: (snap) => set({ codingMission: snap || null }),
+  mergeCodingMission: (partial) =>
+    set((s) => {
+      const prev = s.codingMission || {};
+      if (!partial) return { codingMission: prev };
+      const next = { ...prev, ...partial, success_implied: false };
+      if (Array.isArray(partial.files_changed)) {
+        const set = new Set([...(prev.files_changed || []), ...partial.files_changed]);
+        next.files_changed = Array.from(set).slice(0, 50);
+      }
+      if (Array.isArray(partial.artifacts)) {
+        const set = new Set([...(prev.artifacts || []), ...partial.artifacts]);
+        next.artifacts = Array.from(set).slice(0, 30);
+      }
+      return { codingMission: next };
+    }),
   applyOrchestrationPlan: (plan) => {
     if (!plan) return set({ orchestrationMission: null });
     const nodes = plan.nodes || (plan.steps || []).map((s) => ({

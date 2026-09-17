@@ -424,6 +424,39 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                             "round": item.get("round"),
                             "persona_key": item.get("persona_key"),
                         }
+                        # Optional coding snapshot from delegation progress (existing SSE)
+                        try:
+                            from brain.coding_progress import build_coding_progress
+                            coding = build_coding_progress(
+                                mission_id=item.get("mission_id"),
+                                task_id=item.get("task_id"),
+                                plan_id=plan.id,
+                                project_id=item.get("project_id"),
+                                status=st,
+                                agent_id=item.get("agent_id") or item.get("persona_key"),
+                                persona_id=item.get("persona_key"),
+                                current_task=item.get("current_task") or item.get("phase"),
+                                files_changed=item.get("files_changed") or item.get("files"),
+                                command=item.get("command"),
+                                command_exit_code=item.get("exit_code"),
+                                command_ok=item.get("command_ok"),
+                                command_stdout_tail=item.get("stdout"),
+                                command_stderr_tail=item.get("stderr"),
+                                check_kind=item.get("check_kind"),
+                                check_status=item.get("check_status"),
+                                provider=item.get("provider"),
+                                model=item.get("model"),
+                                retry_count=item.get("retry_count"),
+                                fallback_provider=item.get("fallback_provider"),
+                                validation=item.get("validation"),
+                                artifacts=item.get("artifacts"),
+                                error=item.get("error"),
+                                evidence_id=item.get("evidence_id"),
+                            )
+                            if coding:
+                                prog["coding"] = coding
+                        except Exception:
+                            pass
                         yield f"data: {json.dumps(prog)}\n\n"
                         await asyncio.sleep(0)
                     await mission_task
@@ -494,11 +527,33 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                         "website_validation": website_validation,
                     }
                     if truth["ok"]:
-                        yield f"data: {json.dumps({'status': 'artifact_created', 'session_id': session.id, 'files': files, 'entry_point': ep, 'execution_path': 'A2A_DELEGATION', 'mission_id': dres.mission_id, 'plan_id': plan.id})}\n\n"
+                        _art = {"status": "artifact_created", "session_id": session.id, "files": files, "entry_point": ep, "execution_path": "A2A_DELEGATION", "mission_id": dres.mission_id, "plan_id": plan.id}
+                        try:
+                            from brain.coding_progress import build_coding_progress
+                            _art["coding"] = build_coding_progress(
+                                mission_id=dres.mission_id, plan_id=plan.id, status="artifact_created",
+                                files_changed=files, artifacts=[ep] if ep else files,
+                                validation=website_validation, acceptance=truth,
+                                evidence_id=(dres.evidence_refs or [None])[0] if getattr(dres, "evidence_refs", None) else None,
+                                persona_id=getattr(dres, "persona_key", None),
+                            )
+                        except Exception:
+                            pass
+                        yield f"data: {json.dumps(_art)}\n\n"
                         if website_validation:
                             yield f"data: {json.dumps({'status': 'validation_completed', 'session_id': session.id, 'validation': website_validation})}\n\n"
                     else:
-                        yield f"data: {json.dumps({'status': 'failed', 'session_id': session.id, 'phase': 'mission_not_accepted', 'error': (dres.error or truth.get('status') or 'failed')[:200], 'mission_id': dres.mission_id, 'plan_id': plan.id})}\n\n"
+                        _fail = {"status": "failed", "session_id": session.id, "phase": "mission_not_accepted", "error": (dres.error or truth.get("status") or "failed")[:200], "mission_id": dres.mission_id, "plan_id": plan.id}
+                        try:
+                            from brain.coding_progress import build_coding_progress
+                            _fail["coding"] = build_coding_progress(
+                                mission_id=dres.mission_id, plan_id=plan.id, status="failed",
+                                files_changed=files, error=_fail["error"], acceptance=truth,
+                                persona_id=getattr(dres, "persona_key", None),
+                            )
+                        except Exception:
+                            pass
+                        yield f"data: {json.dumps(_fail)}\n\n"
                 except Exception as me:
                     orch_result = {
                         "ok": False,

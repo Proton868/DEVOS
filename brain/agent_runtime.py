@@ -1563,7 +1563,42 @@ class AgentRuntime:
 
         ok = result.get("exit_code", 1) == 0
         event_type = "agent.test_result" if name == "run_tests" else "agent.command_output"
-        return {
+        check_kind = None
+        if name == "run_tests":
+            check_kind = "test"
+        elif name == "run_build":
+            check_kind = "build"
+        elif name == "run_linter":
+            check_kind = "lint"
+        coding = None
+        try:
+            from brain.coding_progress import build_coding_progress
+            task = getattr(self, "_current_task", None)
+            files = []
+            if task and getattr(task, "files_changed", None):
+                files = list(task.files_changed or [])
+            coding = build_coding_progress(
+                task_id=getattr(task, "id", None) if task else None,
+                project_id=self.project_id,
+                workspace_id=getattr(self, "workspace_id", None) or "default",
+                status="agent_progress",
+                agent_id=self.persona_id or self.user_id,
+                persona_id=self.persona_id,
+                current_task=cmd[:200],
+                files_changed=files,
+                command=cmd,
+                command_exit_code=result.get("exit_code"),
+                command_ok=ok,
+                command_stdout_tail=(result.get("stdout") or "")[-500:],
+                command_stderr_tail=(result.get("stderr") or "")[-500:],
+                check_kind=check_kind,
+                check_status="passed" if ok else "failed",
+                provider=self.provider,
+                model=self.model,
+            )
+        except Exception:
+            coding = None
+        out = {
             "ok": ok,
             "command": cmd,
             "exit_code": result.get("exit_code"),
@@ -1572,6 +1607,9 @@ class AgentRuntime:
             "status": "succeeded" if ok else "failed",
             "_event_hint": event_type,
         }
+        if coding:
+            out["coding"] = coding
+        return out
 
     async def _subprocess(self, cmd: str, timeout: int) -> dict:
         """Run shell command under project root with cancel/timeout kill ownership.
