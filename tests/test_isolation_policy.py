@@ -247,6 +247,7 @@ def test_select_backend_prefers_docker_when_enabled():
 
 
 def test_select_backend_bwrap_restricted():
+    """bwrap is selected only when the operational probe succeeds (not mere binary presence)."""
     with mock.patch("execution.isolation._use_docker", return_value=False):
         def which(*names):
             if "bwrap" in names or "bubblewrap" in names:
@@ -254,9 +255,26 @@ def test_select_backend_bwrap_restricted():
             return None
         with mock.patch("execution.isolation._which", side_effect=which):
             with mock.patch("execution.isolation._bwrap_operational", return_value=True):
-                backend, strength = select_backend()
+                backend, strength = select_backend(allow_network=False)
                 assert backend == "bwrap"
                 assert strength == IsolationStrength.RESTRICTED.value
+
+
+def test_select_backend_skips_non_operational_bwrap():
+    """Installed but non-operational bwrap must never be selected; fall through."""
+    with mock.patch("execution.isolation._use_docker", return_value=False):
+        def which(*names):
+            if "bwrap" in names or "bubblewrap" in names:
+                return "/usr/bin/bwrap"
+            if "unshare" in names:
+                return "/usr/bin/unshare"
+            return None
+        with mock.patch("execution.isolation._which", side_effect=which):
+            with mock.patch("execution.isolation._bwrap_operational", return_value=False):
+                backend, strength = select_backend(allow_network=False)
+                assert backend != "bwrap"
+                assert backend == "unshare"
+                assert strength == IsolationStrength.NETWORK_ONLY.value
 
 
 def test_mission_acceptance_isolation_not_success():
