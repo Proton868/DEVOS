@@ -44,7 +44,7 @@ echo "PASS requires: real AgentRuntime+UCIP+workspace; fake runtime forbidden"
 echo "======================================="
 
 set +e
-python -m pytest tests/real_runtime/ -m real_runtime -v --tb=short "$@"
+"$ROOT/.venv/bin/python" -m pytest tests/real_runtime/ -m real_runtime -v --tb=short "$@"
 code=$?
 set -e
 if [[ $code -ne 0 ]]; then
