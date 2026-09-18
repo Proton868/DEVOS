@@ -207,10 +207,29 @@ export default function AICopilot({ floating = false }) {
       for await (const evt of iter) {
         if (evt.stream_state) {
           setStreamState(evt.stream_state);
-          // Stream closed/aborted is not success — only real terminal statuses count
+          // Stream closed/error is not mission success or failure authority
           if (evt.stream_state === "aborted") {
             setTaskDetail((d) => d || "Connection closed before a terminal status was received.");
           }
+          if (evt.stream_state === "error" || evt.stream_interrupted) {
+            setTaskDetail(
+              (d) =>
+                d ||
+                "Progress stream interrupted (network). The mission may still be running on the server — refresh or check mission status; this is not a mission failure by itself."
+            );
+            setMessages((ms) => [
+              ...ms,
+              {
+                role: "system-note",
+                content:
+                  "Progress stream interrupted. Backend mission work is independent of this browser connection.",
+              },
+            ]);
+          }
+        }
+        if (evt.status === "keepalive") {
+          // Heartbeat — keep UI in running state, do not invent progress steps
+          continue;
         }
         if (evt.session_id) sessionIdRef.current = evt.session_id;
         if (evt.error) {
@@ -313,10 +332,25 @@ export default function AICopilot({ floating = false }) {
       }
       } // end else chat stream
     } catch (e) {
-      setError(e.message || "Chat failed");
+      const msg = e.message || "Chat failed";
+      setStreamState((s) => (s === "error" ? s : "error"));
+      setTaskDetail((d) => d || `Stream error: ${msg}`);
+      setError(msg);
       setMessages((ms) => {
         const copy = [...ms];
-        copy[copy.length - 1] = { role: "assistant", content: `⚠️ ${e.message || "Chat failed"}` };
+        const last = copy[copy.length - 1];
+        // Do not replace a partial assistant reply with a false mission-failed claim
+        if (last?.role === "assistant" && !(last.content || "").trim()) {
+          copy[copy.length - 1] = {
+            role: "assistant",
+            content: `⚠️ Progress stream error: ${msg}. The mission may still be running server-side.`,
+          };
+        } else {
+          copy.push({
+            role: "system-note",
+            content: `Progress stream error: ${msg}. Server-side mission authority is unchanged by this disconnect.`,
+          });
+        }
         return copy;
       });
     } finally {

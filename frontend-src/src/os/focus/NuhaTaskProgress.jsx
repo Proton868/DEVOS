@@ -58,7 +58,7 @@ export default function NuhaTaskProgress({
   let statusLine = "Idle";
   if (active) statusLine = "Running";
   else if (streamState === "aborted") statusLine = "Stream closed";
-  else if (streamState === "error") statusLine = "Stream error";
+  else if (streamState === "error") statusLine = "Stream interrupted";
   else if (terminalFail) statusLine = currentStatus === "cancelled" ? "Cancelled" : "Failed";
   else if (terminalOk || isTerminalStatus(currentStatus)) statusLine = "Completed";
   else if (seenStatuses.length) statusLine = currentStatus || "Finished";

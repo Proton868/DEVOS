@@ -402,13 +402,35 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                                 on_progress=_on_mission_progress,
                             )
                             await progress_q.put({"_mission_done": True, "result": result})
+                            return result
                         except Exception as _mission_exc:
                             await progress_q.put({"_mission_error": _mission_exc})
+                            raise
 
                     mission_task = asyncio.create_task(_run_mission())
                     dres = None
+                    # Keepalive interval: proxies (Cloudflare/nginx) often close
+                    # idle HTTP streams ~100s. Heartbeats are not fabricated progress.
+                    _KEEPALIVE_S = 15.0
                     while True:
-                        item = await progress_q.get()
+                        if await request.is_disconnected():
+                            # Client left; mission_task continues to completion.
+                            # Do not cancel specialist work or invent failure.
+                            logger = __import__("logging").getLogger("devos.chat")
+                            logger.info(
+                                "mission SSE client disconnected; backend mission continues plan_id=%s",
+                                getattr(plan, "id", None),
+                            )
+                            # Detach: allow task to finish without streaming
+                            break
+                        try:
+                            item = await asyncio.wait_for(
+                                progress_q.get(), timeout=_KEEPALIVE_S
+                            )
+                        except asyncio.TimeoutError:
+                            yield f"data: {json.dumps({'status': 'keepalive', 'session_id': session.id, 'plan_id': plan.id, 'phase': 'awaiting_progress'})}\n\n"
+                            await asyncio.sleep(0)
+                            continue
                         if item.get("_mission_error"):
                             await mission_task
                             raise item["_mission_error"]
@@ -468,7 +490,28 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                             pass
                         yield f"data: {json.dumps(prog)}\n\n"
                         await asyncio.sleep(0)
-                    await mission_task
+                    # Ensure we have the result even if the client disconnected mid-stream
+                    if dres is None:
+                        try:
+                            if mission_task.done():
+                                if mission_task.exception():
+                                    raise mission_task.exception()
+                                dres = mission_task.result()
+                            else:
+                                dres = await mission_task
+                        except Exception as _detach_exc:
+                            # Client already gone — log and stop streaming terminal events
+                            import logging
+                            logging.getLogger("devos.chat").info(
+                                "mission finished after SSE detach plan_id=%s err=%s",
+                                getattr(plan, "id", None),
+                                type(_detach_exc).__name__,
+                            )
+                            return
+                    else:
+                        await mission_task
+                    if dres is None:
+                        return
                     st = dres.status or ("succeeded" if dres.ok else "failed")
                     from brain.mission_acceptance import evaluate_mission_acceptance
                     acceptance = evaluate_mission_acceptance(

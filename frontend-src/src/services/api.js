@@ -426,8 +426,14 @@ const chatApi = {
         yield { stream_state: "aborted" };
         return;
       }
-      yield { stream_state: "error", error: err?.message || String(err) };
-      throw err;
+      // Network/proxy drop is a stream failure, not mission authority failure.
+      // Yield structured state; do not throw (would mark UI as hard chat failure).
+      yield {
+        stream_state: "error",
+        error: err?.message || String(err),
+        stream_interrupted: true,
+      };
+      return;
     } finally {
       if (reader) {
         try { await reader.cancel(); } catch (_) {}
