@@ -35,6 +35,7 @@ class StepType(str, Enum):
     LOOP       = "loop"         # Bounded iteration over items or count
     TRANSFORM  = "transform"    # Pure data transformation
     DATABASE   = "database"     # Governed database operation
+    AGENT      = "agent"        # Governed agentic task (UCIP-bound)
 
 
 @dataclass

@@ -413,6 +413,8 @@ async def _run_step(step: WorkflowStep, context: dict, attempt: int) -> StepReco
         return await _run_loop_step(step, context, attempt)
     elif st == StepType.TRANSFORM:
         return await _run_transform_step(step, context, attempt)
+    elif st == StepType.AGENT:
+        return await _run_agent_step(step, context, attempt)
     elif st == StepType.DATABASE:
         return await _run_database_step(step, context, attempt)
     else:
@@ -424,6 +426,51 @@ async def _run_step(step: WorkflowStep, context: dict, attempt: int) -> StepReco
     rec.duration_ms = int((time.monotonic() - t0) * 1000)
     return rec
 
+
+async def _run_agent_step(step: WorkflowStep, context: dict, attempt: int) -> StepRecord:
+    """Governed AGENT step — delegate_agent_task + UCIP capability requests only."""
+    from brain.agentic_automation import execute_agent_step_body
+    t0 = time.monotonic()
+    inputs = dict(step.inputs or {})
+    owner_id = context.get("owner_id")
+    tenant_id = context.get("tenant_id")
+    body = await execute_agent_step_body(
+        inputs,
+        owner_id=str(owner_id or ""),
+        tenant_id=tenant_id,
+        parent_run_id=context.get("automation_run_id"),
+        parent_step_id=step.id,
+        workflow_id=context.get("workflow_id"),
+        workflow_version=context.get("workflow_version"),
+        job_id=context.get("job_id"),
+    )
+    rec = StepRecord(
+        step_id=step.id,
+        type=step.type.value if hasattr(step.type, "value") else str(step.type),
+        attempt=attempt,
+        started_at=_now_iso(),
+    )
+    rec.duration_ms = int((time.monotonic() - t0) * 1000)
+    rec.finished_at = _now_iso()
+    st = body.get("status")
+    if st == "succeeded":
+        rec.status = STEP_SUCCEEDED
+        rec.outputs = body.get("outputs") or body
+        rec.message = "agent task completed"
+        rec.side_effect = "none"
+    elif body.get("error_code") == "AUTHORIZATION_FAILURE":
+        rec.status = STEP_DENIED
+        rec.error = body.get("error")
+        rec.error_code = "AUTHORIZATION_FAILURE"
+        rec.message = "agent capability denied"
+        rec.side_effect = "none"
+    else:
+        rec.status = STEP_FAILED
+        rec.error = body.get("error")
+        rec.error_code = body.get("error_code") or "AGENT_FAILED"
+        rec.message = "agent task failed"
+        rec.side_effect = "none"
+    return rec
 
 async def _run_script_step(step: WorkflowStep, context: dict, attempt: int) -> StepRecord:
     """First-class script step (Python/JS/TS) via isolation — not a canvas hack."""
