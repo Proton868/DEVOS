@@ -12,6 +12,7 @@ import GhostTerminal from "../terminal/GhostTerminal";
 import AgencyDashboard from "../dashboard/AgencyDashboard";
 import MissionGlowOverlay from "../canvas/MissionGlowOverlay";
 import WebIntelSurface from "../surfaces/WebIntelSurface";
+import PreviewSurface from "./PreviewSurface";
 import { Code2, MessageSquare, Eye, Workflow, Maximize2, Minimize2 } from "lucide-react";
 import {
   resolveLayout,
@@ -319,6 +320,30 @@ export default function SpatialWorkspace() {
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* Preview dimension — first-class spatial surface */}
+      {preview?.open &&
+        !preview?.minimized &&
+        ["visible", "fullscreen"].includes(plan.surfaces?.preview?.mode) && (
+        <div
+          className={`sp-preview-slot ${
+            plan.surfaces?.preview?.mode === "fullscreen" || plan.activeId === "preview"
+              ? "sp-preview-slot--primary"
+              : ""
+          }`}
+          style={
+            plan.presentation === "split" &&
+            plan.surfaces?.preview?.mode === "visible" &&
+            plan.surfaces?.preview?.widthPx
+              ? { width: plan.surfaces.preview.widthPx, flex: "0 0 auto" }
+              : plan.presentation === "stack" && plan.activeId === "preview"
+                ? { flex: 1, minWidth: 0 }
+                : undefined
+          }
+        >
+          <PreviewSurface embedded />
         </div>
       )}
 

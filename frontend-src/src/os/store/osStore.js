@@ -105,6 +105,15 @@ const useOsStore = create((set, get) => ({
     set((s) => ({ preview: { ...s.preview, path: path || "index.html", error: null } })),
   setPreviewError: (error) =>
     set((s) => ({ preview: { ...s.preview, error: error || null } })),
+  previewUi: {
+    device: "fluid",
+    zoom: 100,
+    consoleOpen: false,
+  },
+  setPreviewUi: (patch) =>
+    set((s) => ({
+      previewUi: { ...s.previewUi, ...(patch || {}) },
+    })),
 
   // ── Copilot ──────────────────────────────────────────────
   nuhaMode: "chat", // chat | plan | action

@@ -103,6 +103,7 @@ export default function DevOSWorkspace() {
         <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", minWidth: 0 }}>
           <div style={{ flex: 1, position: "relative", display: "flex", minHeight: 0 }}>
             <SpatialWorkspace key={graphKey} />
+            {/* open preview renders inside SpatialWorkspace */}
             <PreviewSurface />
       <OverlaySurface isMobile={isMobile} />
           </div>
