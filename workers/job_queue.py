@@ -419,8 +419,13 @@ async def heartbeat(job_id: str, worker: Optional[str] = None) -> bool:
         return (result.rowcount or 0) == 1
 
 
-async def complete(job_id, *, status, result=None, error=None, isolation=None):
-    """Mark job finished. Idempotent for terminal success — never reopens succeeded jobs."""
+async def complete(job_id, *, status, result=None, error=None, isolation=None, worker_id=None):
+    """Mark job finished. Idempotent for terminal success — never reopens succeeded jobs.
+
+    When the job is running under a lease owner, a caller that supplies worker_id
+    must match job.worker_id. Stale workers cannot terminalize another worker's claim.
+    Callers that omit worker_id (system/pipeline reconciliation) remain allowed.
+    """
     from governance.reliability import scrub_secrets
 
     async with _session_factory()() as db:
@@ -431,6 +436,18 @@ async def complete(job_id, *, status, result=None, error=None, isolation=None):
         # Terminal success is final (crash-retry must not rewrite outcomes)
         if job.status == "succeeded":
             logger.info("complete ignored for already-succeeded job %s", job_id)
+            return
+        # Ownership: stale worker cannot complete another worker's active claim
+        if (
+            job.status == "running"
+            and job.worker_id
+            and worker_id is not None
+            and str(worker_id) != str(job.worker_id)
+        ):
+            logger.warning(
+                "complete rejected ownership mismatch job=%s claim=%s owner=%s",
+                job_id, worker_id, job.worker_id,
+            )
             return
         # Stage 3M.3 — consequential success requires operation truth
         payload = job.payload if isinstance(job.payload, dict) else {}
@@ -519,7 +536,7 @@ class JobWorker:
             return False
         handler = self.handlers.get(job.job_type)
         if not handler:
-            await complete(job.id, status="failed", error=f"no handler for {job.job_type}")
+            await complete(job.id, status="failed", error=f"no handler for {job.job_type}", worker_id=self.worker_id)
             return True
         try:
             result = await handler(job)
@@ -539,10 +556,11 @@ class JobWorker:
                 result=result,
                 error=result.get("error"),
                 isolation=result.get("isolation"),
+                worker_id=self.worker_id,
             )
         except Exception as e:
             logger.exception("job %s failed", job.id)
-            await complete(job.id, status="failed", error=str(e))
+            await complete(job.id, status="failed", error=str(e), worker_id=self.worker_id)
         return True
 
     async def loop(self):

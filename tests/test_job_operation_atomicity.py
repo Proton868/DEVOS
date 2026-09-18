@@ -396,3 +396,45 @@ def test_enqueue_source_documents_same_transaction():
     assert "Same transaction as job create" in src or "failure-atomic" in src
     assert "reserve_operation_tx" in src
     assert "operation_reservation_failed" in src
+
+
+@pytest.mark.asyncio
+async def test_stale_worker_cannot_complete_another_workers_job(db):
+    """RED regression: worker A loses lease; worker B claims; A cannot complete."""
+    from workers.job_queue import enqueue, claim_next, complete, recover_stale_leases
+    from core.database import ExecutionJob
+
+    job = await enqueue(
+        owner_id="u1", tenant_id="t1", job_type="script",
+        payload={}, idempotency_key="ik-owner-1",
+    )
+    claimed_a = await claim_next(worker="worker-A")
+    assert claimed_a is not None and claimed_a.id == job.id
+
+    # A dies — expire lease and recover so B can claim
+    async with db.AsyncSessionLocal() as session:
+        row = await session.get(ExecutionJob, job.id)
+        row.locked_at = _utcnow() - timedelta(hours=2)
+        row.lease_expires_at = _utcnow() - timedelta(hours=1)
+        await session.commit()
+    await recover_stale_leases()
+
+    claimed_b = await claim_next(worker="worker-B")
+    assert claimed_b is not None and claimed_b.id == job.id
+    assert claimed_b.worker_id == "worker-B"
+
+    # Stale A attempts to complete — must be rejected
+    await complete(job.id, status="failed", error="stale-A", worker_id="worker-A")
+    async with db.AsyncSessionLocal() as session:
+        row = await session.get(ExecutionJob, job.id)
+        assert row.status == "running"
+        assert row.worker_id == "worker-B"
+
+    # Owner B can complete
+    await complete(job.id, status="succeeded", result={"ok": True}, worker_id="worker-B")
+    async with db.AsyncSessionLocal() as session:
+        row = await session.get(ExecutionJob, job.id)
+        # May be failed if op not marked succeeded for consequential — ownership path ran
+        assert row.worker_id is None or row.status in ("succeeded", "failed", "queued")
+        # If still running, ownership rejected wrongly
+        assert row.status != "running" or row.worker_id != "worker-B"
