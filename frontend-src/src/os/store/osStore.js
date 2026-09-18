@@ -47,6 +47,13 @@ const useOsStore = create((set, get) => ({
 
   // ── Editor (DevOS IDE focus surface) ─────────────────────
   editor: { open: false, file: null, scriptId: null, language: null },
+  // Multi-tab / split IDE workspace (Spatial IDE — Monaco preserved)
+  ideWorkspace: {
+    tabs: [],
+    activePath: null,
+    splitPath: null,
+    diagnostics: {},
+  },
   openEditor: ({ file = null, scriptId = null, language = null } = {}) =>
     set((s) => {
       const layout = {
@@ -56,14 +63,106 @@ const useOsStore = create((set, get) => ({
         filesDrawerOpen: s.layout?.filesDrawerOpen !== false,
       };
       try { localStorage.setItem("devos_sp_layout", JSON.stringify(layout)); } catch (_) {}
+      const path = file || (scriptId != null ? `script:${scriptId}` : null);
+      let ideWorkspace = s.ideWorkspace || { tabs: [], activePath: null, splitPath: null, diagnostics: {} };
+      if (path) {
+        const tabs = Array.isArray(ideWorkspace.tabs) ? [...ideWorkspace.tabs] : [];
+        const idx = tabs.findIndex((t) => t.path === path);
+        const tab = {
+          path,
+          language: language || null,
+          modified: false,
+          title: String(path).split("/").pop(),
+          scriptId: scriptId || null,
+        };
+        if (idx >= 0) tabs[idx] = { ...tabs[idx], ...tab };
+        else tabs.push(tab);
+        ideWorkspace = {
+          ...ideWorkspace,
+          tabs,
+          activePath: path,
+        };
+      }
       return {
         editor: { open: true, file, scriptId, language },
         layout,
+        ideWorkspace,
       };
     }),
-  closeEditor: () => set({ editor: { open: false, file: null, scriptId: null, language: null } }),
-
-  webIntel: { open: false, crawlId: null },
+  closeEditor: () =>
+    set((s) => ({
+      editor: { open: false, file: null, scriptId: null, language: null },
+      // Keep tabs so reopening IDE restores context; clear only if empty
+    })),
+  setIdeActivePath: (path) =>
+    set((s) => ({
+      ideWorkspace: { ...(s.ideWorkspace || {}), activePath: path },
+      editor: {
+        ...(s.editor || {}),
+        open: true,
+        file: path && !String(path).startsWith("script:") ? path : s.editor?.file,
+        scriptId:
+          path && String(path).startsWith("script:")
+            ? String(path).replace(/^script:/, "")
+            : s.editor?.scriptId,
+      },
+    })),
+  closeIdeTab: (path) =>
+    set((s) => {
+      const ws = s.ideWorkspace || { tabs: [], activePath: null, splitPath: null, diagnostics: {} };
+      const tabs = (ws.tabs || []).filter((t) => t.path !== path);
+      let activePath = ws.activePath;
+      let splitPath = ws.splitPath;
+      if (splitPath === path) splitPath = null;
+      if (activePath === path) {
+        activePath = tabs.length ? tabs[tabs.length - 1].path : null;
+      }
+      const editorOpen = tabs.length > 0;
+      return {
+        ideWorkspace: { ...ws, tabs, activePath, splitPath },
+        editor: editorOpen
+          ? {
+              open: true,
+              file: activePath && !String(activePath).startsWith("script:") ? activePath : null,
+              scriptId:
+                activePath && String(activePath).startsWith("script:")
+                  ? String(activePath).replace(/^script:/, "")
+                  : null,
+              language: null,
+            }
+          : { open: false, file: null, scriptId: null, language: null },
+      };
+    }),
+  setIdeSplitPath: (path) =>
+    set((s) => ({
+      ideWorkspace: { ...(s.ideWorkspace || {}), splitPath: path || null },
+    })),
+  markIdeTabModified: (path, modified = true) =>
+    set((s) => {
+      const ws = s.ideWorkspace || { tabs: [] };
+      const tabs = (ws.tabs || []).map((t) =>
+        t.path === path ? { ...t, modified: !!modified } : t
+      );
+      return { ideWorkspace: { ...ws, tabs } };
+    }),
+  setIdeDiagnostics: (diagnostics) =>
+    set((s) => ({
+      ideWorkspace: { ...(s.ideWorkspace || {}), diagnostics: diagnostics || {} },
+    })),
+  mergeIdeDiagnostics: (uri, diagnostics) =>
+    set((s) => {
+      const ws = s.ideWorkspace || { diagnostics: {} };
+      const map = { ...(ws.diagnostics || {}) };
+      const raw = String(uri || "");
+      const key = raw.startsWith("file://") ? raw.slice("file://".length) : raw;
+      if (!key) return {};
+      if (!diagnostics || !diagnostics.length) {
+        delete map[key];
+      } else {
+        map[key] = diagnostics;
+      }
+      return { ideWorkspace: { ...ws, diagnostics: map } };
+    }),
   openWebIntel: ({ crawlId = null } = {}) =>
     set({ webIntel: { open: true, crawlId: crawlId || null } }),
   closeWebIntel: () => set({ webIntel: { open: false, crawlId: null } }),

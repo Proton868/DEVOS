@@ -10,6 +10,7 @@ import {
   Plus, History, Cpu, MessageSquare, X, Sparkles,
 } from "lucide-react";
 import useOsStore from "../store/osStore";
+import { listIdeCommands } from "../ide/ideCommands";
 import useStore from "../../store/useStore";
 import { api } from "../../services/api";
 
@@ -82,6 +83,43 @@ function buildCommands(os, store, close, { reloadGraph, searchResults }) {
           s().setStatus(`Opened ${paths[0]} (${paths.length} matches)`);
           return "ok";
         } catch (e) { s().setStatus("Search failed: " + e.message); return "error"; }
+      },
+    },
+    // IDE
+    {
+      id: "ide.format", label: "Format Document", icon: FileCode2, cat: "IDE",
+      keywords: ["format", "prettier", "indent"],
+      run: () => {
+        o().setActiveWorkspace?.("ide");
+        window.dispatchEvent(new CustomEvent("devos-ide-command", { detail: { id: "ide.editor.format" } }));
+        return "ok";
+      },
+    },
+    {
+      id: "ide.search", label: "Search in Workspace", icon: FileCode2, cat: "IDE",
+      keywords: ["search workspace", "find in files"],
+      run: () => {
+        o().setActiveWorkspace?.("ide");
+        o().setIdeLayout?.({ activity: "search", sidebarOpen: true });
+        return "ok";
+      },
+    },
+    {
+      id: "ide.problems", label: "Show Problems", icon: FileCode2, cat: "IDE",
+      keywords: ["problems", "diagnostics", "errors"],
+      run: () => {
+        o().setActiveWorkspace?.("ide");
+        o().toggleIdeBottom?.("problems");
+        return "ok";
+      },
+    },
+    {
+      id: "ide.terminal", label: "Toggle IDE Terminal", icon: FileCode2, cat: "IDE",
+      keywords: ["terminal", "shell"],
+      run: () => {
+        o().setActiveWorkspace?.("ide");
+        o().toggleIdeBottom?.("terminal");
+        return "ok";
       },
     },
     // Agents

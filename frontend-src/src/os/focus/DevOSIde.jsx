@@ -15,6 +15,9 @@ import useStore from "../../store/useStore";
 import { api, getLanguageFromPath } from "../../services/api";
 import { loadMonaco, probeMonacoAssets } from "../../monacoSetup";
 import { resolveIdeLayout } from "../ide/ideLayout";
+import IdeTabBar from "../ide/IdeTabBar";
+import { flattenDiagnostics } from "../ide/ideTabs";
+import { listIdeCommands } from "../ide/ideCommands";
 
 const GitPanel = lazy(() => import("../../components/sidebar/GitPanel"));
 const SearchPanel = lazy(() => import("../../components/sidebar/SearchPanel"));
@@ -269,6 +272,9 @@ export default function DevOSIde({ onClose, onCollapse }) {
         await api.updateFlowScript(target.id, { code: content });
       }
       setOriginal(content);
+      if (target?.type === "file" && target.path) {
+        try { markIdeTabModified?.(target.path, false); } catch (_) {}
+      }
       setStatus("Saved ✓");
       setTimeout(() => useStore.getState().setStatus("Ready"), 1500);
     } catch (e) {
@@ -276,7 +282,7 @@ export default function DevOSIde({ onClose, onCollapse }) {
     } finally {
       setSaving(false);
     }
-  }, [target, content, setStatus]);
+  }, [target, content, setStatus, markIdeTabModified]);
 
   useEffect(() => {
     const h = (e) => {
@@ -288,6 +294,62 @@ export default function DevOSIde({ onClose, onCollapse }) {
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [save]);
+
+
+  const formatDocument = useCallback(async () => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    try {
+      const action = ed.getAction?.("editor.action.formatDocument");
+      if (action) {
+        await action.run();
+        setStatus("Formatted");
+      } else {
+        setStatus("Format action unavailable");
+      }
+    } catch (e) {
+      setStatus("Format failed: " + (e.message || e));
+    }
+  }, [setStatus]);
+
+  const gotoSymbol = useCallback(async () => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    try {
+      await ed.getAction?.("editor.action.quickOutline")?.run?.();
+    } catch (_) {
+      setStatus("Symbol navigation unavailable");
+    }
+  }, [setStatus]);
+
+  useEffect(() => {
+    const h = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "f") {
+        // avoid clash with OS search; use Alt+Shift+F for format
+      }
+      if (e.altKey && e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        formatDocument();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o" && e.shiftKey) {
+        e.preventDefault();
+        gotoSymbol();
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [formatDocument, gotoSymbol]);
+
+  useEffect(() => {
+    const h = (ev) => {
+      const id = ev?.detail?.id;
+      if (id === "ide.editor.format") formatDocument();
+      if (id === "ide.goto.symbol") gotoSymbol();
+    };
+    window.addEventListener("devos-ide-command", h);
+    return () => window.removeEventListener("devos-ide-command", h);
+  }, [formatDocument, gotoSymbol]);
+
 
   const onSidebarResize = (e) => {
     if (plan.sidebarMode !== "docked") return;
@@ -573,6 +635,16 @@ export default function DevOSIde({ onClose, onCollapse }) {
 
         {/* Editor column (always primary) */}
         <div className="sp-ide-editor-col">
+          <IdeTabBar />
+          <div className="sp-ide-editor-toolbar">
+            <button type="button" className="sp-pv-btn" onClick={formatDocument} title="Format Document (Alt+Shift+F)">
+              Format
+            </button>
+            <button type="button" className="sp-pv-btn" onClick={gotoSymbol} title="Go to Symbol">
+              Symbols
+            </button>
+            <span className="sp-ide-editor-toolbar-hint">{listIdeCommands().length} commands</span>
+          </div>
           {breakdown.length > 0 && (
             <div className="sp-ide-langbar" title="Project language mix">
               {breakdown.map((b) => (
@@ -624,7 +696,15 @@ export default function DevOSIde({ onClose, onCollapse }) {
                     Mounting editor…
                   </span>
                 }
-                onChange={(v) => setContent(v ?? "")}
+                onChange={(v) => {
+                  const next = v ?? "";
+                  setContent(next);
+                  if (target?.type === "file" && target.path) {
+                    try {
+                      markIdeTabModified?.(target.path, next !== original);
+                    } catch (_) {}
+                  }
+                }}
                 onMount={(ed) => {
                   editorRef.current = ed;
                 }}
@@ -693,7 +773,26 @@ export default function DevOSIde({ onClose, onCollapse }) {
                 </div>
                 <div className="sp-ide-bottom-body">
                   {ideLayout.bottom === "problems" && (
+                    <>
+                    <div className="sp-ide-diag-list">
+                      {flattenDiagnostics(ideWorkspace?.diagnostics || {}).length === 0 ? (
+                        <div className="sp-ide-center-msg">No diagnostics</div>
+                      ) : (
+                        flattenDiagnostics(ideWorkspace?.diagnostics || {}).slice(0, 100).map((d, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            className="sp-ide-diag-item"
+                            onClick={() => d.path && openEditor?.({ file: d.path })}
+                          >
+                            <span className="sp-ide-diag-path">{d.path}</span>
+                            <span className="sp-ide-diag-msg">{d.message}</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
                     <ProblemsPanel error={error || monacoError} statusText={statusText} />
+                    </>
                   )}
                   {ideLayout.bottom === "output" && (
                     <OutputPanel statusText={statusText} />

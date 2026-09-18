@@ -3195,3 +3195,86 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
   max-width: none !important;
   min-width: 0 !important;
 }
+
+
+/* ── IDE tabs / diagnostics ─────────────────────────────────── */
+.sp-ide-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.25);
+  min-height: 36px;
+  padding: 0 4px;
+}
+.sp-ide-tabs-scroll {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  gap: 2px;
+}
+.sp-ide-filetab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--sp-text-2);
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  max-width: 180px;
+}
+.sp-ide-filetab.active {
+  color: var(--sp-text-0);
+  background: rgba(255,255,255,0.06);
+  box-shadow: inset 0 -2px 0 var(--sp-accent, #00ffb3);
+}
+.sp-ide-filetab.modified .sp-ide-filetab-title { font-style: italic; }
+.sp-ide-filetab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-ide-filetab-close {
+  display: inline-flex;
+  opacity: 0.5;
+}
+.sp-ide-filetab-close:hover { opacity: 1; }
+.sp-ide-editor-toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  flex-shrink: 0;
+}
+.sp-ide-editor-toolbar-hint {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--sp-text-2);
+}
+.sp-ide-diag-list {
+  max-height: 40%;
+  overflow: auto;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.sp-ide-diag-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--sp-text-1);
+  padding: 6px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.sp-ide-diag-item:hover { background: rgba(255,255,255,0.04); }
+.sp-ide-diag-path { color: var(--sp-accent, #00ffb3); }
+.sp-ide-diag-msg { color: var(--sp-text-2); }
