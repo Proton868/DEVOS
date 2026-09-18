@@ -119,6 +119,8 @@ export default function DevOSIde({ onClose, onCollapse }) {
   const openPreview = useOsStore((s) => s.openPreview);
   const openTerminal = useOsStore((s) => s.openTerminal);
   const ideLayout = useOsStore((s) => s.ideLayout) || {};
+  const ideWorkspace = useOsStore((s) => s.ideWorkspace) || {};
+  const markIdeTabModified = useOsStore((s) => s.markIdeTabModified);
   const setIdeLayout = useOsStore((s) => s.setIdeLayout);
   const toggleIdeActivity = useOsStore((s) => s.toggleIdeActivity);
   const toggleIdeBottom = useOsStore((s) => s.toggleIdeBottom);
