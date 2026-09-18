@@ -266,7 +266,65 @@ const useOsStore = create((set, get) => ({
         const { spatialFullscreenId, ...layoutRest } = parsed;
         set((s) => ({
           layout: { ...s.layout, ...layoutRest },
-          spatialFullscreenId:
+          
+  // ── IDE-internal spatial layout (survives dimension switches) ──
+  ideLayout: {
+    activity: "explorer",
+    sidebarOpen: true,
+    sidebarWidth: 240,
+    bottom: null,
+    bottomHeight: 180,
+    bottomOpen: false,
+  },
+  setIdeLayout: (patch) =>
+    set((s) => {
+      const ideLayout = { ...s.ideLayout, ...patch };
+      try {
+        const prev = JSON.parse(localStorage.getItem("devos_sp_layout") || "{}");
+        localStorage.setItem(
+          "devos_sp_layout",
+          JSON.stringify({ ...prev, ideLayout })
+        );
+      } catch (_) { /* ignore */ }
+      return { ideLayout };
+    }),
+  toggleIdeActivity: (activity) =>
+    set((s) => {
+      const same = s.ideLayout?.activity === activity && s.ideLayout?.sidebarOpen;
+      const ideLayout = same
+        ? { ...s.ideLayout, sidebarOpen: false }
+        : { ...s.ideLayout, activity, sidebarOpen: true };
+      try {
+        const prev = JSON.parse(localStorage.getItem("devos_sp_layout") || "{}");
+        localStorage.setItem(
+          "devos_sp_layout",
+          JSON.stringify({ ...prev, ideLayout })
+        );
+      } catch (_) { /* ignore */ }
+      return { ideLayout };
+    }),
+  toggleIdeBottom: (panel) =>
+    set((s) => {
+      const open =
+        s.ideLayout?.bottomOpen && s.ideLayout?.bottom === panel
+          ? false
+          : true;
+      const ideLayout = {
+        ...s.ideLayout,
+        bottom: panel,
+        bottomOpen: open,
+      };
+      try {
+        const prev = JSON.parse(localStorage.getItem("devos_sp_layout") || "{}");
+        localStorage.setItem(
+          "devos_sp_layout",
+          JSON.stringify({ ...prev, ideLayout })
+        );
+      } catch (_) { /* ignore */ }
+      return { ideLayout };
+    }),
+
+spatialFullscreenId:
             spatialFullscreenId !== undefined
               ? spatialFullscreenId
               : s.spatialFullscreenId,

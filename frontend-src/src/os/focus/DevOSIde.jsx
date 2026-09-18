@@ -1,19 +1,25 @@
 /**
- * DevOS IDE — the ephemeral editor focus surface.
- * Real file loading via /api/files/{project}/read or /api/scripts/{id},
- * real saving via writeFile / updateFlowScript. Monaco underneath.
- *
- * Monaco is loaded from the bundled package (see monacoSetup.js) so CSP
- * script-src 'self' does not leave the editor stuck on "Loading…".
+ * DevOS IDE — first-class spatial dimension with internal organization.
+ * Editor remains primary; explorer/search/scm/bottom panels dock or sheet
+ * based on available IDE area. Monaco + save paths unchanged.
  */
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef, Suspense, lazy } from "react";
 import Editor from "@monaco-editor/react";
-import { ChevronLeft, Save, X, FileCode2, RefreshCw, PanelLeft, Eye, Minimize2 } from "lucide-react";
+import {
+  ChevronLeft, Save, X, FileCode2, RefreshCw, PanelLeft, Eye, Minimize2,
+  Files, Search, GitBranch, AlertCircle, Play, Terminal as TerminalIcon,
+  PanelBottom,
+} from "lucide-react";
 import useOsStore from "../store/osStore";
 import useStore from "../../store/useStore";
 import { api, getLanguageFromPath } from "../../services/api";
 import { loadMonaco, probeMonacoAssets } from "../../monacoSetup";
+import { resolveIdeLayout } from "../ide/ideLayout";
 
+const GitPanel = lazy(() => import("../../components/sidebar/GitPanel"));
+const SearchPanel = lazy(() => import("../../components/sidebar/SearchPanel"));
+
+const LOAD_TIMEOUT_MS = 45000;
 
 const LANG_COLORS = {
   JavaScript: "#f1e05a",
@@ -60,25 +66,75 @@ function languageBreakdown(fileList) {
     .sort((a, b) => b.n - a.n);
 }
 
-const LOAD_TIMEOUT_MS = 12000;
+function SideFallback() {
+  return <div className="sp-ide-side-fallback">Loading…</div>;
+}
+
+function ProblemsPanel({ error, statusText }) {
+  const items = [];
+  if (error) items.push({ severity: "error", message: error });
+  if (!items.length) {
+    return (
+      <div className="sp-ide-panel-empty">
+        No problems detected. Diagnostics from builds/tests will appear here.
+      </div>
+    );
+  }
+  return (
+    <ul className="sp-ide-problems">
+      {items.map((it, i) => (
+        <li key={i} className={`sp-ide-problem sp-ide-problem--${it.severity}`}>
+          <AlertCircle size={12} />
+          <span>{it.message}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function OutputPanel({ statusText }) {
+  return (
+    <pre className="sp-ide-output">{statusText || "No output yet."}</pre>
+  );
+}
+
+function RunPanel({ onOpenTerminal }) {
+  return (
+    <div className="sp-ide-panel-empty">
+      <p>Run / Debug uses governed execution from Nuha and the Terminal dimension.</p>
+      <button type="button" className="sp-ide-linkbtn" onClick={onOpenTerminal}>
+        Open Terminal
+      </button>
+    </div>
+  );
+}
 
 export default function DevOSIde({ onClose, onCollapse }) {
-  const { editor, closeEditor } = useOsStore();
+  const editor = useOsStore((s) => s.editor);
+  const closeEditor = useOsStore((s) => s.closeEditor);
+  const openEditor = useOsStore((s) => s.openEditor);
+  const openPreview = useOsStore((s) => s.openPreview);
+  const openTerminal = useOsStore((s) => s.openTerminal);
+  const ideLayout = useOsStore((s) => s.ideLayout) || {};
+  const setIdeLayout = useOsStore((s) => s.setIdeLayout);
+  const toggleIdeActivity = useOsStore((s) => s.toggleIdeActivity);
+  const toggleIdeBottom = useOsStore((s) => s.toggleIdeBottom);
+
   const setStatus = useStore((s) => s.setStatus);
+  const statusText = useStore((s) => s.status);
+
   const [content, setContent] = useState(null);
   const [original, setOriginal] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [monacoReady, setMonacoReady] = useState(false);
   const [monacoError, setMonacoError] = useState(null);
   const [monacoAttempt, setMonacoAttempt] = useState(0);
   const [files, setFiles] = useState([]);
-  const filesDrawerOpen = useOsStore((s) => s.layout?.filesDrawerOpen !== false);
-  const setFilesDrawerOpen = useOsStore((s) => s.setFilesDrawerOpen);
-  const openPreview = useOsStore((s) => s.openPreview);
-  const openEditor = useOsStore((s) => s.openEditor);
+  const [ideSize, setIdeSize] = useState({ width: 900, height: 640 });
   const editorRef = useRef(null);
+  const rootRef = useRef(null);
   const loadGen = useRef(0);
 
   const target = editor.file
@@ -90,6 +146,20 @@ export default function DevOSIde({ onClose, onCollapse }) {
   const language =
     editor.language ||
     (editor.file ? getLanguageFromPath(editor.file) : "python");
+
+  // Measure IDE surface for internal spatial resolve
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0]?.contentRect;
+      if (cr) setIdeSize({ width: cr.width, height: cr.height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const plan = resolveIdeLayout(ideSize, ideLayout);
 
   const loadContent = useCallback(async () => {
     if (!target) return;
@@ -154,8 +224,6 @@ export default function DevOSIde({ onClose, onCollapse }) {
     return () => { cancelled = true; };
   }, [target?.path]);
 
-
-  // Deterministic Monaco AMD load (singleton) — real errors, not a blind timeout
   useEffect(() => {
     if (loading || error) return;
     let cancelled = false;
@@ -187,7 +255,6 @@ export default function DevOSIde({ onClose, onCollapse }) {
       cancelled = true;
     };
   }, [loading, error, monacoAttempt, target?.path, target?.id]);
-
 
   const dirty = content !== null && content !== original;
 
@@ -222,162 +289,443 @@ export default function DevOSIde({ onClose, onCollapse }) {
     return () => window.removeEventListener("keydown", h);
   }, [save]);
 
-  if (!target) return null;
+  const onSidebarResize = (e) => {
+    if (plan.sidebarMode !== "docked") return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = plan.sidebarWidth;
+    const onMove = (ev) => {
+      const dx = ev.clientX - startX;
+      setIdeLayout({ sidebarWidth: Math.min(420, Math.max(180, startW + dx)) });
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const onBottomResize = (e) => {
+    if (plan.bottomMode !== "docked") return;
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = plan.bottomHeight;
+    const onMove = (ev) => {
+      const dy = startY - ev.clientY;
+      setIdeLayout({ bottomHeight: Math.min(360, Math.max(100, startH + dy)) });
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const openTerminalPanel = () => {
+    toggleIdeBottom("terminal");
+    openTerminal?.({});
+  };
+
+  if (!target) {
+    // Empty IDE dimension — still show chrome so it feels like a workspace
+    return (
+      <div className="sp-surface sp-surface--seamless sp-ide-root" ref={rootRef}>
+        <div className="sp-surface-head">
+          <button className="sp-iconbtn" title="Collapse IDE" onClick={() => onCollapse && onCollapse()}>
+            <Minimize2 size={15} />
+          </button>
+          <span>DEVOS IDE</span>
+          <span className="sub">· no file open</span>
+          <span className="spacer" />
+          <button className="sp-iconbtn" title="Close" onClick={() => { closeEditor(); onClose && onClose(); }}>
+            <X size={15} />
+          </button>
+        </div>
+        <div className="sp-ide-empty-dim">
+          Open a file from Explorer or Nuha to begin editing.
+        </div>
+      </div>
+    );
+  }
+
   const title = target.type === "file" ? target.path : `script #${target.id}`;
+  const breakdown = languageBreakdown(files);
+
+  const activity = ideLayout.activity || "explorer";
+  const sideVisible = plan.sidebarMode === "docked" || plan.sidebarMode === "sheet";
+  const bottomVisible = plan.bottomMode === "docked" || plan.bottomMode === "sheet";
+
+  const renderSideBody = () => {
+    if (activity === "search") {
+      return (
+        <Suspense fallback={<SideFallback />}>
+          <SearchPanel embedded onClose={() => setIdeLayout({ sidebarOpen: false })} />
+        </Suspense>
+      );
+    }
+    if (activity === "scm") {
+      return (
+        <Suspense fallback={<SideFallback />}>
+          <GitPanel />
+        </Suspense>
+      );
+    }
+    if (activity === "problems") {
+      return <ProblemsPanel error={error || monacoError} statusText={statusText} />;
+    }
+    if (activity === "run") {
+      return <RunPanel onOpenTerminal={openTerminalPanel} />;
+    }
+    // explorer — open files through osStore.openEditor (IDE dimension state)
+    return (
+      <div className="sp-ide-filelist">
+        {(files || []).length === 0 && (
+          <div className="sp-ide-panel-empty">No files in project root.</div>
+        )}
+        {(files || []).map((f) => {
+          const path = f.path || f.name || f;
+          const name = String(path).split("/").pop();
+          const isDir = f.type === "dir" || f.is_dir;
+          return (
+            <button
+              key={path}
+              type="button"
+              className={"sp-ide-file" + (target?.path === path ? " active" : "")}
+              onClick={() => {
+                if (!isDir) openEditor({ file: path });
+              }}
+              title={path}
+            >
+              {isDir ? "📁 " : ""}
+              {name}
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
-    <div className="sp-surface sp-surface--seamless">
+    <div
+      className="sp-surface sp-surface--seamless sp-ide-root"
+      ref={rootRef}
+      data-ide-sidebar={plan.sidebarMode}
+      data-ide-bottom={plan.bottomMode}
+    >
       <div className="sp-surface-head">
-        <button className="sp-iconbtn" title="Back to canvas" onClick={() => { closeEditor(); onClose && onClose(); }}>
+        <button
+          className="sp-iconbtn"
+          title="Collapse IDE dimension"
+          onClick={() => onCollapse && onCollapse()}
+        >
+          <Minimize2 size={15} />
+        </button>
+        <button
+          className="sp-iconbtn"
+          title="Back to canvas"
+          onClick={() => {
+            closeEditor();
+            onClose && onClose();
+          }}
+        >
           <ChevronLeft size={15} />
         </button>
         <span>DEVOS IDE</span>
-        <span className="sub">· {title}{dirty ? " ●" : ""}</span>
+        <span className="sub">· {title}</span>
         <span className="spacer" />
-        {error && (
-          <button className="sp-iconbtn" title="Retry load" onClick={loadContent}>
-            <RefreshCw size={14} />
+        {target.type === "file" && String(title).match(/\.(html?|css|js)$/i) && (
+          <button
+            className="sp-iconbtn"
+            title="Preview"
+            onClick={() => openPreview?.({ path: title })}
+          >
+            <Eye size={15} />
           </button>
         )}
         <button
           className="sp-iconbtn"
-          title={filesDrawerOpen ? "Hide files" : "Show files"}
-          onClick={() => setFilesDrawerOpen(!filesDrawerOpen)}
+          title="Reload"
+          onClick={() => {
+            setMonacoAttempt((n) => n + 1);
+            loadContent();
+          }}
         >
-          <PanelLeft size={15} />
+          <RefreshCw size={15} />
         </button>
         <button
           className="sp-iconbtn"
-          title="Preview project"
-          onClick={() => openPreview({ path: target.type === "file" ? target.path : "index.html", title: "Preview" })}
+          title="Save"
+          disabled={saving || !dirty}
+          onClick={save}
         >
-          <Eye size={15} />
-        </button>
-        <button className="sp-iconbtn" title={dirty ? "Save (unsaved changes)" : "Save"} disabled={!dirty || saving} onClick={save}>
           <Save size={15} />
         </button>
-        {onCollapse && (
-          <button className="sp-iconbtn" title="Collapse IDE (recover from edge dock)" onClick={() => onCollapse()}>
-            <Minimize2 size={15} />
-          </button>
-        )}
-        <button className="sp-iconbtn" title="Close editor" onClick={() => { closeEditor(); onClose && onClose(); }}>
+        <button
+          className="sp-iconbtn"
+          title="Close"
+          onClick={() => {
+            closeEditor();
+            onClose && onClose();
+          }}
+        >
           <X size={15} />
         </button>
       </div>
-      {(() => {
-        const parts = languageBreakdown(files);
-        if (!parts.length) return null;
-        return (
-          <>
-            <div className="sp-lang-meter" title="Project language mix (by file count)">
-              {parts.map((p) => (
-                <i key={p.lang} style={{ width: `${p.pct}%`, background: p.color }} />
-              ))}
-            </div>
-            <div className="sp-lang-meter-legend">
-              {parts.slice(0, 6).map((p) => (
-                <span key={p.lang}><em style={{ background: p.color }} />{p.lang} {Math.round(p.pct)}%</span>
-              ))}
-            </div>
-          </>
-        );
-      })()}
-      {loading ? (
-        <div className="sp-insp-body" style={{ alignItems: "center", justifyContent: "center" }}>
-          <FileCode2 size={22} style={{ color: "var(--sp-text-2)" }} />
-          <span style={{ color: "var(--sp-text-2)" }}>Loading {title}…</span>
-        </div>
-      ) : error ? (
-        <div className="sp-insp-body">
-          <div className="sp-logline lg-error">Failed to load {title}: {error}</div>
-          <button className="sp-chip" style={{ alignSelf: "flex-start" }} onClick={loadContent}>
-            Retry
-          </button>
-        </div>
-      ) : monacoError ? (
-        <div className="sp-insp-body">
-          <div className="sp-logline lg-error">Editor failed to initialize: {monacoError}</div>
-          <button
-            className="sp-chip"
-            style={{ alignSelf: "flex-start" }}
-            onClick={() => {
-              setMonacoError(null);
-              setMonacoReady(false);
-              setMonacoAttempt((n) => n + 1);
-            }}
+
+      <div className="sp-ide-main">
+        {/* Activity bar */}
+        {plan.showActivityBar && (
+          <div className="sp-ide-activity" role="toolbar" aria-label="IDE activity">
+            <button
+              type="button"
+              className={"sp-ide-act" + (activity === "explorer" && ideLayout.sidebarOpen ? " active" : "")}
+              title="Explorer"
+              onClick={() => toggleIdeActivity("explorer")}
+            >
+              <Files size={16} />
+            </button>
+            <button
+              type="button"
+              className={"sp-ide-act" + (activity === "search" && ideLayout.sidebarOpen ? " active" : "")}
+              title="Search"
+              onClick={() => toggleIdeActivity("search")}
+            >
+              <Search size={16} />
+            </button>
+            <button
+              type="button"
+              className={"sp-ide-act" + (activity === "scm" && ideLayout.sidebarOpen ? " active" : "")}
+              title="Source Control"
+              onClick={() => toggleIdeActivity("scm")}
+            >
+              <GitBranch size={16} />
+            </button>
+            <button
+              type="button"
+              className={"sp-ide-act" + (activity === "problems" && ideLayout.sidebarOpen ? " active" : "")}
+              title="Problems"
+              onClick={() => toggleIdeActivity("problems")}
+            >
+              <AlertCircle size={16} />
+            </button>
+            <button
+              type="button"
+              className={"sp-ide-act" + (activity === "run" && ideLayout.sidebarOpen ? " active" : "")}
+              title="Run / Debug"
+              onClick={() => toggleIdeActivity("run")}
+            >
+              <Play size={16} />
+            </button>
+            <span className="sp-ide-act-spacer" />
+            <button
+              type="button"
+              className={"sp-ide-act" + (ideLayout.bottomOpen && ideLayout.bottom === "terminal" ? " active" : "")}
+              title="Terminal"
+              onClick={openTerminalPanel}
+            >
+              <TerminalIcon size={16} />
+            </button>
+            <button
+              type="button"
+              className={"sp-ide-act" + (ideLayout.bottomOpen && ideLayout.bottom === "output" ? " active" : "")}
+              title="Output"
+              onClick={() => toggleIdeBottom("output")}
+            >
+              <PanelBottom size={16} />
+            </button>
+          </div>
+        )}
+
+        {/* Side panel */}
+        {sideVisible && (
+          <div
+            className={`sp-ide-side sp-ide-side--${plan.sidebarMode}`}
+            style={
+              plan.sidebarMode === "docked"
+                ? { width: plan.sidebarWidth }
+                : undefined
+            }
           >
-            Retry
-          </button>
-        </div>
-      ) : !monacoReady ? (
-        <div className="sp-insp-body" style={{ alignItems: "center", justifyContent: "center" }}>
-          <FileCode2 size={22} style={{ color: "var(--sp-text-2)" }} />
-          <span style={{ color: "var(--sp-text-2)" }}>Starting editor…</span>
-        </div>
-      ) : (
-        <div className="sp-ide-main">
-          {filesDrawerOpen && (
-            <div className="sp-ide-files" aria-label="Project files">
-              <div className="sp-ide-files-head">Files</div>
-              <div className="sp-ide-files-list">
-                {(files || []).length === 0 && (
-                  <div className="sp-ide-files-empty">No files yet</div>
-                )}
-                {(files || []).map((f) => {
-                  const name = f.name || f.path || f;
-                  const path = f.path || f.name || f;
-                  const isDir = f.type === "dir" || f.is_dir;
-                  return (
-                    <button
-                      key={path}
-                      type="button"
-                      className={"sp-ide-file" + (target?.path === path ? " active" : "")}
-                      onClick={() => {
-                        if (!isDir) openEditor({ file: path });
-                      }}
-                      title={path}
-                    >
-                      {name}
-                    </button>
-                  );
-                })}
-              </div>
+            <div className="sp-ide-side-head">
+              <span>{activity === "scm" ? "Source Control" : activity === "search" ? "Search" : activity === "problems" ? "Problems" : activity === "run" ? "Run" : "Explorer"}</span>
+              <button
+                type="button"
+                className="sp-iconbtn"
+                title="Close panel"
+                onClick={() => setIdeLayout({ sidebarOpen: false })}
+              >
+                <X size={13} />
+              </button>
+            </div>
+            <div className="sp-ide-side-body">{renderSideBody()}</div>
+          </div>
+        )}
+        {plan.sidebarMode === "docked" && sideVisible && (
+          <div
+            className="sp-ide-side-resizer"
+            onMouseDown={onSidebarResize}
+            role="separator"
+            aria-orientation="vertical"
+          />
+        )}
+
+        {/* Editor column (always primary) */}
+        <div className="sp-ide-editor-col">
+          {breakdown.length > 0 && (
+            <div className="sp-ide-langbar" title="Project language mix">
+              {breakdown.map((b) => (
+                <span
+                  key={b.lang}
+                  style={{
+                    width: `${Math.max(4, b.pct)}%`,
+                    background: b.color,
+                  }}
+                  title={`${b.lang}: ${b.n}`}
+                />
+              ))}
             </div>
           )}
-          <div className="sp-ide-body">
-          <Editor
-            key={`${title}:${monacoAttempt}`}
-            language={language}
-            value={content || ""}
-            theme="vs-dark"
-            loading={<span style={{ color: "var(--sp-text-2)", fontSize: 12 }}>Mounting editor…</span>}
-            onChange={(v) => setContent(v ?? "")}
-            onMount={(ed) => {
-              editorRef.current = ed;
-            }}
-            options={{
-              fontSize: 13,
-              fontFamily: "'JetBrains Mono','Fira Code',monospace",
-              fontLigatures: true,
-              lineHeight: 1.6,
-              minimap: { enabled: window.innerWidth > 720, scale: 0.8 },
-              scrollBeyondLastLine: false,
-              bracketPairColorization: { enabled: true },
-              smoothScrolling: true,
-              cursorBlinking: "smooth",
-              padding: { top: 10 },
-              tabSize: 2,
-              automaticLayout: true,
-            }}
-          />
+
+          {loading && (
+            <div className="sp-ide-center-msg">Loading file…</div>
+          )}
+          {error && !loading && (
+            <div className="sp-ide-center-msg sp-ide-center-msg--err">
+              {error}
+              <button type="button" className="sp-ide-linkbtn" onClick={loadContent}>
+                Retry
+              </button>
+            </div>
+          )}
+          {monacoError && !loading && (
+            <div className="sp-ide-center-msg sp-ide-center-msg--err">
+              Editor failed to initialize: {monacoError}
+              <button
+                type="button"
+                className="sp-ide-linkbtn"
+                onClick={() => setMonacoAttempt((n) => n + 1)}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {!loading && !error && !monacoError && content !== null && (
+            <div className="sp-ide-body">
+              <Editor
+                key={`${title}:${monacoAttempt}`}
+                language={language}
+                value={content || ""}
+                theme="vs-dark"
+                loading={
+                  <span style={{ color: "var(--sp-text-2)", fontSize: 12 }}>
+                    Mounting editor…
+                  </span>
+                }
+                onChange={(v) => setContent(v ?? "")}
+                onMount={(ed) => {
+                  editorRef.current = ed;
+                }}
+                options={{
+                  fontSize: 13,
+                  fontFamily: "'JetBrains Mono','Fira Code',monospace",
+                  fontLigatures: true,
+                  lineHeight: 1.6,
+                  minimap: { enabled: ideSize.width > 720, scale: 0.8 },
+                  scrollBeyondLastLine: false,
+                  bracketPairColorization: { enabled: true },
+                  smoothScrolling: true,
+                  cursorBlinking: "smooth",
+                  padding: { top: 10 },
+                  tabSize: 2,
+                  automaticLayout: true,
+                }}
+              />
+            </div>
+          )}
+
+          {/* Bottom panel */}
+          {bottomVisible && (
+            <>
+              {plan.bottomMode === "docked" && (
+                <div
+                  className="sp-ide-bottom-resizer"
+                  onMouseDown={onBottomResize}
+                  role="separator"
+                  aria-orientation="horizontal"
+                />
+              )}
+              <div
+                className={`sp-ide-bottom sp-ide-bottom--${plan.bottomMode}`}
+                style={
+                  plan.bottomMode === "docked"
+                    ? { height: plan.bottomHeight }
+                    : undefined
+                }
+              >
+                <div className="sp-ide-bottom-tabs">
+                  {["terminal", "problems", "output"].map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={
+                        "sp-ide-tab" + (ideLayout.bottom === id ? " active" : "")
+                      }
+                      onClick={() => {
+                        if (id === "terminal") openTerminalPanel();
+                        else toggleIdeBottom(id);
+                      }}
+                    >
+                      {id}
+                    </button>
+                  ))}
+                  <span className="spacer" />
+                  <button
+                    type="button"
+                    className="sp-iconbtn"
+                    title="Close panel"
+                    onClick={() => setIdeLayout({ bottomOpen: false })}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                <div className="sp-ide-bottom-body">
+                  {ideLayout.bottom === "problems" && (
+                    <ProblemsPanel error={error || monacoError} statusText={statusText} />
+                  )}
+                  {ideLayout.bottom === "output" && (
+                    <OutputPanel statusText={statusText} />
+                  )}
+                  {ideLayout.bottom === "terminal" && (
+                    <div className="sp-ide-panel-empty">
+                      Terminal is available as a docked dimension.
+                      <button
+                        type="button"
+                        className="sp-ide-linkbtn"
+                        onClick={() => openTerminal?.({})}
+                      >
+                        Focus terminal
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
-        </div>
-      )}
+      </div>
+
       <div className="sp-ide-status">
         <span>{language}</span>
         <span>{loading ? "LOADING" : dirty ? "MODIFIED" : "SAVED"}</span>
         <span className="spacer" />
+        <span>
+          {plan.sidebarMode === "sheet" ? "side:sheet" : plan.sidebarMode}
+          {" · "}
+          {Math.round(ideSize.width)}×{Math.round(ideSize.height)}
+        </span>
         <span>Ctrl+S to save</span>
       </div>
     </div>
