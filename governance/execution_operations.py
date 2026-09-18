@@ -7,7 +7,10 @@ State machine (only these transitions allowed):
 Terminal states are immutable under normal execution.
 
 operation_id  = one consequential execution identity
-idempotency_key = semantic dedup key (tenant+owner+type+key)
+idempotency_key = semantic dedup key (tenant+owner+type+key).
+Identifies the *logical* consequential operation, not a request attempt.
+Arguments/input_digest are stored for evidence but are NOT uniqueness axes.
+See docs/architecture/operation-idempotency-contract.md.
 attempt       = attempt counter on that operation
 
 UNKNOWN → investigate only; execute=false; retry=false
