@@ -244,7 +244,215 @@ def _dep_satisfied(node: OrchestrationNode, condition: str) -> bool:
     if condition == DepCondition.APPROVED.value:
         return st in (NodeStatus.AUTHORIZED, NodeStatus.QUEUED, NodeStatus.RUNNING,
                       NodeStatus.VERIFYING, NodeStatus.VERIFIED, NodeStatus.COMPLETED)
+    if condition == DepCondition.FAILED.value:
+        # Explicit recovery/failure edges only — parent must be FAILED (not recovering).
+        return st == NodeStatus.FAILED
     return st in (NodeStatus.VERIFIED, NodeStatus.COMPLETED)
+
+
+def _incoming_map(
+    nodes: list[OrchestrationNode],
+    edges: list[OrchestrationEdge],
+) -> dict[str, list[tuple[str, str]]]:
+    """Build target -> [(source, condition), ...] from edges and node.dependencies."""
+    incoming: dict[str, list[tuple[str, str]]] = {n.id: [] for n in nodes}
+    for e in edges:
+        if e.target in incoming:
+            pair = (e.source, e.condition)
+            if pair not in incoming[e.target]:
+                incoming[e.target].append(pair)
+    for n in nodes:
+        for d in n.dependencies:
+            pair = (d, DepCondition.VERIFIED.value)
+            if pair not in incoming.setdefault(n.id, []):
+                incoming[n.id].append(pair)
+    return incoming
+
+
+def _children_map(
+    nodes: list[OrchestrationNode],
+    edges: list[OrchestrationEdge],
+) -> dict[str, list[tuple[str, str]]]:
+    """Build source -> [(target, condition), ...] (deduped)."""
+    children: dict[str, list[tuple[str, str]]] = {n.id: [] for n in nodes}
+    for e in edges:
+        lst = children.setdefault(e.source, [])
+        pair = (e.target, e.condition)
+        if pair not in lst:
+            lst.append(pair)
+    for n in nodes:
+        for d in n.dependencies:
+            lst = children.setdefault(d, [])
+            pair = (n.id, DepCondition.VERIFIED.value)
+            if pair not in lst:
+                lst.append(pair)
+    return children
+
+
+def has_recovery_path(
+    nodes: list[OrchestrationNode],
+    edges: list[OrchestrationEdge],
+    node_id: str,
+) -> bool:
+    """True when an explicit FAILED-condition recovery edge leaves this node.
+
+    Recovery topology is declared in the DAG (FAILED edges). Presence of such
+    an edge means Nuha may drive RECOVERING/REPLANNING; the DAG does not
+    authorize or execute recovery work itself.
+    """
+    children = _children_map(nodes, edges)
+    for _tid, cond in children.get(node_id, []):
+        if cond == DepCondition.FAILED.value:
+            return True
+    return False
+
+
+def recovery_eligible_targets(
+    nodes: list[OrchestrationNode],
+    edges: list[OrchestrationEdge],
+    failed_id: str,
+) -> list[str]:
+    """Node ids reachable via explicit FAILED-condition edges from failed_id."""
+    return [
+        tid for tid, cond in _children_map(nodes, edges).get(failed_id, [])
+        if cond == DepCondition.FAILED.value
+    ]
+
+
+def begin_node_recovery(node: OrchestrationNode) -> NodeStatus:
+    """FAILED → RECOVERING. Preserves job_or_task_id lineage."""
+    cur = NodeStatus(node.status)
+    if cur != NodeStatus.FAILED:
+        raise ValueError(f"begin_node_recovery requires FAILED, got {cur.value}")
+    node.set_status(NodeStatus.RECOVERING)
+    # Lineage: keep original job_or_task_id; recovery metadata is additive.
+    meta = dict(node.verification_evidence or {}) if isinstance(node.verification_evidence, dict) else {}
+    # Do not clear verification_evidence here — recovery evidence is applied later.
+    node.blocking_reason = None
+    return NodeStatus(node.status)
+
+
+def begin_node_replanning(node: OrchestrationNode) -> NodeStatus:
+    """RECOVERING → REPLANNING."""
+    cur = NodeStatus(node.status)
+    if cur != NodeStatus.RECOVERING:
+        raise ValueError(f"begin_node_replanning requires RECOVERING, got {cur.value}")
+    node.set_status(NodeStatus.REPLANNING)
+    return NodeStatus(node.status)
+
+
+def apply_recovery_success(
+    node: OrchestrationNode,
+    *,
+    evidence: Optional[dict] = None,
+) -> NodeStatus:
+    """REPLANNING → READY after recovery planning succeeds.
+
+    Does NOT mark VERIFIED/COMPLETED — that still requires verification evidence
+    via the normal VERIFYING → VERIFIED path after re-execution.
+    """
+    cur = NodeStatus(node.status)
+    if cur != NodeStatus.REPLANNING:
+        raise ValueError(f"apply_recovery_success requires REPLANNING, got {cur.value}")
+    if evidence is not None:
+        # Store recovery planning evidence without claiming verification success.
+        base = dict(node.verification_evidence) if isinstance(node.verification_evidence, dict) else {}
+        base["recovery"] = evidence
+        node.verification_evidence = base
+    node.set_status(NodeStatus.READY)
+    node.blocking_reason = None
+    return NodeStatus(node.status)
+
+
+def apply_recovery_failure(node: OrchestrationNode, *, reason: str = "recovery_failed") -> NodeStatus:
+    """End a failed recovery attempt.
+
+    RECOVERING → FAILED (retryable failure state).
+    REPLANNING → CANCELLED (terminal; transition table has no REPLANNING→FAILED).
+    """
+    cur = NodeStatus(node.status)
+    if cur == NodeStatus.RECOVERING:
+        node.set_status(NodeStatus.FAILED)
+        node.blocking_reason = reason
+        return NodeStatus(node.status)
+    if cur == NodeStatus.REPLANNING:
+        node.set_status(NodeStatus.CANCELLED)
+        node.blocking_reason = reason
+        return NodeStatus(node.status)
+    raise ValueError(f"apply_recovery_failure requires RECOVERING|REPLANNING, got {cur.value}")
+
+
+def mark_node_verified(node: OrchestrationNode, evidence: dict) -> NodeStatus:
+    """VERIFYING → VERIFIED only when evidence is present (evidence-based)."""
+    if not evidence:
+        raise ValueError("mark_node_verified requires non-empty verification evidence")
+    cur = NodeStatus(node.status)
+    if cur != NodeStatus.VERIFYING:
+        raise ValueError(f"mark_node_verified requires VERIFYING, got {cur.value}")
+    node.verification_evidence = dict(evidence)
+    node.set_status(NodeStatus.VERIFIED)
+    return NodeStatus(node.status)
+
+
+def reconcile_after_recovery(
+    nodes: list[OrchestrationNode],
+    edges: list[OrchestrationEdge],
+    recovered_id: str,
+) -> list[str]:
+    """Re-evaluate dependents after a recovered node is READY/VERIFIED/COMPLETED.
+
+    Clears dependency_failed blocks when dependencies are again satisfiable.
+    Idempotent: repeated calls do not duplicate edges or corrupt status.
+    Returns node ids that became READY.
+    """
+    by_id = {n.id: n for n in nodes}
+    incoming = _incoming_map(nodes, edges)
+    newly_ready: list[str] = []
+
+    for n in nodes:
+        st = NodeStatus(n.status)
+        if st not in (
+            NodeStatus.BLOCKED_BY_DEPENDENCY, NodeStatus.PENDING, NodeStatus.READY, NodeStatus.REPLANNING,
+        ):
+            continue
+        deps = incoming.get(n.id, [])
+        all_ok = True
+        for src, cond in deps:
+            parent = by_id.get(src)
+            if not parent or not _dep_satisfied(parent, cond):
+                all_ok = False
+                break
+        if all_ok:
+            if st == NodeStatus.BLOCKED_BY_DEPENDENCY:
+                # Unblock: PENDING is not always valid from BLOCKED_BY_DEPENDENCY;
+                # READY is allowed from BLOCKED_BY_DEPENDENCY.
+                try:
+                    n.set_status(NodeStatus.READY)
+                except ValueError:
+                    n.status = NodeStatus.READY.value
+                n.blocking_reason = None
+            newly_ready.append(n.id)
+        else:
+            if st in (NodeStatus.PENDING, NodeStatus.READY) and deps:
+                # Still blocked
+                if st == NodeStatus.PENDING:
+                    try:
+                        n.set_status(NodeStatus.BLOCKED_BY_DEPENDENCY)
+                    except ValueError:
+                        n.status = NodeStatus.BLOCKED_BY_DEPENDENCY.value
+                failed_parents = [
+                    src for src, cond in deps
+                    if by_id.get(src) and NodeStatus(by_id[src].status) == NodeStatus.FAILED
+                    and cond != DepCondition.FAILED.value
+                ]
+                if failed_parents:
+                    n.blocking_reason = f"dependency_failed:{failed_parents[0]}"
+
+    # Also surface readiness via canonical helper
+    for rid in compute_readiness(nodes, edges):
+        if rid not in newly_ready:
+            newly_ready.append(rid)
+    return newly_ready
 
 
 def compute_readiness(
@@ -253,14 +461,7 @@ def compute_readiness(
 ) -> list[str]:
     """Return node ids that are READY (deps satisfied, not terminal/cancelled)."""
     by_id = {n.id: n for n in nodes}
-    # Build incoming edges with conditions
-    incoming: dict[str, list[tuple[str, str]]] = {n.id: [] for n in nodes}
-    for e in edges:
-        if e.target in incoming:
-            incoming[e.target].append((e.source, e.condition))
-    for n in nodes:
-        for d in n.dependencies:
-            incoming.setdefault(n.id, []).append((d, DepCondition.VERIFIED.value))
+    incoming = _incoming_map(nodes, edges)
 
     ready_ids: list[str] = []
     for n in nodes:
@@ -269,6 +470,7 @@ def compute_readiness(
             NodeStatus.COMPLETED, NodeStatus.VERIFIED, NodeStatus.CANCELLED,
             NodeStatus.BLOCKED, NodeStatus.RUNNING, NodeStatus.QUEUED,
             NodeStatus.AUTHORIZED, NodeStatus.VERIFYING,
+            NodeStatus.FAILED, NodeStatus.RECOVERING,
         ):
             continue
         deps = incoming.get(n.id, [])
@@ -299,19 +501,36 @@ def propagate_failure(
     nodes: list[OrchestrationNode],
     edges: list[OrchestrationEdge],
     failed_id: str,
+    *,
+    begin_recovery: bool = True,
 ) -> list[str]:
-    """Mark dependents blocked when a node fails (no recovery path yet)."""
-    by_id = {n.id: n for n in nodes}
-    blocked: list[str] = []
-    children: dict[str, list[str]] = {n.id: [] for n in nodes}
-    for e in edges:
-        children.setdefault(e.source, []).append(e.target)
-    for n in nodes:
-        for d in n.dependencies:
-            children.setdefault(d, []).append(n.id)
+    """Propagate failure to dependents with recovery awareness.
 
-    stack = list(children.get(failed_id, []))
-    seen = set()
+    - Ordinary VERIFIED/COMPLETED dependents become BLOCKED_BY_DEPENDENCY.
+    - Explicit FAILED-condition recovery edges are NOT blocked (they may become READY).
+    - If a recovery path exists and begin_recovery is True, the failed node
+      transitions FAILED → RECOVERING (orchestration state only; no execution).
+    - Descendants are not terminally BLOCKED while recovery remains possible.
+    - Idempotent: re-running does not duplicate blocks or edges.
+    """
+    by_id = {n.id: n for n in nodes}
+    failed = by_id.get(failed_id)
+    if failed and NodeStatus(failed.status) == NodeStatus.FAILED:
+        if begin_recovery and has_recovery_path(nodes, edges, failed_id):
+            try:
+                begin_node_recovery(failed)
+            except ValueError:
+                pass
+
+    blocked: list[str] = []
+    children = _children_map(nodes, edges)
+
+    # BFS over ordinary (non-FAILED-condition) descendants
+    stack = [
+        tid for tid, cond in children.get(failed_id, [])
+        if cond != DepCondition.FAILED.value
+    ]
+    seen: set[str] = set()
     while stack:
         cid = stack.pop()
         if cid in seen:
@@ -321,12 +540,16 @@ def propagate_failure(
         if not node:
             continue
         st = NodeStatus(node.status)
-        if st in (NodeStatus.COMPLETED, NodeStatus.VERIFIED, NodeStatus.CANCELLED):
+        if st in (NodeStatus.COMPLETED, NodeStatus.VERIFIED, NodeStatus.CANCELLED, NodeStatus.BLOCKED):
             continue
+        # Soft block — recoverable after parent recovers and verifies
         node.status = NodeStatus.BLOCKED_BY_DEPENDENCY.value
         node.blocking_reason = f"dependency_failed:{failed_id}"
-        blocked.append(cid)
-        stack.extend(children.get(cid, []))
+        if cid not in blocked:
+            blocked.append(cid)
+        for tid, cond in children.get(cid, []):
+            if cond != DepCondition.FAILED.value:
+                stack.append(tid)
     return blocked
 
 
