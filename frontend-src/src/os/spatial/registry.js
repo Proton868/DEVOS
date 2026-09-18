@@ -54,7 +54,7 @@ export const WORKSPACE_REGISTRY = {
     flexibility: 0.55,
     priority: 90,
     supportsFullscreen: true,
-    supportsOverlay: false,
+    supportsOverlay: true,
     supportsDock: true,
     supportsMobileNav: true,
     supportsGestures: true,

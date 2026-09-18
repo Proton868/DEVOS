@@ -419,15 +419,49 @@ spatialFullscreenId:
 
   // ── Spatial engine (constraint-based; presentation only) ──
   spatialFullscreenId: null,
+  /** Snapshot of layout before entering spatial fullscreen (restore on exit). */
+  spatialReturnArrangement: null,
   setSpatialFullscreenId: (id) => {
-    set({ spatialFullscreenId: id || null });
-    try {
-      const prev = JSON.parse(localStorage.getItem("devos_sp_layout") || "{}");
-      localStorage.setItem(
-        "devos_sp_layout",
-        JSON.stringify({ ...prev, spatialFullscreenId: id || null })
-      );
-    } catch (_) { /* ignore */ }
+    set((s) => {
+      const nextId = id || null;
+      let arrangement = s.spatialReturnArrangement;
+      let layout = s.layout;
+      if (nextId && !s.spatialFullscreenId) {
+        arrangement = {
+          activeWorkspace: s.layout?.activeWorkspace || "canvas",
+          focusCollapsed: !!s.layout?.focusCollapsed,
+          focusWidthPct: s.layout?.focusWidthPct,
+        };
+      }
+      if (!nextId && arrangement) {
+        layout = {
+          ...s.layout,
+          activeWorkspace: arrangement.activeWorkspace || s.layout?.activeWorkspace,
+          focusCollapsed:
+            arrangement.focusCollapsed !== undefined
+              ? !!arrangement.focusCollapsed
+              : s.layout?.focusCollapsed,
+          focusWidthPct: arrangement.focusWidthPct ?? s.layout?.focusWidthPct,
+        };
+        arrangement = null;
+      }
+      try {
+        const prev = JSON.parse(localStorage.getItem("devos_sp_layout") || "{}");
+        localStorage.setItem(
+          "devos_sp_layout",
+          JSON.stringify({
+            ...prev,
+            ...layout,
+            spatialFullscreenId: nextId,
+          })
+        );
+      } catch (_) { /* ignore */ }
+      return {
+        spatialFullscreenId: nextId,
+        spatialReturnArrangement: arrangement,
+        layout,
+      };
+    });
   },
   spatialMeta: {
     presentation: "split",

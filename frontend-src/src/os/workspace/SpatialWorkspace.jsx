@@ -238,7 +238,7 @@ export default function SpatialWorkspace() {
           {!stack && (
             <div
               className="sp-resize-handle"
-              onMouseDown={onResizeStart}
+              className="sp-focus-resize" onMouseDown={onResizeStart}
               role="separator"
               aria-orientation="vertical"
             />
@@ -328,8 +328,7 @@ export default function SpatialWorkspace() {
       {plan.showDimensionNav && (
         <div className="sp-mobile-switcher sp-dimension-nav" role="tablist" aria-label="Workspace dimensions">
           {PRIMARY_NAV_ORDER.map((id) => {
-            const open = openIds.includes(id) || id === "flow";
-            if (!open && id !== plan.activeId) return null;
+            // Always expose primary dimensions for discoverability (spatial nav, not open-only tabs)
             const label =
               id === "chat" ? "Nuha" : id === "flow" ? "Flow" : id === "ide" ? "IDE" : "Preview";
             const Icon =

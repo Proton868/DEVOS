@@ -128,3 +128,49 @@ for (const id of ["flow", "chat", "ide", "preview", "terminal", "inspector", "fi
 }
 
 console.log("resolveLayout.test.mjs: ok");
+
+// portrait stack: prefer single active dimension, dimension nav
+{
+  const plan = resolveLayout(
+    { width: 390, height: 844, orientation: "portrait" },
+    {
+      activeId: "ide",
+      openIds: ["flow", "chat", "ide"],
+      fullscreenId: null,
+      collapsedIds: [],
+    }
+  );
+  assert.equal(plan.presentation, "stack");
+  assert.equal(plan.showDimensionNav, true);
+  assert.ok(plan.surfaces.ide?.mode === "visible" || plan.surfaces.ide?.mode === "fullscreen");
+}
+
+// tablet landscape mid-ground: limited simultaneous
+{
+  const plan = resolveLayout(
+    { width: 900, height: 600, orientation: "landscape" },
+    {
+      activeId: "flow",
+      openIds: ["flow", "chat", "ide"],
+      fullscreenId: null,
+      collapsedIds: [],
+    }
+  );
+  assert.ok(["split", "stack"].includes(plan.presentation));
+}
+
+// fullscreen chat restores active
+{
+  const plan = resolveLayout(
+    { width: 1280, height: 800 },
+    {
+      activeId: "flow",
+      openIds: ["flow", "chat"],
+      fullscreenId: "chat",
+      collapsedIds: [],
+    }
+  );
+  assert.equal(plan.surfaces.chat?.mode, "fullscreen");
+}
+
+console.log("resolveLayout.test.mjs: extended ok");

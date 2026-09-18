@@ -9,6 +9,7 @@ import {
 import MenorahLogo from "../MenorahLogo";
 import SteelpanSpinner, { useAiBusy } from "../SteelpanSpinner";
 import useOsStore from "../store/osStore";
+import ProfileAvatar from "../profile/ProfileAvatar";
 import useStore from "../../store/useStore";
 import { api } from "../../services/api";
 
@@ -250,7 +251,12 @@ export default function MissionBar() {
 
         <div style={{ position: "relative" }} className="desktop-only">
           <button className="sp-chip user-chip" onClick={() => setOpenPop(openPop === "user" ? null : "user")}>
-            {userName}
+            <ProfileAvatar
+              src={user?.avatar_url || "/api/account/avatar"}
+              name={userName}
+              size={22}
+            />
+            <span className="sp-user-chip-name">{userName}</span>
             <ChevronDown size={11} />
           </button>
           {openPop === "user" && (

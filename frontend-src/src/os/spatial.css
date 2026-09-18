@@ -3117,3 +3117,81 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
   .sp-profile-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sp-profile-identity { flex-direction: column; align-items: center; text-align: center; }
 }
+
+
+/* ── Spatial OS experience audit fixes ─────────────────────── */
+.sp-dimension-nav,
+.sp-mobile-switcher {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+  background: rgba(8, 10, 14, 0.94);
+  border-top: 1px solid rgba(255,255,255,0.08);
+  z-index: 40;
+}
+.sp-edge-tab {
+  flex: 1 1 0;
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--sp-text-2, #94a3b8);
+  font-size: 10px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.sp-edge-tab--active {
+  color: var(--sp-accent, #00ffb3);
+  background: rgba(0, 255, 179, 0.1);
+}
+.sp-resize-handle,
+.sp-focus-resize {
+  width: 10px;
+  min-width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+  position: relative;
+  flex: 0 0 auto;
+}
+.sp-resize-handle::after,
+.sp-focus-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 44px;
+  transform: translateX(-50%);
+}
+.sp-iconbtn {
+  min-width: 36px;
+  min-height: 36px;
+}
+@media (pointer: coarse) {
+  .sp-iconbtn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .sp-pv-btn {
+    min-height: 40px;
+  }
+  .sp-canvas-hud button {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}
+/* Stack presentation: active dimension claims body; avoid desktop chrome density */
+.sp-work[data-presentation="stack"] .sp-canvas-layer {
+  min-width: 0;
+}
+.sp-work[data-presentation="stack"] .sp-focus {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+}
