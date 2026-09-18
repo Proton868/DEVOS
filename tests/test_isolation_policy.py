@@ -253,9 +253,10 @@ def test_select_backend_bwrap_restricted():
                 return "/usr/bin/bwrap"
             return None
         with mock.patch("execution.isolation._which", side_effect=which):
-            backend, strength = select_backend()
-            assert backend == "bwrap"
-            assert strength == IsolationStrength.RESTRICTED.value
+            with mock.patch("execution.isolation._bwrap_operational", return_value=True):
+                backend, strength = select_backend()
+                assert backend == "bwrap"
+                assert strength == IsolationStrength.RESTRICTED.value
 
 
 def test_mission_acceptance_isolation_not_success():
@@ -295,3 +296,91 @@ def test_evaluate_decision_untrusted_denied_on_unshare():
         assert d["allowed"] is False
         assert d["policy_decision"] == "denied"
         assert d["suitable_for_untrusted_code"] is False
+
+
+def test_app_runtime_source_force_untrusted():
+    """source=app_runtime must force untrusted even if policy=trusted (anti-spoof)."""
+    from execution.isolation import classify_execution_request, POLICY_UNTRUSTED
+    assert classify_execution_request(policy="trusted", source="app_runtime") == POLICY_UNTRUSTED
+    assert classify_execution_request(policy="trusted", source="application_runtime") == POLICY_UNTRUSTED
+    assert classify_execution_request(policy="privileged", source="app_runtime") == POLICY_UNTRUSTED
+
+
+def test_bwrap_operational_safe_from_running_event_loop():
+    """_bwrap_operational must not call asyncio.run() (nested loop would fail)."""
+    from execution.isolation import _bwrap_operational, select_backend
+
+    async def _go():
+        ok = _bwrap_operational()
+        assert isinstance(ok, bool)
+        backend, strength = select_backend(allow_network=False)
+        assert isinstance(backend, str)
+        assert isinstance(strength, str)
+        return ok, backend, strength
+
+    result = asyncio.run(_go())
+    assert result is not None
+
+
+def test_bwrap_operational_not_mere_binary_check():
+    """When binary is present but sandbox creation fails, probe returns False."""
+    from execution.isolation import _bwrap_operational
+    with mock.patch("execution.isolation._which", return_value="/usr/bin/bwrap"):
+        with mock.patch("subprocess.run") as run_mock:
+            run_mock.return_value = mock.Mock(returncode=1)
+            assert _bwrap_operational() is False
+            run_mock.assert_called()
+            args = run_mock.call_args[0][0]
+            joined = " ".join(str(a) for a in args)
+            assert "--unshare-net" in joined or "true" in joined
+
+
+def test_spawn_isolated_denied_for_untrusted_on_unshare():
+    from execution.isolation import spawn_isolated, IsolationStrength, POLICY_UNTRUSTED
+
+    async def _go():
+        with mock.patch(
+            "execution.isolation.select_backend",
+            return_value=("unshare", IsolationStrength.NETWORK_ONLY.value),
+        ):
+            r = await spawn_isolated(
+                ["sleep", "60"],
+                policy=POLICY_UNTRUSTED,
+                source="app_runtime",
+                merge_stderr=True,
+            )
+            assert r.status == "isolation_unavailable"
+            assert r.process is None
+            assert r.policy_decision == "denied"
+            ev = r.to_evidence()
+            assert ev["trust_level"] == POLICY_UNTRUSTED
+            assert ev["source"] == "app_runtime"
+            assert ev["policy_decision"] == "denied"
+            assert ev["strength"] == IsolationStrength.NETWORK_ONLY.value
+            assert ev["actual_isolation"] == "unshare"
+            assert ev["failure_reason"]
+            assert ev["status"] == "isolation_unavailable"
+            assert ev.get("exit_code") == 126
+
+    asyncio.run(_go())
+
+
+def test_spawn_isolated_anti_spoof_trusted_policy():
+    """Even policy=trusted cannot elevate app_runtime source."""
+    from execution.isolation import spawn_isolated, IsolationStrength, POLICY_UNTRUSTED
+
+    async def _go():
+        with mock.patch(
+            "execution.isolation.select_backend",
+            return_value=("unshare", IsolationStrength.NETWORK_ONLY.value),
+        ):
+            r = await spawn_isolated(
+                ["echo", "hi"],
+                policy="trusted",
+                source="app_runtime",
+            )
+            assert r.policy == POLICY_UNTRUSTED
+            assert r.policy_decision == "denied"
+            assert r.process is None
+
+    asyncio.run(_go())

@@ -21,7 +21,11 @@ from typing import Optional
 
 from execution.files import FileService, PathViolation
 from execution.app_detect import detect_application
-from execution.isolation_runtime import wrap_command, isolation_available, IsolationUnavailable
+from execution.isolation import (
+    spawn_isolated,
+    run_isolated,
+    POLICY_UNTRUSTED,
+)
 from execution.log_stream import publish_log
 from execution.durable_store import upsert_runtime, new_id
 
@@ -149,6 +153,15 @@ class ApplicationRuntime:
     def _cwd(self) -> str:
         return str(self.fs.root)
 
+    def _sandbox_language(self) -> str:
+        """Map application kind to Docker/sandbox language image."""
+        kind = (self.spec.kind or "").upper()
+        if kind in ("NEXTJS_APP", "VITE_APP", "REACT_APP", "NODE_APP") or "NODE" in kind:
+            return "node"
+        if kind in ("PYTHON_APP",) or "PYTHON" in kind:
+            return "python"
+        return "bash"
+
     async def _run_cmd(
         self,
         cmd: list[str],
@@ -156,58 +169,37 @@ class ApplicationRuntime:
         timeout: float = 300,
         allow_network: bool = False,
         env_extra: Optional[dict] = None,
-        trust: str = "untrusted",
     ) -> tuple[int, str, str]:
+        """Finite project command — always untrusted; cannot be elevated."""
         env = filter_env(env_extra, allow_network=allow_network)
         self._log_buf.append(f"$ {' '.join(cmd)}\n")
         try:
-            run_cmd = wrap_command(
-                cmd, cwd=self._cwd(), net=allow_network, trust=trust,
-            )
-            proc = await asyncio.create_subprocess_exec(
-                *run_cmd,
+            result = await run_isolated(
+                cmd,
                 cwd=self._cwd(),
                 env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                timeout_s=timeout,
+                language=self._sandbox_language(),
+                allow_network=allow_network,
+                policy=POLICY_UNTRUSTED,
+                source="app_runtime",
             )
-        except IsolationUnavailable as e:
-            self._log_buf.append(f"[isolation] {e.reason}\n")
-            return 126, "", str(e.reason)
         except FileNotFoundError as e:
             return 127, "", f"command not found: {cmd[0]} ({e})"
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            try:
-                await proc.wait()
-            except Exception:
-                pass
+        if result.status == "isolation_unavailable":
+            self._log_buf.append(f"[isolation] {result.stderr}\n")
+            return 126, "", result.stderr or result.policy_reason
+        if result.status == "timeout":
             return -1, "", f"timeout after {timeout}s"
-        except Exception:
-            if proc.returncode is None:
-                try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
-                try:
-                    await proc.wait()
-                except Exception:
-                    pass
-            raise
-        out = stdout.decode(errors="replace")
-        err = stderr.decode(errors="replace")
+        out = result.stdout or ""
+        err = result.stderr or ""
         self._log_buf.append(out)
         self._log_buf.append(err)
-        for line in (out or '').splitlines():
-            publish_log(self.runtime_id, 'stdout', line)
-        for line in (err or '').splitlines():
-            publish_log(self.runtime_id, 'stderr', line)
-        return proc.returncode or 0, out, err
+        for line in (out or "").splitlines():
+            publish_log(self.runtime_id, "stdout", line)
+        for line in (err or "").splitlines():
+            publish_log(self.runtime_id, "stderr", line)
+        return result.exit_code, out, err
 
     def _detect_and_plan(self) -> dict:
         info = detect_application(self.fs)
@@ -257,7 +249,7 @@ class ApplicationRuntime:
             state=AppRuntimeState.BUILT,
             detail="dependencies installed",
             logs_tail="".join(self._log_buf)[-4000:],
-            evidence={"exit_code": 0, "detection": info, "isolation": isolation_available()},
+            evidence={"exit_code": 0, "detection": info},
         )
         return self.status
 
@@ -308,7 +300,6 @@ class ApplicationRuntime:
         if not self.spec.start_command:
             self.status = AppRuntimeStatus(state=AppRuntimeState.FAILED, detail="no start command")
             return self.status
-        # Force bind localhost only
         cmd = list(self.spec.start_command)
         env_extra = {
             "PORT": str(port),
@@ -317,29 +308,35 @@ class ApplicationRuntime:
             "NEXT_TELEMETRY_DISABLED": "1",
         }
         self.status = AppRuntimeStatus(state=AppRuntimeState.STARTING, detail="starting", port=port)
-        env = filter_env(env_extra, allow_network=True)
-        try:
-            # App code is untrusted; require isolation. Network needed for loopback listen.
-            run_cmd = wrap_command(cmd, cwd=self._cwd(), net=True, trust="untrusted")
-            self._proc = await asyncio.create_subprocess_exec(
-                *run_cmd,
-                cwd=self._cwd(),
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-        except IsolationUnavailable as e:
+        # Pass caller's allow_network (do not hardcode). Never elevates to host.
+        env = filter_env(env_extra, allow_network=self.spec.allow_network)
+        spawn = await spawn_isolated(
+            cmd,
+            cwd=self._cwd(),
+            env=env,
+            language=self._sandbox_language(),
+            allow_network=self.spec.allow_network,
+            policy=POLICY_UNTRUSTED,
+            source="app_runtime",
+            merge_stderr=True,
+        )
+        isolation_ev = spawn.to_evidence()
+        if spawn.status != "spawned" or spawn.process is None:
+            detail = spawn.policy_reason or spawn.stderr or "isolation unavailable"
             self.status = AppRuntimeStatus(
                 state=AppRuntimeState.FAILED,
-                detail=str(e.reason),
-                evidence={"isolation": "unavailable", "backend": e.backend},
+                detail=detail,
+                evidence={
+                    "isolation": isolation_ev,
+                    "backend": spawn.isolation,
+                    "strength": spawn.strength,
+                    "policy_decision": spawn.policy_decision,
+                },
             )
             return self.status
-        except FileNotFoundError as e:
-            self.status = AppRuntimeStatus(state=AppRuntimeState.FAILED, detail=str(e))
-            return self.status
+        self._proc = spawn.process
         self._port = port
-        # Health poll
+        # Health poll (preserved)
         deadline = time.time() + timeout
         healthy = False
         import urllib.request
@@ -355,7 +352,7 @@ class ApplicationRuntime:
                     state=AppRuntimeState.FAILED,
                     detail="process exited before ready",
                     logs_tail=out[-4000:],
-                    evidence={"exit_code": self._proc.returncode},
+                    evidence={"exit_code": self._proc.returncode, "isolation": isolation_ev},
                 )
                 return self.status
             try:
@@ -370,6 +367,7 @@ class ApplicationRuntime:
                 state=AppRuntimeState.FAILED,
                 detail="health check timeout",
                 port=port,
+                evidence={"isolation": isolation_ev},
             )
             return self.status
         self.status = AppRuntimeStatus(
@@ -377,29 +375,56 @@ class ApplicationRuntime:
             detail="listening",
             port=port,
             pid=self._proc.pid,
-            evidence={"health": "ok", "bind": "127.0.0.1"},
+            evidence={
+                "health": "ok",
+                "bind": "127.0.0.1",
+                "isolation": isolation_ev,
+            },
         )
         _RUNTIME[runtime_key(self.spec.user_id, self.spec.project_id)] = self
         upsert_runtime({
-            'runtime_id': self.runtime_id, 'user_id': self.spec.user_id,
-            'project_id': self.spec.project_id, 'status': self.status.state.value,
-            'pid': self.status.pid, 'port': self.status.port,
-            'cwd': self._cwd(), 'app_type': self.spec.kind,
-            'isolation_mode': isolation_available(),
-            'started_at': __import__('time').time(),
+            "runtime_id": self.runtime_id, "user_id": self.spec.user_id,
+            "project_id": self.spec.project_id, "status": self.status.state.value,
+            "pid": self.status.pid, "port": self.status.port,
+            "cwd": self._cwd(), "app_type": self.spec.kind,
+            "isolation_mode": isolation_ev,
+            "started_at": __import__("time").time(),
         })
-        publish_log(self.runtime_id, 'system', f'ready port={self.status.port}')
+        publish_log(self.runtime_id, "system", f"ready port={self.status.port}")
         return self.status
 
     async def stop(self) -> AppRuntimeStatus:
         if self._proc and self._proc.returncode is None:
             try:
-                self._proc.send_signal(signal.SIGTERM)
+                try:
+                    pgid = os.getpgid(self._proc.pid)
+                    if pgid > 0:
+                        os.killpg(pgid, signal.SIGTERM)
+                    else:
+                        self._proc.send_signal(signal.SIGTERM)
+                except (ProcessLookupError, PermissionError, OSError):
+                    try:
+                        self._proc.send_signal(signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
                 try:
                     await asyncio.wait_for(self._proc.wait(), timeout=5)
                 except asyncio.TimeoutError:
-                    self._proc.kill()
-                    await self._proc.wait()
+                    try:
+                        pgid = os.getpgid(self._proc.pid)
+                        if pgid > 0:
+                            os.killpg(pgid, signal.SIGKILL)
+                        else:
+                            self._proc.kill()
+                    except (ProcessLookupError, PermissionError, OSError):
+                        try:
+                            self._proc.kill()
+                        except ProcessLookupError:
+                            pass
+                    try:
+                        await self._proc.wait()
+                    except Exception:
+                        pass
             except ProcessLookupError:
                 pass
         self._proc = None

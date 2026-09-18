@@ -94,6 +94,60 @@ class IsolationResult:
         }
 
 
+@dataclass
+class SpawnResult:
+    """Result of spawn_isolated — long-running process handle + isolation evidence.
+
+    process is None when isolation is denied or spawn failed.
+    Does not wait for process exit.
+    """
+    status: str  # "spawned" | "isolation_unavailable" | "error"
+    process: Optional[asyncio.subprocess.Process]
+    isolation: str
+    strength: str
+    policy: str
+    policy_decision: str
+    policy_reason: str
+    isolation_level: str = IsolationLevel.DEGRADED.value
+    stderr: str = ""
+    source: str = ""
+    exit_code: Optional[int] = None
+
+    @property
+    def is_isolated(self) -> bool:
+        return self.strength in (
+            IsolationStrength.STRONG.value,
+            IsolationStrength.RESTRICTED.value,
+        )
+
+    def to_evidence(self) -> dict:
+        """Machine-readable isolation decision for audit/runtime persistence.
+
+        Contract fields for ApplicationRuntime evidence["isolation"]:
+          trust_level, source, requested_isolation, actual_isolation, strength,
+          isolation_level, policy_decision, failure_reason, status, exit_code.
+        """
+        return {
+            "trust_level": self.policy,
+            "source": self.source,
+            "requested_isolation": "strong_or_restricted"
+            if self.policy in (POLICY_UNTRUSTED, POLICY_PRIVILEGED)
+            else "any_available",
+            "actual_isolation": self.isolation,
+            "backend": self.isolation,
+            "strength": self.strength,
+            "isolation_level": self.isolation_level,
+            "policy_decision": self.policy_decision or (
+                "denied" if self.status == "isolation_unavailable" else "allowed"
+            ),
+            "failure_reason": self.policy_reason or (
+                self.stderr if self.status == "isolation_unavailable" else ""
+            ),
+            "status": self.status,
+            "exit_code": self.exit_code,
+        }
+
+
 def _which(*names: str) -> Optional[str]:
     for n in names:
         p = shutil.which(n)
@@ -174,11 +228,51 @@ def detect_backends() -> dict:
     }
 
 
+def _bwrap_operational() -> bool:
+    """Verify bubblewrap can actually create a sandbox (not just that the binary exists).
+
+    Synchronous so it is safe to call from select_backend() whether or not an
+    asyncio event loop is already running. Must not use asyncio.run().
+    """
+    bwrap = _which("bwrap", "bubblewrap")
+    if not bwrap:
+        return False
+    try:
+        import subprocess
+        r = subprocess.run(
+            [
+                bwrap,
+                "--unshare-net",
+                "--die-with-parent",
+                "--ro-bind", "/usr", "/usr",
+                "--ro-bind", "/bin", "/bin",
+                "--ro-bind-try", "/lib", "/lib",
+                "--ro-bind-try", "/lib64", "/lib64",
+                "--proc", "/proc",
+                "--dev", "/dev",
+                "--tmpfs", "/tmp",
+                "--",
+                "true",
+            ],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        return r.returncode == 0
+    except Exception as e:
+        logger.debug("bwrap operational probe failed: %s", e)
+        return False
+
+
 def select_backend(*, allow_network: bool = False) -> tuple[str, str]:
-    """Return (backend_name, strength) without executing."""
+    """Return (backend_name, strength) without executing.
+
+    bwrap is only selected when an operational probe confirms sandbox creation
+    works (binary presence alone is insufficient).
+    """
     if _use_docker():
         return "docker", IsolationStrength.STRONG.value
-    if _which("bwrap", "bubblewrap"):
+    if _which("bwrap", "bubblewrap") and _bwrap_operational():
         return "bwrap", IsolationStrength.RESTRICTED.value
     if _which("firejail"):
         return "firejail", IsolationStrength.RESTRICTED.value
@@ -238,6 +332,7 @@ def classify_execution_request(
         "project_bootstrap", "check_runner", "coding_loop", "coding",
         "sandbox", "workflow", "mission", "a2a", "uploaded", "repo",
         "flutter", "toolchain",
+        "app_runtime", "application_runtime",
     )
     if any(src == s or src.startswith(s + "_") or src.endswith("_" + s) for s in _FORCE_UNTRUSTED_SOURCES):
         return POLICY_UNTRUSTED
@@ -306,6 +401,83 @@ def evaluate_isolation_decision(
     }
 
 
+def _sanitize_env(env: Optional[dict], policy: str) -> dict:
+    """Canonical env sanitization shared by run_isolated and spawn_isolated."""
+    safe_keys = (
+        "PATH", "HOME", "LANG", "LC_ALL", "TERM",
+        "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED", "NODE_ENV", "TMPDIR",
+        "FLUTTER_ROOT", "PUB_CACHE", "DART_SDK", "JAVA_HOME",
+        "PORT", "HOST", "HOSTNAME", "CI",
+        "npm_config_yes", "npm_config_fund", "npm_config_audit", "npm_config_registry",
+        "NEXT_TELEMETRY_DISABLED",
+    )
+    base_env = env or {}
+    pol = normalize_policy(policy)
+    if pol == POLICY_UNTRUSTED:
+        out = {k: v for k, v in base_env.items() if k in safe_keys}
+    else:
+        out = {
+            k: v for k, v in base_env.items()
+            if k in safe_keys or k.startswith("SECRET_") or k == "PYTHONPATH"
+        }
+    out.setdefault("PATH", "/usr/bin:/bin")
+    return out
+
+
+def _build_isolated_argv(
+    cmd,
+    *,
+    cwd,
+    allow_network: bool,
+    language: str,
+    backend: str,
+) -> tuple[list[str], Optional[str]]:
+    """Build full argv + effective cwd for an isolation backend.
+
+    Returns (full_argv, cwd_for_subprocess). cwd may be None when the
+    sandbox already chdir's into the work dir (docker/bwrap).
+    """
+    work = cwd or tempfile.mkdtemp(prefix="devos-iso-")
+    if backend == "docker":
+        docker = _which("docker")
+        full = [
+            docker, "run", "--rm",
+            *_docker_flags(allow_network=allow_network),
+            "-v", f"{work}:/work:rw",
+            "-w", "/work",
+            _docker_image(language),
+            *cmd,
+        ]
+        return full, None
+    if backend == "bwrap":
+        bwrap = _which("bwrap", "bubblewrap")
+        net_args = [] if allow_network else ["--unshare-net"]
+        full = [
+            bwrap, *net_args, "--die-with-parent",
+            "--ro-bind", "/usr", "/usr",
+            "--ro-bind", "/bin", "/bin",
+            "--ro-bind", "/lib", "/lib",
+            "--ro-bind-try", "/lib64", "/lib64",
+            "--proc", "/proc",
+            "--dev", "/dev",
+            "--tmpfs", "/tmp",
+            "--bind", work, "/work",
+            "--chdir", "/work",
+            "--", *cmd,
+        ]
+        return full, None
+    if backend == "firejail":
+        firejail = _which("firejail")
+        net = [] if allow_network else ["--net=none"]
+        return [firejail, *net, "--private", "--quiet", "--", *cmd], cwd
+    if backend == "unshare":
+        unshare = _which("unshare")
+        return [unshare, "--net", "--", *cmd], cwd
+    if backend == "degraded_host":
+        return list(cmd), cwd
+    raise ValueError(f"unknown isolation backend: {backend}")
+
+
 async def run_isolated(
     cmd,
     *,
@@ -316,28 +488,19 @@ async def run_isolated(
     require_isolation=True,
     allow_network: bool = False,
     policy: str = POLICY_UNTRUSTED,
+    source: str = "",
 ) -> IsolationResult:
     """Run command under the best available isolation backend.
 
     For policy=untrusted, refuses network_only / degraded / none.
-    allow_network only affects Docker network mode when strength is strong;
-    it never means 'run bare on the host'.
+    allow_network only affects Docker/bwrap network mode when strength is
+    strong/restricted; it never means 'run bare on the host'.
     """
     t0 = time.monotonic()
-    safe_keys = ("PATH", "HOME", "LANG", "LC_ALL", "TERM",
-                 "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED", "NODE_ENV", "TMPDIR",
-                 "FLUTTER_ROOT", "PUB_CACHE", "DART_SDK", "JAVA_HOME")
-    base_env = env or {}
     pol = normalize_policy(policy)
-    # Untrusted: no SECRET_* / PYTHONPATH injection from callers.
-    if pol == POLICY_UNTRUSTED:
-        env = {k: v for k, v in base_env.items() if k in safe_keys}
-    else:
-        env = {
-            k: v for k, v in base_env.items()
-            if k in safe_keys or k.startswith("SECRET_") or k == "PYTHONPATH"
-        }
-    env.setdefault("PATH", "/usr/bin:/bin")
+    if source:
+        pol = classify_execution_request(policy=pol, source=source)
+    env = _sanitize_env(env, pol)
     backend, strength = select_backend(allow_network=allow_network)
     ok, reason = policy_allows_execution(pol, strength)
     if not ok:
@@ -374,77 +537,149 @@ async def run_isolated(
             policy_reason="No isolation backend available",
         )
 
-    # Docker (strong)
-    if backend == "docker":
-        docker = _which("docker")
-        work = cwd or tempfile.mkdtemp(prefix="devos-iso-")
-        # Mount only the work directory — never repo root, .env, docker.sock
-        full = [
-            docker, "run", "--rm",
-            *_docker_flags(allow_network=allow_network),
-            "-v", f"{work}:/work:rw",
-            "-w", "/work",
-            _docker_image(language),
-            *cmd,
-        ]
-        return await _run(
-            full, None, env, timeout_s, "docker", strength, t0, policy=pol
+    try:
+        full, run_cwd = _build_isolated_argv(
+            cmd, cwd=cwd, allow_network=allow_network, language=language, backend=backend,
+        )
+    except Exception as e:
+        return IsolationResult(
+            status="error",
+            stdout="",
+            stderr=str(e),
+            exit_code=1,
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            isolation=backend,
+            isolation_level=IsolationLevel.UNSAFE.value,
+            strength=strength,
+            policy=pol,
+            policy_decision="denied",
+            policy_reason=str(e),
         )
 
-    # bubblewrap (restricted)
-    if backend == "bwrap":
-        bwrap = _which("bwrap", "bubblewrap")
-        work = cwd or tempfile.mkdtemp(prefix="devos-iso-")
-        net_args = [] if allow_network else ["--unshare-net"]
-        full = [
-            bwrap, *net_args, "--die-with-parent",
-            "--ro-bind", "/usr", "/usr",
-            "--ro-bind", "/bin", "/bin",
-            "--ro-bind", "/lib", "/lib",
-            "--ro-bind-try", "/lib64", "/lib64",
-            "--proc", "/proc",
-            "--dev", "/dev",
-            "--tmpfs", "/tmp",
-            "--bind", work, "/work",
-            "--chdir", "/work",
-            "--", *cmd,
-        ]
-        return await _run(full, None, env, timeout_s, "bwrap", strength, t0, policy=pol)
-
-    # firejail (restricted)
-    if backend == "firejail":
-        firejail = _which("firejail")
-        net = [] if allow_network else ["--net=none"]
-        return await _run(
-            [firejail, *net, "--private", "--quiet", "--", *cmd],
-            cwd, env, timeout_s, "firejail", strength, t0, policy=pol,
-        )
-
-    # unshare network_only — only reachable for trusted policy
-    if backend == "unshare":
-        unshare = _which("unshare")
-        return await _run(
-            [unshare, "--net", "--", *cmd],
-            cwd, env, timeout_s, "unshare", strength, t0, policy=pol,
-        )
-
-    # degraded host — trusted + DEVOS_ALLOW_DEGRADED_ISOLATION only
     if backend == "degraded_host":
         logger.warning("degraded host isolation in use (dev only)")
-        return await _run(cmd, cwd, env, timeout_s, "degraded_host", strength, t0, policy=pol)
 
-    return IsolationResult(
-        status="isolation_unavailable",
-        stdout="",
-        stderr="No suitable isolation backend",
-        exit_code=126,
-        duration_ms=int((time.monotonic() - t0) * 1000),
-        isolation="none",
-        isolation_level=IsolationLevel.UNSAFE.value,
-        strength=IsolationStrength.NONE.value,
+    return await _run(full, run_cwd, env, timeout_s, backend, strength, t0, policy=pol)
+
+
+async def spawn_isolated(
+    cmd,
+    *,
+    cwd=None,
+    env=None,
+    language: str = "python",
+    allow_network: bool = False,
+    policy: str = POLICY_UNTRUSTED,
+    source: str = "",
+    merge_stderr: bool = False,
+) -> SpawnResult:
+    """Spawn a long-running process under the best available isolation backend.
+
+    Same sanitization, policy normalization, backend selection, strength
+    validation, and fail-closed behavior as run_isolated(). Does NOT wait for
+    the process to finish.
+
+    Returns SpawnResult with the asyncio.subprocess.Process (when spawned) plus
+    the actual backend/strength/policy decision for audit persistence.
+
+    For policy=untrusted, network_only / degraded / none are denied — no host
+    process fallback.
+    """
+    pol = normalize_policy(policy)
+    if source:
+        pol = classify_execution_request(policy=pol, source=source)
+    env = _sanitize_env(env, pol)
+    backend, strength = select_backend(allow_network=allow_network)
+    ok, reason = policy_allows_execution(pol, strength)
+
+    def _denied(backend_name: str, strength_v: str, why: str) -> SpawnResult:
+        logger.warning(
+            "spawn_isolated denied policy=%s backend=%s strength=%s reason=%s source=%s",
+            pol, backend_name, strength_v, why, source,
+        )
+        return SpawnResult(
+            status="isolation_unavailable",
+            process=None,
+            isolation=backend_name,
+            strength=strength_v,
+            policy=pol,
+            policy_decision="denied",
+            policy_reason=why,
+            isolation_level=IsolationLevel.UNSAFE.value,
+            stderr=why,
+            source=source,
+            exit_code=126,
+        )
+
+    if not ok:
+        return _denied(backend, strength, reason)
+    if strength == IsolationStrength.NONE.value:
+        return _denied("none", IsolationStrength.NONE.value, "No isolation backend available")
+
+    try:
+        full, spawn_cwd = _build_isolated_argv(
+            cmd, cwd=cwd, allow_network=allow_network, language=language, backend=backend,
+        )
+    except Exception as e:
+        return SpawnResult(
+            status="error",
+            process=None,
+            isolation=backend,
+            strength=strength,
+            policy=pol,
+            policy_decision="denied",
+            policy_reason=str(e),
+            isolation_level=IsolationLevel.UNSAFE.value,
+            stderr=str(e),
+            source=source,
+            exit_code=1,
+        )
+
+    strength_v = strength.value if isinstance(strength, IsolationStrength) else strength
+    level = (
+        IsolationLevel.ISOLATED.value
+        if strength_v in (IsolationStrength.STRONG.value, IsolationStrength.RESTRICTED.value)
+        else IsolationLevel.DEGRADED.value
+        if strength_v == IsolationStrength.DEGRADED.value
+        else IsolationLevel.UNSAFE.value
+    )
+    stderr_dest = (
+        asyncio.subprocess.STDOUT if merge_stderr else asyncio.subprocess.PIPE
+    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *full,
+            cwd=spawn_cwd,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=stderr_dest,
+            start_new_session=True,
+        )
+    except Exception as e:
+        return SpawnResult(
+            status="error",
+            process=None,
+            isolation=backend,
+            strength=strength_v,
+            policy=pol,
+            policy_decision="denied",
+            policy_reason=str(e),
+            isolation_level=level,
+            stderr=str(e),
+            source=source,
+            exit_code=1,
+        )
+    return SpawnResult(
+        status="spawned",
+        process=proc,
+        isolation=backend,
+        strength=strength_v,
         policy=pol,
-        policy_decision="denied",
-        policy_reason="No suitable isolation backend",
+        policy_decision="allowed",
+        policy_reason="",
+        isolation_level=level,
+        source=source,
+        exit_code=None,
     )
 
 
