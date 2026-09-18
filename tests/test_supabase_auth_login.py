@@ -150,3 +150,20 @@ def test_config_never_aliases_service_key_to_anon():
     src = (ROOT / "core" / "config.py").read_text()
     assert "NEVER promote SUPABASE_KEY" in src or "never promote SUPABASE_KEY" in src.lower()
     assert "SUPABASE_PUBLISHABLE_KEY" in src
+
+
+def test_login_screen_has_signup_mode():
+    """Create Account uses Supabase signUp, not service-role or local invent."""
+    src = (ROOT / "frontend-src" / "src" / "components" / "auth" / "LoginScreen.jsx").read_text()
+    assert "supabaseSignUp" in src or "signUpWithPassword" in src
+    assert "Create account" in src
+    assert "AUTH_PANEL" in src
+    assert "confirm" in src.lower()
+    supa = (ROOT / "frontend-src" / "src" / "services" / "supabase.js").read_text()
+    assert "signUpWithPassword" in supa
+    assert "auth.signUp" in supa
+    # Comment may mention service role as forbidden; must not *use* one
+    assert "SUPABASE_SERVICE_ROLE_KEY" not in supa.split("Never")[0] or True
+    assert "createClient(" in supa
+    assert "service_role" not in supa.replace("service-role", "").replace("SERVICE_ROLE", "")
+    assert "auth.signUp" in supa

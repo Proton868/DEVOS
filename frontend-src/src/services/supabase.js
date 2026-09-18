@@ -81,6 +81,27 @@ export async function signInWithPassword(email, password) {
   return client.auth.signInWithPassword({ email: email.trim(), password });
 }
 
+/**
+ * Email/password registration via Supabase Auth (anon key only).
+ * May return a session immediately, or user without session when email
+ * confirmation is required — callers must not invent success.
+ */
+export async function signUpWithPassword(email, password) {
+  const client = (await ensureSupabase()) || _client;
+  if (!client) return { data: null, error: new Error("Supabase Auth is not configured") };
+  const origin =
+    (_publicAppUrl && _publicAppUrl.replace(/\/$/, "")) ||
+    (typeof window !== "undefined" ? window.location.origin : "");
+  const path =
+    typeof window !== "undefined" ? window.location.pathname || "/" : "/";
+  const emailRedirectTo = origin ? `${origin}${path}` : undefined;
+  return client.auth.signUp({
+    email: email.trim(),
+    password,
+    options: emailRedirectTo ? { emailRedirectTo } : {},
+  });
+}
+
 
 export async function signInWithGoogle() {
   const client = (await ensureSupabase()) || _client;

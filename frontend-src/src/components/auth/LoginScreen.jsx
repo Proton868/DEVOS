@@ -5,6 +5,7 @@ import { login, syncSupabaseSession } from "../../services/api";
 import {
   ensureSupabase,
   signInWithPassword as supabaseSignIn,
+  signUpWithPassword as supabaseSignUp,
   signInWithGoogle,
   signInWithPhone,
   verifyPhoneOtp,
@@ -90,6 +91,12 @@ const MODE = {
   PHONE: "phone",
 };
 
+/** Password panel: sign-in vs create-account (Supabase email path only). */
+const AUTH_PANEL = {
+  SIGN_IN: "sign_in",
+  SIGN_UP: "sign_up",
+};
+
 function isValidEmailAddress(value) {
   const v = (value || "").trim();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
@@ -108,6 +115,8 @@ export default function LoginScreen() {
   const [supabaseReady, setSupabaseReady] = useState(false);
   const [localLoginAvailable, setLocalLoginAvailable] = useState(true);
   const [useLocalLogin, setUseLocalLogin] = useState(false);
+  const [authPanel, setAuthPanel] = useState(AUTH_PANEL.SIGN_IN);
+  const [infoMessage, setInfoMessage] = useState(null);
   const identifierRef = useRef(null);
   const phoneRef = useRef(null);
   const setUser = useStore((s) => s.setUser);
@@ -219,12 +228,59 @@ export default function LoginScreen() {
     // Supabase Auth is the primary user-facing path when configured.
     if (supabaseReady && !useLocalLogin) {
       if (!isValidEmailAddress(id)) {
-        setError("Enter a valid email address for Supabase sign-in.");
+        setError(
+          authPanel === AUTH_PANEL.SIGN_UP
+            ? "Enter a valid email address to create an account."
+            : "Enter a valid email address for Supabase sign-in."
+        );
+        return;
+      }
+      if (authPanel === AUTH_PANEL.SIGN_UP && password.length < 6) {
+        setError("Password must be at least 6 characters.");
         return;
       }
       setSubmitting(true);
       setError(null);
+      setInfoMessage(null);
       try {
+        if (authPanel === AUTH_PANEL.SIGN_UP) {
+          const { data, error: signUpErr } = await supabaseSignUp(id, password);
+          if (signUpErr) {
+            setError(signUpErr.message || "Could not create account.");
+            setSubmitting(false);
+            return;
+          }
+          // Email confirmation required: user object without session
+          if (data?.user && !data?.session) {
+            setInfoMessage(
+              "Account created. Check your email to confirm the address, then sign in here. " +
+              "Until you confirm, sign-in will not succeed."
+            );
+            setAuthPanel(AUTH_PANEL.SIGN_IN);
+            setPassword("");
+            setSubmitting(false);
+            return;
+          }
+          if (!data?.session) {
+            setError("Sign-up did not return a session. Confirm your email if required, then sign in.");
+            setSubmitting(false);
+            return;
+          }
+          // Immediate session (confirmations disabled in Supabase project)
+          const user = await syncSupabaseSession();
+          if (user?.token) {
+            try { localStorage.setItem("devos_token", user.token); } catch (_) {}
+          }
+          const profile = user?.user || user;
+          if (!profile || !(profile.id || profile.username)) {
+            setError("Account created but DevOS session was incomplete. Try signing in.");
+            setSubmitting(false);
+            return;
+          }
+          setUser(profile);
+          return;
+        }
+
         const { data, error: supaErr } = await supabaseSignIn(id, password);
         if (supaErr) {
           // Do not fall back to local login — keep this a Supabase failure.
@@ -298,7 +354,7 @@ export default function LoginScreen() {
       <form
         className="login-card"
         onSubmit={mode === MODE.PHONE ? (otpSent ? handleVerifyPhoneOtp : handleSendPhoneOtp) : handlePasswordSubmit}
-        aria-label="Sign in to DevOS"
+        aria-label={authPanel === AUTH_PANEL.SIGN_UP && isSupabasePasswordMode ? "Create a DevOS account" : "Sign in to DevOS"}
       >
         <div className="login-brand">
           <div className="login-mark">
@@ -321,10 +377,10 @@ export default function LoginScreen() {
         {supabaseConfigured && (
           <button
             type="button"
-            className="login-oauth-btn"
-            onClick={handleGoogleSignIn}
-            disabled={submitting}
-            aria-label="Sign in with Google"
+            className="login-oauth-btn login-oauth-btn-disabled"
+            disabled
+            aria-label="Sign in with Google (unavailable)"
+            title="Google sign-in is not available yet. Use email and password."
           >
             <svg className="login-google-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -332,7 +388,7 @@ export default function LoginScreen() {
               <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
               <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
             </svg>
-            Sign in with Google
+            Google unavailable
           </button>
         )}
 
@@ -392,7 +448,7 @@ export default function LoginScreen() {
                 <input
                   type="password"
                   name="password"
-                  autoComplete="current-password"
+                  autoComplete={authPanel === AUTH_PANEL.SIGN_UP ? "new-password" : "current-password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={submitting}
@@ -445,6 +501,13 @@ export default function LoginScreen() {
           </div>
         )}
 
+        {infoMessage && (
+          <div className="login-info" role="status" aria-live="polite">
+            <Mail size={14} />
+            <span>{infoMessage}</span>
+          </div>
+        )}
+
 
         {supabaseConfigured && localLoginAvailable && (
           <button
@@ -464,10 +527,31 @@ export default function LoginScreen() {
             <>Send code <ArrowRight size={15} /></>
           ) : mode === MODE.PHONE && otpSent ? (
             <>Verify <ArrowRight size={15} /></>
+          ) : authPanel === AUTH_PANEL.SIGN_UP && isSupabasePasswordMode ? (
+            <>Create account <ArrowRight size={15} /></>
           ) : (
             <>Sign in <ArrowRight size={15} /></>
           )}
         </button>
+
+        {isSupabasePasswordMode && mode === MODE.PASSWORD && (
+          <button
+            type="button"
+            className="login-local-toggle"
+            onClick={() => {
+              setAuthPanel((p) =>
+                p === AUTH_PANEL.SIGN_UP ? AUTH_PANEL.SIGN_IN : AUTH_PANEL.SIGN_UP
+              );
+              setError(null);
+              setInfoMessage(null);
+            }}
+            disabled={submitting}
+          >
+            {authPanel === AUTH_PANEL.SIGN_UP
+              ? "Already have an account? Sign in"
+              : "Create account"}
+          </button>
+        )}
 
         <div className="login-footer">
           <Shield size={11} />
