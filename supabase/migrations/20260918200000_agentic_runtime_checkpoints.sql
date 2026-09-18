@@ -1,6 +1,22 @@
--- Additive: durable agentic runtime checkpoints (optional SoT beyond process store).
--- Forward: create table + indexes. Safe defaults. No destructive changes.
--- Rollback: DROP TABLE IF EXISTS agentic_runtime_checkpoints; (only if no dependent app requires it)
+-- ============================================================================
+-- FORWARD: 20260918200000_agentic_runtime_checkpoints
+-- ============================================================================
+-- Additive only. Safe for deploy alongside older application revisions.
+--
+-- Creates:
+--   public.agentic_runtime_checkpoints
+--   indexes on owner_id, tenant_id, state, parent_run_id
+--   partial unique (owner_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+--
+-- Does not modify existing tables or RLS policies.
+-- Application fallback: GovernedAgentTask.recovery.runtime_checkpoint
+--
+-- Rollback companion:
+--   20260918200000_agentic_runtime_checkpoints.down.sql
+--   (drops indexes + table; destroys table rows — export first if needed)
+--
+-- Re-apply safety: CREATE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
+-- ============================================================================
 
 CREATE TABLE IF NOT EXISTS agentic_runtime_checkpoints (
     task_id TEXT PRIMARY KEY,

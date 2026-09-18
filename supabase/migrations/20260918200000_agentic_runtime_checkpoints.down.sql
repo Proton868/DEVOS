@@ -1,5 +1,81 @@
--- Rollback for 20260918200000_agentic_runtime_checkpoints
--- Safe only if application no longer reads agentic_runtime_checkpoints.
+-- ============================================================================
+-- ROLLBACK: 20260918200000_agentic_runtime_checkpoints
+-- ============================================================================
+-- Forward migration: supabase/migrations/20260918200000_agentic_runtime_checkpoints.sql
+--
+-- PURPOSE OF FORWARD MIGRATION
+-- ---------------------------
+-- Introduces additive table `agentic_runtime_checkpoints` as an optional
+-- PostgreSQL source of truth for durable agentic runtime checkpoints
+-- (state machine, turn counters, linked operation/job ids, evidence refs).
+--
+-- Does NOT alter existing tables (AgentTaskRecord, ExecutionOperation,
+-- ExecutionJob, automation_run_records, etc.).
+-- Does NOT drop or rewrite data.
+-- Application remains correct using process-local / GovernedAgentTask.recovery
+-- even if this table is absent.
+--
+-- WHAT THIS ROLLBACK REMOVES
+-- --------------------------
+-- 1. Unique index  uq_agentic_cp_owner_idem
+--      ON (owner_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+-- 2. Index          idx_agentic_cp_parent_run  ON (parent_run_id)
+-- 3. Index          idx_agentic_cp_state       ON (state)
+-- 4. Index          idx_agentic_cp_tenant      ON (tenant_id)
+-- 5. Index          idx_agentic_cp_owner       ON (owner_id)
+-- 6. Table          agentic_runtime_checkpoints
+--
+-- DATA IMPACT
+-- -----------
+-- DROP TABLE destroys all rows in agentic_runtime_checkpoints.
+-- Checkpoint history stored ONLY in this table will be lost.
+-- Checkpoint data mirrored on GovernedAgentTask.recovery.runtime_checkpoint
+-- (process/disk agent task store) is NOT deleted by this rollback.
+--
+-- PRECONDITIONS (run before applying this file)
+-- ---------------------------------------------
+-- 1. Application code that SELECTs/INSERTs agentic_runtime_checkpoints has been
+--    rolled back to a revision that does not require the table, OR is known to
+--    treat the table as optional (best-effort persist).
+-- 2. No external reporting/ETL depends exclusively on this table.
+-- 3. Optional: export remaining rows for forensics:
+--
+--      COPY (
+--        SELECT * FROM agentic_runtime_checkpoints
+--      ) TO '/tmp/agentic_runtime_checkpoints_backup.csv' WITH CSV HEADER;
+--
+--      -- or JSON:
+--      -- SELECT json_agg(t) FROM agentic_runtime_checkpoints t;
+--
+-- HOW TO APPLY ROLLBACK
+-- ---------------------
+-- psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+--   -f supabase/migrations/20260918200000_agentic_runtime_checkpoints.down.sql
+--
+-- Or via Supabase CLI if your pipeline supports explicit down files:
+--   supabase db execute -f supabase/migrations/20260918200000_agentic_runtime_checkpoints.down.sql
+--
+-- ORDER MATTERS
+-- -------------
+-- Drop dependent indexes first, then the table. IF EXISTS keeps the script
+-- idempotent if partially applied or already rolled back.
+--
+-- IRREVERSIBILITY
+-- ---------------
+-- Schema can be re-created by re-running the forward migration.
+-- Row data dropped by this script is not recovered unless a backup was taken.
+-- That is intentional for an additive optional table; no other DevOS tables
+-- are modified.
+--
+-- VERIFICATION AFTER ROLLBACK
+-- ---------------------------
+--   SELECT to_regclass('public.agentic_runtime_checkpoints');  -- expect NULL
+--   -- Existing agentic / automation / execution tables must still exist:
+--   SELECT to_regclass('public.execution_operations');
+--   SELECT to_regclass('public.execution_jobs');
+--
+-- ============================================================================
+
 DROP INDEX IF EXISTS uq_agentic_cp_owner_idem;
 DROP INDEX IF EXISTS idx_agentic_cp_parent_run;
 DROP INDEX IF EXISTS idx_agentic_cp_state;

@@ -61,11 +61,62 @@ AGENT steps share the existing per-run concurrency limit (`DEVOS_AUTOMATION_MAX_
 
 ## Migration
 
-**Forward:** additive table + owner/tenant indexes + partial unique on `(owner_id, idempotency_key)`.
+### Forward (`20260918200000_agentic_runtime_checkpoints.sql`)
 
-**Rollback:** `20260918200000_agentic_runtime_checkpoints.down.sql` drops indexes/table when unused.
+| Object | Detail |
+|--------|--------|
+| Table | `agentic_runtime_checkpoints` (PK `task_id`) |
+| Columns | state machine fields, turn bounds, JSONB plan/observation/evidence, operation/job ids, `idempotency_key`, full `checkpoint` JSONB |
+| Indexes | `owner_id`, `tenant_id`, `state`, `parent_run_id` |
+| Unique | partial unique `(owner_id, idempotency_key)` where key present |
+| Defaults | `state='created'`, `turn=0`, `max_turns=8`, empty JSON arrays |
+| Side effects | **None** on existing tables |
 
-**Compatibility:** additive; old app ignores table; new app uses process store + optional table.
+Apply:
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260918200000_agentic_runtime_checkpoints.sql
+```
+
+Re-run is safe (`IF NOT EXISTS`).
+
+### Rollback (`20260918200000_agentic_runtime_checkpoints.down.sql`)
+
+**Order:** drop unique index → drop secondary indexes → drop table.
+
+**Data loss:** all rows in `agentic_runtime_checkpoints` only. Does not touch
+`execution_operations`, `execution_jobs`, automation runs, or AgentTaskRecord.
+
+**Before rollback:**
+
+1. Confirm app revision does not require the table (or treats it as optional).
+2. Optional backup:
+
+```sql
+COPY (SELECT * FROM agentic_runtime_checkpoints)
+  TO '/tmp/agentic_runtime_checkpoints_backup.csv' WITH CSV HEADER;
+```
+
+3. Apply down file:
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260918200000_agentic_runtime_checkpoints.down.sql
+```
+
+**After rollback:**
+
+```sql
+SELECT to_regclass('public.agentic_runtime_checkpoints');  -- NULL
+```
+
+**Re-create:** re-run the forward migration; row data is not restored without backup.
+
+**Compatibility:** additive forward allows old app + new schema during rollout.
+Process store / `GovernedAgentTask.recovery.runtime_checkpoint` remains the
+in-process durability path if the table is missing.
+
 
 ## Security
 
