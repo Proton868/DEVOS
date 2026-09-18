@@ -37,6 +37,13 @@ import bcrypt, jwt
 from datetime import datetime, timezone, timedelta
 from core.config import settings
 from core.database import get_db, User
+from governance.platform_roles import (
+    public_role_label,
+    can_administer_platform,
+    is_hegemon,
+    is_elder_or_above,
+    sync_is_admin_flag,
+)
 
 logger = logging.getLogger("devos.auth")
 router = APIRouter()
