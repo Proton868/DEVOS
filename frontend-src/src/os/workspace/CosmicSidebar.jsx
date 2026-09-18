@@ -6,7 +6,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import {
   Home, Folder, Bot, Workflow, Cpu, History, GitBranch, Search, Brain,
-  Blocks, Settings, ChevronLeft, ChevronRight, Layers, FlaskConical, FilePlus2,
+  Blocks, Settings, User, ChevronLeft, ChevronRight, Layers, FlaskConical, FilePlus2,
 } from "lucide-react";
 import MenorahLogo from "../MenorahLogo";
 import useOsStore from "../store/osStore";
@@ -110,6 +110,7 @@ export default function CosmicSidebar() {
     { key: "research", icon: FlaskConical, title: "Research", onClick: () => setOverlay("research") },
     { key: "memory", icon: Brain, title: "Memory", onClick: () => setOverlay("memory") },
     { key: "mcp", icon: Blocks, title: "MCP", onClick: () => setOverlay("mcp") },
+    { key: "profile", icon: User, title: "Profile", onClick: () => setOverlay("profile") },
   ];
 
   if (railCollapsed) {

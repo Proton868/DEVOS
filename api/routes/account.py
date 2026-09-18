@@ -35,6 +35,8 @@ def user_public(u: User) -> dict:
         "job_title": getattr(u, "job_title", None),
         "organization": getattr(u, "organization", None),
         "timezone": getattr(u, "timezone", None),
+        "status_message": getattr(u, "status_message", None),
+        "skills": getattr(u, "skills", None),
     }
 
 
@@ -75,6 +77,8 @@ class ProfileBody(BaseModel):
     job_title: Optional[str] = Field(None, max_length=128)
     organization: Optional[str] = Field(None, max_length=128)
     timezone: Optional[str] = Field(None, max_length=64)
+    status_message: Optional[str] = Field(None, max_length=160)
+    skills: Optional[str] = Field(None, max_length=1024)
 
 
 @router.patch("/profile")
@@ -82,7 +86,7 @@ async def update_profile(body: ProfileBody, request: Request, db=Depends(get_db)
     user = await get_current_user(request, db)
     # Hostile client may send role/plan/account_id — strip non-profile authority fields
     data = reject_client_authority_fields(body.model_dump(exclude_unset=True))
-    allowed = {"display_name", "preferred_name", "avatar_url", "bio", "job_title", "organization", "timezone"}
+    allowed = {"display_name", "preferred_name", "avatar_url", "bio", "job_title", "organization", "timezone", "status_message", "skills"}
     data = {k: v for k, v in data.items() if k in allowed}
     for k, v in data.items():
         setattr(user, k, v)
@@ -133,8 +137,28 @@ from fastapi.responses import Response
 from execution.files import FileService
 
 _AVATAR_MAX = 2_000_000
+_AVATAR_MAX_EDGE = 2048
 _AVATAR_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"}
 
+
+
+def _image_dimensions(data: bytes, ctype: str) -> tuple[int, int] | None:
+    """Best-effort width/height without heavy deps. Returns None if unknown."""
+    try:
+        if ctype == "image/png" and len(data) >= 24 and data[:8].startswith(b"\x89PNG"):
+            import struct
+            w, h = struct.unpack(">II", data[16:24])
+            return int(w), int(h)
+        if ctype in ("image/jpeg", "image/jpg") and data[:2] == b"\xff\xd8":
+            # skip full JPEG parse; size limit is primary control
+            return None
+        if ctype == "image/gif" and data[:6] in (b"GIF87a", b"GIF89a") and len(data) >= 10:
+            import struct
+            w, h = struct.unpack("<HH", data[6:10])
+            return int(w), int(h)
+    except Exception:
+        return None
+    return None
 
 def _avatar_fs(user_id: str) -> FileService:
     return FileService(str(user_id), "profile")
@@ -157,6 +181,11 @@ async def upload_avatar(request: Request, db=Depends(get_db), file: UploadFile =
     )
     if not ok_magic:
         raise HTTPException(400, "invalid image content")
+    dims = _image_dimensions(data, ctype)
+    if dims:
+        w, h = dims
+        if w > _AVATAR_MAX_EDGE or h > _AVATAR_MAX_EDGE or w < 16 or h < 16:
+            raise HTTPException(400, f"avatar dimensions must be between 16 and {_AVATAR_MAX_EDGE}px")
     ext = {"image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/webp": "webp", "image/gif": "gif"}[ctype]
     rel = f"avatar.{ext}"
     fs = _avatar_fs(user.id)
@@ -199,3 +228,42 @@ async def get_avatar_for_account(account_id: str, request: Request, db=Depends(g
     if str(account_id) != str(user.id):
         raise HTTPException(404, "avatar not found")
     return await get_own_avatar(request, db)
+
+@router.get("/profile/summary")
+async def profile_summary(request: Request, db=Depends(get_db)):
+    """Professional profile payload: identity + lightweight activity counts."""
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    base = user_public(user)
+    skills_raw = getattr(user, "skills", None) or ""
+    skills = [s.strip() for s in skills_raw.split(",") if s.strip()][:32]
+    # Counts are best-effort; profile remains available if secondary queries fail
+    project_count = 0
+    workflow_count = 0
+    try:
+        from pathlib import Path as _P
+        root = _P("data/projects") / str(user.id)
+        if root.is_dir():
+            project_count = sum(1 for p in root.iterdir() if p.is_dir())
+    except Exception:
+        pass
+    try:
+        from sqlalchemy import func
+        from core.database import WorkflowRecord
+        if hasattr(WorkflowRecord, "owner_id"):
+            r = await db.execute(
+                select(func.count()).select_from(WorkflowRecord).where(
+                    WorkflowRecord.owner_id == str(user.id)
+                )
+            )
+            workflow_count = int(r.scalar() or 0)
+    except Exception:
+        workflow_count = 0
+    return {
+        **base,
+        "skills_list": skills,
+        "stats": {
+            "projects": project_count,
+            "workflows": workflow_count,
+        },
+    }

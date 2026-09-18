@@ -167,6 +167,8 @@ class User(Base):
     job_title: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     organization: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     timezone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    status_message: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    skills: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)  # comma-separated
     default_tenant_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     sessions: Mapped[list["ChatSession"]] = relationship(back_populates="user")
@@ -996,6 +998,14 @@ async def _migrate_missing_columns(conn):
     await _add_column_if_missing(
         "users", "default_tenant_id",
         "ALTER TABLE users ADD COLUMN default_tenant_id VARCHAR",
+    )
+    await _add_column_if_missing(
+        "users", "status_message",
+        "ALTER TABLE users ADD COLUMN status_message VARCHAR(160)",
+    )
+    await _add_column_if_missing(
+        "users", "skills",
+        "ALTER TABLE users ADD COLUMN skills VARCHAR(1024)",
     )
     await _add_column_if_missing(
         "workflow_records", "description",

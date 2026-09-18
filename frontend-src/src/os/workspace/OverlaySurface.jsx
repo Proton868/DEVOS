@@ -20,6 +20,7 @@ const ResearchPanel = lazy(() => import("../../components/research/ResearchPanel
 const SettingsModal = lazy(() => import("../../components/settings/SettingsModal"));
 const ComposerPanel = lazy(() => import("../../components/composer/ComposerPanel"));
 const PersonaProfilePanel = lazy(() => import("../PersonaProfilePanel"));
+const ProfileDimension = lazy(() => import("../profile/ProfileDimension"));
 
 const TITLES = {
   files: "Files",
@@ -33,6 +34,7 @@ const TITLES = {
   system: "System OS",
   composer: "Composer",
   "persona-profile": "Persona Profile",
+  profile: "Profile",
 };
 
 function Fallback() {
@@ -143,6 +145,15 @@ export default function OverlaySurface({ isMobile }) {
   const { overlay, setOverlay } = useOsStore();
 
   if (!overlay) return null;
+
+  // Professional profile is its own spatial surface (not a settings panel)
+  if (overlay === "profile") {
+    return (
+      <Suspense fallback={<Fallback />}>
+        <ProfileDimension />
+      </Suspense>
+    );
+  }
 
   const close = () => setOverlay(null);
   const body = {

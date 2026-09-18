@@ -255,6 +255,9 @@ export default function MissionBar() {
           </button>
           {openPop === "user" && (
             <div className="sp-mb-pop sp-glass right0">
+              <button className="sp-mb-item" onClick={() => { setOpenPop(null); setOverlay("profile"); }}>
+                Profile
+              </button>
               <button className="sp-mb-item" onClick={() => { setOpenPop(null); setOverlay("settings"); }}>
                 <Settings size={13} /> Settings
               </button>
