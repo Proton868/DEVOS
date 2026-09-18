@@ -282,3 +282,293 @@ Status: **covered** | **partial** | **gap**.
 
 Next coverage priorities: #17, #28, #23/#24 with a real SCRIPT/HTTP operation under AGENT, #35 Postgres concurrency.
 
+
+## Gap Fill Code Examples
+
+Concrete patterns for remaining **gap** / **partial** items. Copy into
+`tests/test_agentic_multiturn_e2e.py` or a dedicated Postgres file; adapt
+imports to the live module paths.
+
+### Gap #17 — Restart after completion request, before terminal commit
+
+Simulate: planner emits `complete`, validation passes, process dies before
+`persist_checkpoint` writes `COMPLETED`.
+
+```python
+import pytest
+from brain.agentic_runtime import (
+    AgentRuntimeState, TurnDecision, checkpoint_from_task,
+    apply_transition, persist_checkpoint, try_complete, validate_completion,
+)
+from brain.agentic_automation import get_agent_task_store
+
+@pytest.mark.asyncio
+async def test_restart_after_completion_request_before_terminal_commit(ns_task):
+    t, contract = ns_task  # fixture: unique owner/tenant + CompletionContract()
+    cp = checkpoint_from_task(t)
+    apply_transition(cp, AgentRuntimeState.PLANNING)
+    persist_checkpoint(t, cp)
+
+    decision = TurnDecision(kind="complete", complete=True, reason="structured")
+    assert validate_completion(t, decision=decision, cp=cp).ok
+
+    # --- crash window: validation OK, COMPLETED not yet durable ---
+    # Do NOT call try_complete yet. Reload from store (pre-complete state).
+    t2 = get_agent_task_store().get(t.task_id)
+    cp2 = checkpoint_from_task(t2)
+    assert cp2.state != AgentRuntimeState.COMPLETED
+
+    # Resume: re-request complete and commit
+    t2, cp2, ok = try_complete(t2, cp2, decision)
+    assert ok
+    assert checkpoint_from_task(t2).state == AgentRuntimeState.COMPLETED
+    # Idempotent second try_complete must stay COMPLETED, not error
+    t3, cp3, ok2 = try_complete(t2, checkpoint_from_task(t2), decision)
+    assert checkpoint_from_task(t2).state == AgentRuntimeState.COMPLETED
+```
+
+### Gap #15 (partial) — Restart while EXECUTING
+
+```python
+def test_restart_during_executing_reconciles(ns_task):
+    t, _ = ns_task
+    cp = checkpoint_from_task(t)
+    for st in (
+        AgentRuntimeState.PLANNING,
+        AgentRuntimeState.AWAITING_CAPABILITY,
+        AgentRuntimeState.AUTHORIZING,
+        AgentRuntimeState.AUTHORIZED,
+        AgentRuntimeState.EXECUTING,
+    ):
+        apply_transition(cp, st)
+    cp.operation_id = f"op-{t.task_id}"
+    persist_checkpoint(t, cp)
+
+    # Process restart: reload task, still EXECUTING
+    t2 = get_agent_task_store().get(t.task_id)
+    assert checkpoint_from_task(t2).state == AgentRuntimeState.EXECUTING
+
+    # Worker reports terminal outcome (do not redispatch)
+    from brain.agentic_runtime import observe_operation_result
+    t2 = observe_operation_result(
+        t2,
+        operation_id=cp.operation_id,
+        status="succeeded",
+        evidence_refs=[f"ev-{t.task_id}"],
+    )
+    st = checkpoint_from_task(t2).state
+    assert st in (AgentRuntimeState.OBSERVING, AgentRuntimeState.CHECKPOINTING)
+    assert checkpoint_from_task(t2).capability_request_count == cp.capability_request_count
+```
+
+### Gap #23 / #24 — Real ExecutionOperation + Job under AGENT
+
+Use an existing governed capability that creates ledger rows (e.g. SCRIPT step
+path or a registered substrate executor that calls `create_operation`).
+
+```python
+@pytest.mark.asyncio
+async def test_agent_capability_creates_operation_and_job(ns_task, monkeypatch):
+    """Prove consequential path records operation_id (and job_id when required)."""
+    t, contract = ns_task
+    # Bind a capability whose substrate executor creates ExecutionOperation
+    # (wire via get_capability_substrate().register_executor in test setup).
+
+    op_ids = []
+
+    async def fake_executor(contract, request):
+        from governance.execution_operations import create_operation  # adapt import
+        op = await create_operation(
+            owner_id=request.context.owner_id,
+            operation_type="agent.capability",
+            idempotency_key=request.idempotency_key or f"op-{t.task_id}",
+            tenant_id=request.context.tenant_id,
+        )
+        op_ids.append(op.id)
+        return {"ok": True, "operation_id": op.id}
+
+    # register_executor("devos.test.consequential", fake_executor)
+    # allowlist that cap on the task, then:
+    from brain.agentic_runtime import TurnDecision, run_agent_turn
+
+    def planner(ctx):
+        if ctx.get("last_observation"):
+            return TurnDecision(kind="complete", complete=True)
+        return TurnDecision(
+            kind="capability_request",
+            capability_id="devos.test.consequential",
+            inputs={},
+        )
+
+    t = await run_agent_turn(t, planner=planner, execute_capability=True)
+    cp = checkpoint_from_task(t)
+    assert cp.operation_id or op_ids, "expected ExecutionOperation linkage"
+    # When jobs are required:
+    # assert cp.job_id is not None
+```
+
+### Gap #28 — Fake AGENT completion must not release parallel join
+
+```python
+@pytest.mark.asyncio
+async def test_fake_agent_complete_does_not_release_join():
+    from brain.workflow import WorkflowStep, StepType
+    from brain.workflow_store import build_execution_snapshot
+    from brain.workflow_executor import ExecutionState, STEP_SUCCEEDED, STEP_FAILED
+    from brain.automation_orchestration import select_eligible_steps
+    from brain.automation_parallel import execute_parallel_graph
+
+    ns = uuid.uuid4().hex[:12]
+    # AGENT step that would "claim" success without satisfying CompletionContract
+    steps = [
+        WorkflowStep(id="A", type=StepType.TRANSFORM, inputs={"expr": "1"}),
+        WorkflowStep(
+            id="B",
+            type=StepType.AGENT,
+            inputs={
+                "capabilities": ["devos.capability.list"],
+                # force contract that cannot pass without real evidence
+                "task_input": {
+                    "completion_contract": {
+                        "required_successful_capabilities": 99,
+                        "required_evidence": True,
+                        "immutable": True,
+                    }
+                },
+            },
+        ),
+        WorkflowStep(id="C", type=StepType.TRANSFORM, inputs={"expr": "3"}),
+        WorkflowStep(
+            id="D",
+            type=StepType.TRANSFORM,
+            inputs={"expr": "4"},
+            metadata={"depends_on": ["B", "C"], "join": "all_success"},
+        ),
+    ]
+    definition = {
+        "workflow_id": f"wf-join-{ns}",
+        "name": "join-fake",
+        "version": "1.0.0",
+        "start_step": "A",
+        "steps": [s.to_dict() for s in steps],
+        "edges": [
+            {"source": "A", "target": "B", "on": "success"},
+            {"source": "A", "target": "C", "on": "success"},
+            {"source": "B", "target": "D", "on": "success"},
+            {"source": "C", "target": "D", "on": "success"},
+        ],
+        "joins": [{"target": "D", "deps": ["B", "C"], "mode": "all_success"}],
+        "triggers": ["manual"],
+    }
+    snap = build_execution_snapshot(
+        workflow_id=definition["workflow_id"],
+        workflow_version=1,
+        owner_id=f"owner-{ns}",
+        tenant_id=f"tenant-{ns}",
+        name="join-fake",
+        definition=definition,
+        enabled=True,
+    )
+    st = ExecutionState()
+    st.records["A"] = {"step_id": "A", "status": STEP_SUCCEEDED}
+    out = await execute_parallel_graph(
+        snap, st, extra_context={"owner_id": f"owner-{ns}", "tenant_id": f"tenant-{ns}"},
+    )
+    # C may succeed; B must not report SUCCEEDED if contract unmet
+    b_status = out.records.get("B", {}).get("status")
+    assert b_status != STEP_SUCCEEDED or out.records.get("D", {}).get("status") != STEP_SUCCEEDED
+    # Stronger once AGENT step surfaces completion validation:
+    # assert b_status in (STEP_FAILED, "blocked", STEP_DENIED)
+    # assert "D" not in out.records or out.records["D"]["status"] != STEP_SUCCEEDED
+```
+
+### Gap #35 — Postgres concurrent duplicate → one logical operation
+
+```python
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_agent_capability_one_operation(pg_session):
+    """Two workers, same owner + idempotency_key → one ExecutionOperation row."""
+    import asyncio
+    ns = uuid.uuid4().hex[:12]
+    owner = f"owner-{ns}"
+    tenant = f"tenant-{ns}"
+    idem = f"idem-cap-{ns}"
+
+    async def worker():
+        # create_operation must use UNIQUE (owner_id, operation_type, idempotency_key)
+        from governance.execution_operations import create_operation
+        return await create_operation(
+            owner_id=owner,
+            tenant_id=tenant,
+            operation_type="agent.capability",
+            idempotency_key=idem,
+        )
+
+    results = await asyncio.gather(worker(), worker(), return_exceptions=True)
+    ops = [r for r in results if not isinstance(r, Exception)]
+    assert len(ops) >= 1
+    ids = {getattr(o, "id", o) for o in ops}
+    assert len(ids) == 1, f"expected one operation, got {ids}"
+
+    # Cleanup only this namespace
+    await pg_session.execute(
+        "DELETE FROM execution_operations WHERE owner_id = :o AND tenant_id = :t",
+        {"o": owner, "t": tenant},
+    )
+    await pg_session.commit()
+```
+
+### Gap #37 (partial) — Migration-backed checkpoint round-trip
+
+```python
+@pytest.mark.postgres
+def test_agentic_checkpoint_table_roundtrip(pg_engine):
+    """Requires 20260918200000_agentic_runtime_checkpoints.sql applied."""
+    from sqlalchemy import text
+    ns = uuid.uuid4().hex[:12]
+    task_id = f"agt_{ns}"
+    with pg_engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO agentic_runtime_checkpoints
+                    (task_id, owner_id, tenant_id, state, turn, checkpoint)
+                VALUES
+                    (:tid, :oid, :ten, 'planning', 1, CAST(:cp AS jsonb))
+                """
+            ),
+            {
+                "tid": task_id,
+                "oid": f"owner-{ns}",
+                "ten": f"tenant-{ns}",
+                "cp": '{"task_id": "%s", "state": "planning"}' % task_id,
+            },
+        )
+        row = conn.execute(
+            text("SELECT state, turn FROM agentic_runtime_checkpoints WHERE task_id = :tid"),
+            {"tid": task_id},
+        ).one()
+        assert row.state == "planning" and row.turn == 1
+        conn.execute(
+            text("DELETE FROM agentic_runtime_checkpoints WHERE task_id = :tid"),
+            {"tid": task_id},
+        )
+```
+
+### Wiring notes
+
+- Prefer `uuid4` namespaces; never hard-code `test-user`.
+- Cleanup deletes **only** `owner_id` / `task_id` / `tenant_id` for that test.
+- Do not call `subprocess`, raw SQL mutations, or HTTP from the agent runtime in these tests — only capability requests and ledger helpers.
+- Mark Postgres tests `@pytest.mark.postgres` and skip when `DATABASE_URL` is unset:
+
+```python
+import os
+import pytest
+
+pg = pytest.mark.skipif(
+    not os.environ.get("DATABASE_URL"),
+    reason="DATABASE_URL required for Postgres gap tests",
+)
+```
