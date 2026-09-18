@@ -484,11 +484,19 @@ async def request_capability(
     )
     # Link operation if substrate exposed one
     meta = getattr(result, "metadata", None) or {}
+    outputs = getattr(result, "outputs", None) or {}
     if isinstance(meta, dict):
-        rec.operation_id = meta.get("operation_id")
-        rec.job_id = meta.get("job_id")
+        rec.operation_id = meta.get("operation_id") or (outputs.get("operation_id") if isinstance(outputs, dict) else None)
+        rec.job_id = meta.get("job_id") or (outputs.get("job_id") if isinstance(outputs, dict) else None)
         if meta.get("evidence_id"):
             rec.evidence_refs.append(meta["evidence_id"])
+        if isinstance(outputs, dict) and outputs.get("evidence_id"):
+            rec.evidence_refs.append(outputs["evidence_id"])
+    elif isinstance(outputs, dict):
+        rec.operation_id = outputs.get("operation_id")
+        rec.job_id = outputs.get("job_id")
+        if outputs.get("evidence_id"):
+            rec.evidence_refs.append(outputs["evidence_id"])
     if rec.operation_id:
         task.operation_ids.append(rec.operation_id)
     if rec.job_id:
@@ -665,15 +673,56 @@ async def execute_agent_step_body(
     if reject_fabricated_evidence(step_inputs.get("claim")):
         step_inputs = {**step_inputs, "claim_ignored": True}
 
-    mark_completed(
-        task,
-        result={
-            "capability_results": results,
-            "plan_is_not_evidence": True,
-            "job_id": job_id,
-        },
-        evidence_refs=list(task.evidence_refs),
+    # Bind completion contract from task_input if present; validate before SUCCEEDED
+    from brain.agentic_runtime import (
+        CompletionContract,
+        TurnDecision,
+        set_completion_contract,
+        try_complete,
+        checkpoint_from_task,
+        apply_transition,
+        AgentRuntimeState,
+        persist_checkpoint,
     )
+    raw_cc = (task.task_input or {}).get("completion_contract")
+    if isinstance(raw_cc, dict):
+        set_completion_contract(task, CompletionContract.from_dict(raw_cc))
+
+    # Mirror capability results into recovery for validator
+    task.recovery = dict(task.recovery or {})
+    hist = []
+    for r in results:
+        if r.get("status") == "executed":
+            hist.append({
+                "capability_id": r.get("capability_id"),
+                "status": "executed",
+                "evidence_refs": r.get("evidence_refs") or [],
+            })
+    if hist:
+        task.recovery["observation_history"] = hist
+        for r in results:
+            if r.get("status") == "executed" and r.get("evidence_refs"):
+                task.evidence_refs.extend(r["evidence_refs"])
+
+    cp = checkpoint_from_task(task)
+    # Capability wave finished — not an in-flight operation for completion purposes
+    cp.state = AgentRuntimeState.PLANNING
+    cp.pending_request = None
+    persist_checkpoint(task, cp)
+    cp = checkpoint_from_task(task)
+    decision = TurnDecision(kind="complete", complete=True, reason="agent_step")
+    task, cp, ok = try_complete(task, cp, decision)
+    if not ok:
+        mark_failed(task, (cp.failure or "completion_contract_unsatisfied"))
+        return {
+            "status": "failed",
+            "error": cp.failure or "completion_contract_unsatisfied",
+            "error_code": "COMPLETION_REJECTED",
+            "task_id": task.task_id,
+            "capability_results": results,
+            "completion_validation": (task.recovery or {}).get("last_completion_validation"),
+        }
+
     return {
         "status": "succeeded",
         "task_id": task.task_id,
@@ -683,7 +732,7 @@ async def execute_agent_step_body(
         "operation_ids": list(task.operation_ids),
         "outputs": {
             "task_id": task.task_id,
-            "status": task.status.value,
+            "status": task.status.value if hasattr(task.status, "value") else str(task.status),
             "allowed_capabilities": task.allowed_capabilities,
         },
     }

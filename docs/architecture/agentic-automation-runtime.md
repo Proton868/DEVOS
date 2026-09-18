@@ -224,9 +224,9 @@ Status: **covered** | **partial** | **gap**.
 | # | Requirement | Status | Owning test |
 |---|-------------|--------|-------------|
 | 14 | Restart between turns | covered | `test_restart_between_turns` |
-| 15 | Restart during operation | partial | `test_observe_operation_after_executing` + reload pattern; no full process-kill harness |
+| 15 | Restart during operation | covered | `test_observe_operation_after_executing` + gap reload patterns |
 | 16 | Restart after op before completion | covered | `test_restart_after_operation_before_completion` |
-| 17 | Restart after completion request before terminal commit | gap | not yet isolated as its own case |
+| 17 | Restart after completion request before terminal commit | covered | `test_crash_after_completion_validation_then_restart_completes` |
 
 ### UNKNOWN
 
@@ -241,9 +241,9 @@ Status: **covered** | **partial** | **gap**.
 | # | Requirement | Status | Owning test |
 |---|-------------|--------|-------------|
 | 21 | Capability request reaches UCIP/substrate | covered | `test_capability_not_delegated_denied`, multi-turn via `request_capability` |
-| 22 | Operation created | partial | depends on substrate metadata; not always asserted |
-| 23 | Job created where required | gap | meta `devos.capability.list` often has no ExecutionJob |
-| 24 | Existing executor performs work | partial | substrate invoke path; not SCRIPT/HTTP job worker E2E |
+| 22 | Operation created | covered | `test_agent_script_capability_operation_isolation_observation` |
+| 23 | Job created where required | partial | operation reserved; full JobWorker claim still environment-dependent |
+| 24 | Existing executor performs work | covered | SCRIPT isolation + HTTP local server via substrate executors + workflow SCRIPT/HTTP |
 | 25 | Evidence returned | covered | synthetic/substrate evidence in multi-turn + `test_two_turn_successful_agent` |
 
 ### Parallel automation
@@ -251,8 +251,8 @@ Status: **covered** | **partial** | **gap**.
 | # | Requirement | Status | Owning test |
 |---|-------------|--------|-------------|
 | 26 | AGENT + normal step fan-out | covered | `test_agent_parallel_with_transform` |
-| 27 | Join waits for actual agent completion | partial | join after AGENT SUCCEEDED; not explicitly against fake-complete |
-| 28 | Fake agent completion does not release join | partial | `test_fake_complete_does_not_satisfy_join_contract` (validation gate; full workflow join fixture still open) |
+| 27 | Join waits for actual agent completion | covered | `test_authoritative_agent_completion_releases_join` |
+| 28 | Fake agent completion does not release join | covered | `test_fake_agent_completion_blocks_downstream_join` |
 
 ### Test isolation
 
@@ -269,7 +269,7 @@ Status: **covered** | **partial** | **gap**.
 
 | # | Requirement | Status | Owning test |
 |---|-------------|--------|-------------|
-| 35 | Concurrent duplicate → one logical op | gap | needs live Postgres + concurrent workers |
+| 35 | Concurrent duplicate → one logical op | covered | `test_pg_concurrent_agent_capability_one_operation` (skips without Postgres) |
 | 36 | Concurrent tests remain isolated | partial | process-store isolation only |
 | 37 | Migration-backed checkpoint persistence | partial | `test_migration_file_exists` (file presence, not applied DB) |
 
@@ -572,3 +572,19 @@ pg = pytest.mark.skipif(
     reason="DATABASE_URL required for Postgres gap tests",
 )
 ```
+
+
+## Gap Closure Results
+
+| Gap | Status | Test |
+|-----|--------|------|
+| #17 crash after validation | covered | `tests/test_agentic_e2e_gaps.py::test_crash_after_completion_validation_then_restart_completes` |
+| #28 fake vs real join | covered | `test_fake_agent_completion_blocks_downstream_join`, `test_authoritative_agent_completion_releases_join` |
+| #23/#24 SCRIPT/HTTP | covered | `test_agent_script_capability_operation_isolation_observation`, `test_agent_http_capability_and_inline_secret_rejection`, `test_workflow_script_step_uses_executor_not_agent_subprocess` |
+| #35 PG concurrency | covered (skip without PG) | `test_pg_concurrent_agent_capability_one_operation` |
+
+**Test-only seam:** `DEVOS_AGENT_CRASH_AFTER_COMPLETION_VALIDATION=1` raises after validation, before durable COMPLETED. Must never be set in production.
+
+**AGENT step completion:** `execute_agent_step_body` now calls `try_complete` / `CompletionContract` — workflow SUCCEEDED requires authoritative completion, not free-text claims.
+
+**Remaining limitations:** Full JobWorker multi-process claim under AGENT is partial without live worker pool; PG tests skip when `DATABASE_URL` is not Postgres.

@@ -624,6 +624,17 @@ def try_complete(
         persist_checkpoint(task, cp)
         return task, cp, False
 
+    # Test-only crash seam: after validation, before durable COMPLETED.
+    # Activated only when DEVOS_AGENT_CRASH_AFTER_COMPLETION_VALIDATION is exactly "1".
+    # Production must never set this; documented in agentic-automation-runtime.md.
+    if os.environ.get("DEVOS_AGENT_CRASH_AFTER_COMPLETION_VALIDATION") == "1":
+        task.recovery = dict(task.recovery or {})
+        task.recovery["last_completion_validation"] = v.to_dict()
+        task.recovery["crash_after_completion_validation"] = True
+        # Persist validation outcome only — state remains non-COMPLETED
+        persist_checkpoint(task, cp)
+        raise RuntimeError("DEVOS_AGENT_CRASH_AFTER_COMPLETION_VALIDATION")
+
     apply_transition(cp, AgentRuntimeState.COMPLETED)
     persist_checkpoint(task, cp)
     mark_completed(
