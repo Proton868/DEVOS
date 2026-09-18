@@ -39,14 +39,18 @@ def test_docker_flags_hardened_no_network():
     flags = _docker_flags(allow_network=False)
     assert "--network=none" in flags
     assert "--cap-drop=ALL" in flags
-    assert "--security-opt=no-new-privileges" in flags
+    joined = " ".join(flags)
+    assert "no-new-privileges" in joined
     assert "--read-only" in flags
     assert "--user" in flags
     assert "65534:65534" in flags
     assert "--pids-limit=128" in flags
-    joined = " ".join(flags)
+    assert "--memory=512m" in flags
+    assert "--cpus=1" in flags
+    assert "noexec" in joined
     assert "docker.sock" not in joined
     assert "/var/run/docker" not in joined
+    assert "--privileged" not in flags
 
 
 def test_docker_flags_network_when_allowed():
@@ -402,3 +406,123 @@ def test_spawn_isolated_anti_spoof_trusted_policy():
             assert r.process is None
 
     asyncio.run(_go())
+
+
+def test_run_isolated_docker_path_invokes_docker():
+    """run_isolated with Docker backend must build a docker run argv (not host cmd)."""
+    from execution.isolation import run_isolated, IsolationStrength, POLICY_UNTRUSTED
+
+    captured = {}
+
+    async def fake_run(cmd, cwd, env, timeout_s, isolation, strength, t0, policy=POLICY_UNTRUSTED):
+        captured["cmd"] = list(cmd)
+        captured["isolation"] = isolation
+        captured["strength"] = strength
+        from execution.isolation import IsolationResult, IsolationLevel
+        return IsolationResult(
+            status="ok",
+            stdout="uid=65534",
+            stderr="",
+            exit_code=0,
+            duration_ms=1,
+            isolation=isolation,
+            isolation_level=IsolationLevel.ISOLATED.value,
+            strength=strength if isinstance(strength, str) else strength.value,
+            policy=POLICY_UNTRUSTED,
+            policy_decision="allowed",
+        )
+
+    async def _go():
+        with mock.patch("execution.isolation.select_backend", return_value=("docker", IsolationStrength.STRONG.value)):
+            with mock.patch("execution.isolation._which", return_value="/usr/bin/docker"):
+                with mock.patch("execution.isolation._run", side_effect=fake_run):
+                    r = await run_isolated(
+                        ["id"],
+                        policy=POLICY_UNTRUSTED,
+                        source="app_runtime",
+                        allow_network=False,
+                        language="bash",
+                    )
+                    assert r.status == "ok"
+                    assert r.isolation == "docker"
+                    assert r.strength == IsolationStrength.STRONG.value
+                    assert r.policy_decision == "allowed"
+                    cmd = captured["cmd"]
+                    assert cmd[0] == "/usr/bin/docker"
+                    assert "run" in cmd
+                    assert "--network=none" in cmd
+                    assert "--cap-drop=ALL" in cmd
+                    assert "65534:65534" in cmd
+
+    asyncio.run(_go())
+
+
+def test_spawn_isolated_docker_path_invokes_docker():
+    """spawn_isolated with Docker must spawn docker run, not a bare host process."""
+    from execution.isolation import spawn_isolated, IsolationStrength, POLICY_UNTRUSTED
+
+    captured = {}
+
+    async def fake_create(*args, **kwargs):
+        captured["args"] = list(args)
+        captured["kwargs"] = kwargs
+
+        class FakeProc:
+            pid = 4242
+            returncode = None
+
+        return FakeProc()
+
+    async def _go():
+        with mock.patch("execution.isolation.select_backend", return_value=("docker", IsolationStrength.STRONG.value)):
+            with mock.patch("execution.isolation._which", return_value="/usr/bin/docker"):
+                with mock.patch("asyncio.create_subprocess_exec", side_effect=fake_create):
+                    r = await spawn_isolated(
+                        ["sleep", "30"],
+                        policy=POLICY_UNTRUSTED,
+                        source="app_runtime",
+                        allow_network=True,
+                        language="bash",
+                        merge_stderr=True,
+                    )
+                    assert r.status == "spawned"
+                    assert r.process is not None
+                    assert r.isolation == "docker"
+                    assert r.strength == IsolationStrength.STRONG.value
+                    assert r.policy_decision == "allowed"
+                    ev = r.to_evidence()
+                    assert ev["actual_isolation"] == "docker"
+                    assert ev["strength"] == IsolationStrength.STRONG.value
+                    assert ev["trust_level"] == POLICY_UNTRUSTED
+                    args = captured["args"]
+                    assert args[0] == "/usr/bin/docker"
+                    assert "--network=bridge" in args
+                    assert "--cap-drop=ALL" in args
+
+    asyncio.run(_go())
+
+
+def test_docker_env_args_injected_into_argv():
+    from execution.isolation import _build_isolated_argv, IsolationStrength
+    with mock.patch("execution.isolation._which", return_value="/usr/bin/docker"):
+        full, cwd = _build_isolated_argv(
+            ["id"],
+            cwd="/tmp/work",
+            allow_network=False,
+            language="bash",
+            backend="docker",
+            env={"PORT": "3911", "HOST": "127.0.0.1"},
+        )
+        assert full[0] == "/usr/bin/docker"
+        joined = " ".join(full)
+        assert "-e" in full
+        assert "PORT=3911" in joined
+        assert "HOST=127.0.0.1" in joined
+        assert "--network=none" in full
+
+
+def test_select_backend_docker_strong_when_enabled():
+    with mock.patch("execution.isolation._use_docker", return_value=True):
+        backend, strength = select_backend(allow_network=False)
+        assert backend == "docker"
+        assert strength == IsolationStrength.STRONG.value

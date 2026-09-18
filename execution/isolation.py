@@ -180,7 +180,7 @@ def _docker_flags(*, allow_network: bool) -> list[str]:
     return [
         *net,
         "--cap-drop=ALL",
-        "--security-opt=no-new-privileges",
+        "--security-opt=no-new-privileges:true",
         "--read-only",
         "--pids-limit=128",
         "--memory=512m",
@@ -191,6 +191,22 @@ def _docker_flags(*, allow_network: bool) -> list[str]:
         "--init",
         # No --privileged, no docker.sock, no host /proc bind beyond image defaults
     ]
+
+
+def _docker_env_args(env: Optional[dict]) -> list[str]:
+    """Pass sanitized env into the container via -e (host env is not inherited)."""
+    args: list[str] = []
+    if not env:
+        return args
+    for k, v in env.items():
+        if v is None:
+            continue
+        # Reject values that would break docker CLI parsing
+        sv = str(v)
+        if "\n" in sv or "\r" in sv:
+            continue
+        args.extend(["-e", f"{k}={sv}"])
+    return args
 
 
 def detect_backends() -> dict:
@@ -431,6 +447,7 @@ def _build_isolated_argv(
     allow_network: bool,
     language: str,
     backend: str,
+    env: Optional[dict] = None,
 ) -> tuple[list[str], Optional[str]]:
     """Build full argv + effective cwd for an isolation backend.
 
@@ -443,6 +460,7 @@ def _build_isolated_argv(
         full = [
             docker, "run", "--rm",
             *_docker_flags(allow_network=allow_network),
+            *_docker_env_args(env),
             "-v", f"{work}:/work:rw",
             "-w", "/work",
             _docker_image(language),
@@ -539,7 +557,7 @@ async def run_isolated(
 
     try:
         full, run_cwd = _build_isolated_argv(
-            cmd, cwd=cwd, allow_network=allow_network, language=language, backend=backend,
+            cmd, cwd=cwd, allow_network=allow_network, language=language, backend=backend, env=env,
         )
     except Exception as e:
         return IsolationResult(
@@ -559,7 +577,9 @@ async def run_isolated(
     if backend == "degraded_host":
         logger.warning("degraded host isolation in use (dev only)")
 
-    return await _run(full, run_cwd, env, timeout_s, backend, strength, t0, policy=pol)
+    # Docker: env already injected via -e; do not re-pass host env to the CLI child
+    child_env = None if backend == "docker" else env
+    return await _run(full, run_cwd, child_env, timeout_s, backend, strength, t0, policy=pol)
 
 
 async def spawn_isolated(
@@ -618,7 +638,7 @@ async def spawn_isolated(
 
     try:
         full, spawn_cwd = _build_isolated_argv(
-            cmd, cwd=cwd, allow_network=allow_network, language=language, backend=backend,
+            cmd, cwd=cwd, allow_network=allow_network, language=language, backend=backend, env=env,
         )
     except Exception as e:
         return SpawnResult(
@@ -646,11 +666,13 @@ async def spawn_isolated(
     stderr_dest = (
         asyncio.subprocess.STDOUT if merge_stderr else asyncio.subprocess.PIPE
     )
+    # Docker: env injected via -e; CLI child gets a minimal host env
+    child_env = None if backend == "docker" else env
     try:
         proc = await asyncio.create_subprocess_exec(
             *full,
             cwd=spawn_cwd,
-            env=env,
+            env=child_env,
             stdout=asyncio.subprocess.PIPE,
             stderr=stderr_dest,
             start_new_session=True,
