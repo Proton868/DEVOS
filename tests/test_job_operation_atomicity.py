@@ -152,6 +152,77 @@ async def test_claimed_before_running_stale_lease_requeues_reserved(db):
         assert row.operation_id == job.operation_id
 
 
+@pytest.mark.asyncio
+async def test_window_c_claim_next_crash_before_mark_running(db):
+    """Window C (full path): claim_next → die before mark_running.
+
+    Durable state after claim: job=running, op=RESERVED.
+    After stale recovery: job requeued, same operation_id, op still RESERVED,
+    no side effect, no second operation.
+    """
+    from workers.job_queue import enqueue, claim_next, recover_stale_leases
+    from governance.execution_operations import load_operation
+    from core.database import ExecutionJob, ExecutionOperation
+    from sqlalchemy import select, func
+
+    job = await enqueue(
+        owner_id="u1", tenant_id="t1", job_type="script",
+        payload={"action": "write"}, idempotency_key="ik-window-c",
+    )
+    op_id = job.operation_id
+    assert op_id
+    op = await load_operation(op_id)
+    assert op["status"] == "reserved"
+
+    claimed = await claim_next(worker="worker-c-crash")
+    assert claimed is not None
+    assert claimed.id == job.id
+    assert claimed.status == "running"
+    assert claimed.worker_id == "worker-c-crash"
+    # Crash boundary: never call mark_running / side effect
+    op_after_claim = await load_operation(op_id)
+    assert op_after_claim["status"] == "reserved"
+    assert SIDE_EFFECTS == []
+
+    # Simulate process death: expire lease while still RESERVED
+    async with db.AsyncSessionLocal() as session:
+        row = await session.get(ExecutionJob, job.id)
+        row.locked_at = _utcnow() - timedelta(hours=2)
+        row.lease_expires_at = _utcnow() - timedelta(hours=1)
+        await session.commit()
+
+    n = await recover_stale_leases()
+    assert n >= 1
+
+    async with db.AsyncSessionLocal() as session:
+        row = await session.get(ExecutionJob, job.id)
+        assert row.status == "queued", "RESERVED op must allow safe requeue"
+        assert row.worker_id is None
+        assert row.operation_id == op_id
+        op_cnt = await session.scalar(
+            select(func.count()).select_from(ExecutionOperation).where(
+                ExecutionOperation.id == op_id
+            )
+        )
+        total_ops = await session.scalar(
+            select(func.count()).select_from(ExecutionOperation).where(
+                ExecutionOperation.idempotency_key == "ik-window-c"
+            )
+        )
+    assert op_cnt == 1
+    assert total_ops == 1
+    op_final = await load_operation(op_id)
+    assert op_final["status"] == "reserved"
+    assert SIDE_EFFECTS == []
+
+    # Second claim is safe — still no duplicate op / side effect
+    claimed2 = await claim_next(worker="worker-c-retry")
+    assert claimed2 is not None
+    assert claimed2.id == job.id
+    assert claimed2.operation_id == op_id
+    assert SIDE_EFFECTS == []
+
+
 # ── Window D: RUNNING, side effect not started ───────────────────────────────
 
 @pytest.mark.asyncio
