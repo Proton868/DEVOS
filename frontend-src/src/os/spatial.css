@@ -2296,3 +2296,34 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+
+/* ── Spatial engine presentation (constraint-based) ───────── */
+.sp-workspace--stack .sp-focus-col.stack {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+.sp-workspace--stack .sp-canvas-layer:not(.sp-dim-fullscreen) {
+  /* when stack focuses chat/ide, canvas may be hidden by engine */
+}
+.sp-dim-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 4px 8px 0;
+  flex-shrink: 0;
+}
+.sp-dimension-nav {
+  z-index: 40;
+}
+.sp-edge-tab--active {
+  border-color: rgba(0, 255, 179, 0.45) !important;
+  color: var(--sp-accent, #00ffb3) !important;
+}
+.sp-dim-fullscreen {
+  flex: 1 1 auto !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}

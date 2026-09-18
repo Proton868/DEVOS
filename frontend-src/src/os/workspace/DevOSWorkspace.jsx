@@ -102,7 +102,7 @@ export default function DevOSWorkspace() {
         <CosmicSidebar />
         <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", minWidth: 0 }}>
           <div style={{ flex: 1, position: "relative", display: "flex", minHeight: 0 }}>
-            <SpatialWorkspace key={graphKey} isMobile={isMobile} />
+            <SpatialWorkspace key={graphKey} />
             <PreviewSurface />
       <OverlaySurface isMobile={isMobile} />
           </div>

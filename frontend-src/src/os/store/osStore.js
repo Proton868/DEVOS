@@ -263,7 +263,14 @@ const useOsStore = create((set, get) => ({
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object") {
-        set((s) => ({ layout: { ...s.layout, ...parsed } }));
+        const { spatialFullscreenId, ...layoutRest } = parsed;
+        set((s) => ({
+          layout: { ...s.layout, ...layoutRest },
+          spatialFullscreenId:
+            spatialFullscreenId !== undefined
+              ? spatialFullscreenId
+              : s.spatialFullscreenId,
+        }));
       }
     } catch (_) { /* ignore */ }
   },
@@ -298,6 +305,30 @@ const useOsStore = create((set, get) => ({
       try { localStorage.setItem("devos_sp_layout", JSON.stringify(layout)); } catch (_) {}
       return { layout };
     }),
+
+  // ── Spatial engine (constraint-based; presentation only) ──
+  spatialFullscreenId: null,
+  setSpatialFullscreenId: (id) => {
+    set({ spatialFullscreenId: id || null });
+    try {
+      const prev = JSON.parse(localStorage.getItem("devos_sp_layout") || "{}");
+      localStorage.setItem(
+        "devos_sp_layout",
+        JSON.stringify({ ...prev, spatialFullscreenId: id || null })
+      );
+    } catch (_) { /* ignore */ }
+  },
+  spatialMeta: {
+    presentation: "split",
+    activeId: "chat",
+    orientation: "landscape",
+    showDimensionNav: false,
+    visibleIds: [],
+  },
+  setSpatialMeta: (meta) =>
+    set((s) => ({
+      spatialMeta: { ...s.spatialMeta, ...(meta || {}) },
+    })),
 
   dashboardOpen: true,
   setDashboardOpen: (v) => set({ dashboardOpen: v }),
