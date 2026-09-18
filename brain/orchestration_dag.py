@@ -594,7 +594,14 @@ def compute_readiness(
 
     ready_ids: list[str] = []
     for n in nodes:
-        st = NodeStatus(n.status)
+        raw = (n.status or "").lower()
+        # pending_review is investigation-only (not a NodeStatus enum member)
+        if raw == "pending_review":
+            continue
+        try:
+            st = NodeStatus(n.status)
+        except ValueError:
+            continue
         if st in (
             NodeStatus.COMPLETED, NodeStatus.VERIFIED, NodeStatus.CANCELLED,
             NodeStatus.BLOCKED, NodeStatus.RUNNING, NodeStatus.QUEUED,

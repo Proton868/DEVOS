@@ -324,20 +324,30 @@ def decide_recovery(
 
 
 def get_ready_nodes(nodes: list, edges: list) -> list:
-    """All nodes currently eligible (deps satisfied, not executing/terminal)."""
+    """All nodes currently eligible (deps satisfied, not executing/terminal).
+
+    pending_review is investigation-only (operation UNKNOWN / succeeded-without-
+    DAG-verification) and must never be dispatched.
+    """
     ready_ids = set(compute_readiness(nodes, edges))
+    runnable = frozenset({
+        "pending", "ready", "blocked_by_dependency", "replanning",
+    })
+    never_dispatch = frozenset({
+        "running", "queued", "completed", "verified", "cancelled",
+        "blocked", "failed", "verifying", "authorized",
+        "pending_review",  # operation-aware investigate; not runnable
+        "recovering",  # mid-recovery; not ordinary work
+    })
     out = []
     for n in nodes:
         if n.id not in ready_ids:
             continue
         st = (n.status or "").lower()
-        if st in (
-            "running", "queued", "completed", "verified", "cancelled",
-            "blocked", "failed", "verifying", "authorized",
-        ):
-            # already in flight or done — skip unless pending/ready/blocked_by_dependency
-            if st not in ("pending", "ready", "blocked_by_dependency", "replanning"):
-                continue
+        if st in never_dispatch:
+            continue
+        if st not in runnable:
+            continue
         out.append(n)
     return out
 
