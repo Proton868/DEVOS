@@ -50,6 +50,7 @@ class NodeExecutionResult:
     provider_failure: Optional[dict] = None
     commands: list = field(default_factory=list)
     coding_loop: Optional[dict] = None
+    usage: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return {
@@ -64,6 +65,7 @@ class NodeExecutionResult:
             "provider_failure": self.provider_failure,
             "commands": list(self.commands or []),
             "coding_loop": self.coding_loop,
+            "usage": self.usage,
         }
 
 
@@ -238,6 +240,10 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
             result.events_seen = list(mapped.get("events_seen") or [])
             result.task_id = mapped.get("task_id")
             result.coding_loop = mapped.get("coding_loop")
+            if mapped.get("usage"):
+                result.usage = mapped.get("usage")
+            elif isinstance(getattr(loop_state, "usage", None), dict):
+                result.usage = dict(loop_state.usage)
             # Persist CodingLoopState on Mission.meta for resume (Postgres SoT)
             try:
                 await _persist_coding_loop_state(
@@ -262,6 +268,11 @@ async def run_node_on_agent_runtime(req: NodeExecutionRequest) -> NodeExecutionR
                 result.task_id = str(tid)
             if et:
                 result.events_seen.append(et)
+            # Cumulative usage from AgentRuntime model-call progress
+            if data.get("usage") and isinstance(data["usage"], dict):
+                result.usage = dict(data["usage"])
+            elif isinstance(data.get("coding"), dict) and data["coding"].get("usage"):
+                result.usage = dict(data["coding"]["usage"])
             if et == "agent.completed":
                 # Provider exhaustion must never count as success
                 pf = data.get("provider_failure")

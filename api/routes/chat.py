@@ -432,6 +432,9 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                         # Optional coding snapshot from delegation progress (existing SSE)
                         try:
                             from brain.coding_progress import build_coding_progress
+                            _item_usage = item.get("usage")
+                            if not _item_usage and isinstance(item.get("coding"), dict):
+                                _item_usage = item["coding"].get("usage")
                             coding = build_coding_progress(
                                 mission_id=item.get("mission_id"),
                                 task_id=item.get("task_id"),
@@ -457,6 +460,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                                 artifacts=item.get("artifacts"),
                                 error=item.get("error"),
                                 evidence_id=item.get("evidence_id"),
+                                usage=_item_usage if isinstance(_item_usage, dict) else None,
                             )
                             if coding:
                                 prog["coding"] = coding
@@ -541,6 +545,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                                 validation=website_validation, acceptance=truth,
                                 evidence_id=(dres.evidence_refs or [None])[0] if getattr(dres, "evidence_refs", None) else None,
                                 persona_id=getattr(dres, "persona_key", None),
+                                usage=getattr(dres, "usage", None),
                             )
                         except Exception:
                             pass
@@ -555,6 +560,7 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                                 mission_id=dres.mission_id, plan_id=plan.id, status="failed",
                                 files_changed=files, error=_fail["error"], acceptance=truth,
                                 persona_id=getattr(dres, "persona_key", None),
+                                usage=getattr(dres, "usage", None),
                             )
                         except Exception:
                             pass

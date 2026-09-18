@@ -577,6 +577,38 @@ class AgentRuntime:
                     try:
                         messages = enforce_input_budget(messages, _budget)
                         text = await brain.stream_chat(messages)
+                        # Mission-level cumulative usage from authoritative last_call_metrics
+                        try:
+                            from brain.coding_progress import accumulate_usage, build_coding_progress
+                            prev = getattr(task, "usage_metrics", None) or getattr(self, "_usage_metrics", None)
+                            attempt = getattr(brain, "last_provider_state", None)
+                            merged = accumulate_usage(
+                                prev,
+                                getattr(brain, "last_call_metrics", None),
+                                primary_provider=self.provider,
+                                attempt_state=attempt if isinstance(attempt, dict) else None,
+                            )
+                            if merged:
+                                task.usage_metrics = merged
+                                self._usage_metrics = merged
+                                coding_u = build_coding_progress(
+                                    mission_id=getattr(task, "mission_id", None) or getattr(self, "mission_id", None),
+                                    task_id=getattr(task, "id", None),
+                                    project_id=self.project_id,
+                                    workspace_id=getattr(self, "workspace_id", None) or "default",
+                                    status="agent_progress",
+                                    agent_id=self.persona_id or self.user_id,
+                                    persona_id=self.persona_id,
+                                    current_task=f"model_call step {step + 1}",
+                                    provider=merged.get("provider") or self.provider,
+                                    model=merged.get("model") or self.model,
+                                    retry_count=merged.get("retry_attempt") or merged.get("retry_count"),
+                                    fallback_provider=merged.get("provider") if merged.get("fallback_used") else None,
+                                    usage=merged,
+                                )
+                                yield _emit(task, "agent.progress", {"coding": coding_u, "usage": merged})
+                        except Exception:
+                            pass
                     except Exception as _prov_exc:
                         from brain.llm import ProviderExhaustedError
                         if isinstance(_prov_exc, ProviderExhaustedError) or "All providers failed" in str(_prov_exc):
@@ -1737,6 +1769,7 @@ class AgentRuntime:
             files = []
             if task and getattr(task, "files_changed", None):
                 files = list(task.files_changed or [])
+            _usage = getattr(task, "usage_metrics", None) if task else getattr(self, "_usage_metrics", None)
             coding = build_coding_progress(
                 task_id=getattr(task, "id", None) if task else None,
                 project_id=self.project_id,
@@ -1756,6 +1789,7 @@ class AgentRuntime:
                 check_status="passed" if ok else "failed",
                 provider=self.provider,
                 model=self.model,
+                usage=_usage if isinstance(_usage, dict) else None,
             )
         except Exception:
             coding = None

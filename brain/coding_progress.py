@@ -110,6 +110,78 @@ def build_coding_progress(
     return {k: v for k, v in snap.items() if v is not None}
 
 
+
+def accumulate_usage(
+    existing: Optional[dict],
+    last_call: Optional[dict],
+    *,
+    primary_provider: Optional[str] = None,
+    attempt_state: Optional[dict] = None,
+) -> Optional[dict]:
+    """Merge one model-call metrics blob into mission-level cumulative usage.
+
+    Token counts are summed across successful calls that report them.
+    Missing fields stay absent (never fabricated as 0).
+    Latency is total observed model-call time when each call reports latency_ms.
+    Retry/fallback come from attempt_state when provided.
+    """
+    if not isinstance(last_call, dict) and not isinstance(existing, dict):
+        return None
+    out: dict = dict(existing) if isinstance(existing, dict) else {}
+    if isinstance(last_call, dict) and last_call:
+        for k in ("provider", "model"):
+            if last_call.get(k) is not None:
+                out[k] = last_call[k]
+        for k in ("input_tokens", "output_tokens", "cached_tokens", "total_tokens"):
+            v = last_call.get(k)
+            if v is None:
+                continue
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                continue
+            if k in out and out[k] is not None:
+                try:
+                    out[k] = int(out[k]) + iv
+                except (TypeError, ValueError):
+                    out[k] = iv
+            else:
+                out[k] = iv
+        lat = last_call.get("latency_ms")
+        if lat is not None:
+            try:
+                lf = float(lat)
+                out["latency_ms"] = int(round(float(out.get("latency_ms") or 0) + lf))
+            except (TypeError, ValueError):
+                pass
+        out["call_count"] = int(out.get("call_count") or 0) + 1
+
+    if isinstance(attempt_state, dict):
+        attempts = attempt_state.get("attempts") or []
+        if isinstance(attempts, list) and attempts:
+            # retry_attempt = failed attempts before last success (bounded public)
+            fails = sum(1 for a in attempts if isinstance(a, dict) and a.get("outcome") == "failed")
+            if fails:
+                out["retry_attempt"] = int(fails)
+            providers = {
+                a.get("provider") for a in attempts
+                if isinstance(a, dict) and a.get("provider")
+            }
+            if primary_provider and len(providers) > 1:
+                out["fallback_used"] = True
+            elif primary_provider and any(
+                isinstance(a, dict) and a.get("outcome") == "success"
+                and a.get("provider") and a.get("provider") != primary_provider
+                for a in attempts
+            ):
+                out["fallback_used"] = True
+        if attempt_state.get("preferred_provider") and out.get("provider"):
+            if attempt_state["preferred_provider"] != out.get("provider"):
+                out["fallback_used"] = True
+
+    return out or None
+
+
 def _public_usage(u: Optional[dict]) -> Optional[dict]:
     """Aggregate token/latency metrics — never prompts or secrets."""
     if not isinstance(u, dict):
@@ -122,6 +194,11 @@ def _public_usage(u: Optional[dict]) -> Optional[dict]:
     ):
         if u.get(k) is not None:
             out[k] = u[k]
+    # UI alias: retry_count mirrors retry_attempt when only one is set
+    if out.get("retry_attempt") is None and u.get("retry_count") is not None:
+        out["retry_attempt"] = u["retry_count"]
+    if out.get("retry_attempt") is not None:
+        out.setdefault("retry_count", out["retry_attempt"])
     return out or None
 
 

@@ -35,6 +35,7 @@ class DelegationResult:
     error: Optional[str] = None
     execution_path: str = "A2A_DELEGATION"
     rounds: int = 0
+    usage: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return {
@@ -52,6 +53,7 @@ class DelegationResult:
             "error": self.error,
             "execution_path": self.execution_path,
             "rounds": self.rounds,
+            "usage": self.usage,
         }
 
 
@@ -286,6 +288,7 @@ async def run_delegated_mission(
 
     parent_msg: Optional[str] = None
     last_files: list = []
+    last_usage = None
     last_error: Optional[str] = None
 
     for round_i in range(1, max_rounds + 1):
@@ -354,6 +357,21 @@ async def run_delegated_mission(
             persona_id=persona_key,
             objective=objective,
         )
+        _usage = exec_result.get("usage") if isinstance(exec_result.get("usage"), dict) else None
+        if _usage:
+            last_usage = _usage
+        if _usage:
+            await _emit_progress(on_progress, {
+                "status": "agent_progress",
+                "phase": "model_usage",
+                "mission_id": mission_id,
+                "task_id": task_id,
+                "plan_id": plan_id,
+                "persona_key": persona_key,
+                "usage": _usage,
+                "provider": _usage.get("provider"),
+                "model": _usage.get("model"),
+            })
         files = list(exec_result.get("files_changed") or [])
         last_files = files
         agent_ok = bool(exec_result.get("success"))
@@ -716,6 +734,7 @@ async def run_delegated_mission(
                 a2a_message_ids=msg_ids,
                 ponytail=gate.to_dict() if hasattr(gate, "to_dict") else {"passed": True},
                 rounds=round_i,
+                usage=last_usage,
             )
 
         last_error = gate.summary or "ponytail_failed"
@@ -766,4 +785,5 @@ async def run_delegated_mission(
         ponytail={"passed": False, "summary": last_error},
         error=last_error or "policy_limit_exceeded",
         rounds=max_rounds,
+        usage=last_usage,
     )

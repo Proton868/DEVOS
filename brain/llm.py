@@ -1,3 +1,4 @@
+import time
 """
 Brain Layer — LLM reasoning, now with custom endpoint support.
 Supports: Ollama, OpenRouter, DeepSeek, Gemini, OpenAI, and ANY custom
@@ -527,6 +528,7 @@ class BrainLLM:
         attempts = max(1, int(_LLM_HTTP_MAX_ATTEMPTS))
         for attempt in range(1, attempts + 1):
             try:
+                self._call_t0 = time.monotonic()
                 r = await self._http.post(
                     f"{base_url.rstrip('/')}/chat/completions",
                     json={"model": model, "messages": messages, "temperature": 0.1},
@@ -544,6 +546,27 @@ class BrainLLM:
                     raise RuntimeError(f"Malformed provider response (missing choices): {e}") from e
                 if content is None or (isinstance(content, str) and not content.strip()):
                     raise RuntimeError("Empty provider response (no message content)")
+                try:
+                    usage = data.get("usage") or {}
+                    metrics = {
+                        "provider": getattr(self, "provider", None),
+                        "model": model,
+                        "input_tokens": usage.get("prompt_tokens") or usage.get("input_tokens"),
+                        "output_tokens": usage.get("completion_tokens") or usage.get("output_tokens"),
+                        "cached_tokens": (
+                            (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+                            if isinstance(usage.get("prompt_tokens_details"), dict)
+                            else usage.get("cached_tokens")
+                        ),
+                        "total_tokens": usage.get("total_tokens"),
+                    }
+                    t0 = getattr(self, "_call_t0", None)
+                    if t0 is not None:
+                        import time as _time
+                        metrics["latency_ms"] = int(round((_time.monotonic() - t0) * 1000))
+                    self.last_call_metrics = {k: v for k, v in metrics.items() if v is not None}
+                except Exception:
+                    pass
                 return content if isinstance(content, str) else str(content)
             except httpx.HTTPStatusError as e:
                 # Do not retry auth/client errors
