@@ -597,8 +597,12 @@ async def persist_run_durable(run: AutomationRun) -> bool:
                 payload["operation_id"] = run.operation_id
             if getattr(run, "execution_job_id", None):
                 payload["job_id"] = run.execution_job_id
-            if getattr(run, "definition_snapshot", None):
-                payload["definition_snapshot"] = scrub_secrets(dict(run.definition_snapshot))
+            snap = dict(getattr(run, "definition_snapshot", None) or {})
+            if run.execution_state:
+                snap = dict(snap)
+                snap["_runtime_execution_state"] = scrub_secrets(dict(run.execution_state))
+            if snap:
+                payload["definition_snapshot"] = scrub_secrets(snap)
             if row is None:
                 row = AutomationRunRecord(id=run.run_id, created_at=_utcnow_naive(), **{
                     k: v for k, v in payload.items() if k != "updated_at"
@@ -652,7 +656,7 @@ def _row_to_run(row) -> AutomationRun:
         trigger=trigger,
         idempotency_key=row.idempotency_key,
         correlation_id=row.correlation_id or "",
-        execution_state=dict(row.definition_snapshot or {}),
+        execution_state=dict((row.definition_snapshot or {}).get("_runtime_execution_state") or {}),
         result_summary=dict(row.result_summary or {}) if row.result_summary else {},
         error=row.error,
         cancel_requested=bool(row.cancel_requested),
@@ -661,7 +665,9 @@ def _row_to_run(row) -> AutomationRun:
     )
     setattr(run, "operation_id", row.operation_id)
     setattr(run, "execution_job_id", row.job_id)
-    setattr(run, "definition_snapshot", dict(row.definition_snapshot or {}))
+    snap = dict(row.definition_snapshot or {})
+    snap.pop("_runtime_execution_state", None)
+    setattr(run, "definition_snapshot", snap)
     return run
 
 
