@@ -285,6 +285,18 @@ const deliveryApi = {
       method: "POST",
       body: JSON.stringify({ provider }),
     }),
+  lifecycleStatus: (projectId) =>
+    req(`/api/delivery/${encodeURIComponent(projectId)}/lifecycle`),
+  lifecycleAdvance: (projectId, stage, opts = {}) =>
+    req(`/api/delivery/${encodeURIComponent(projectId)}/lifecycle/advance`, {
+      method: "POST",
+      body: JSON.stringify({ stage, ...opts }),
+    }),
+  lifecyclePipeline: (projectId, opts = {}) =>
+    req(`/api/delivery/${encodeURIComponent(projectId)}/lifecycle/pipeline`, {
+      method: "POST",
+      body: JSON.stringify(opts),
+    }),
 };
 
 const searchApi = {

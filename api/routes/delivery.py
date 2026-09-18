@@ -271,3 +271,65 @@ async def saga_get(saga_id: str, request: Request, db=Depends(get_db)):
     if not s:
         raise HTTPException(404, "saga not found")
     return s.to_dict()
+
+
+# ── Application lifecycle (CREATE → … → MAINTAIN) ───────────────────────────
+
+
+class LifecycleAdvanceReq(BaseModel):
+    stage: str
+    provider: Optional[str] = None
+    credentials: Optional[dict] = None
+    paths: Optional[list] = None
+    source: Optional[str] = None
+    force_unverified: bool = False
+
+
+class LifecyclePipelineReq(BaseModel):
+    stages: Optional[list] = None
+    provider: Optional[str] = None
+    source: Optional[str] = "api"
+    stop_on_failure: bool = True
+
+
+@router.get("/{project_id}/lifecycle")
+async def lifecycle_status(project_id: str, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from execution.app_lifecycle import get_lifecycle, create_lifecycle
+    rec = get_lifecycle(user.id, project_id)
+    if not rec:
+        rec = create_lifecycle(user.id, project_id, meta={"source": "status"})
+    return rec.to_dict()
+
+
+@router.post("/{project_id}/lifecycle/advance")
+async def lifecycle_advance(project_id: str, body: LifecycleAdvanceReq, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from execution.app_lifecycle import advance
+    params = {
+        "provider": body.provider,
+        "credentials": body.credentials or {},
+        "paths": body.paths or [],
+        "source": body.source or "api",
+        "force_unverified": body.force_unverified,
+    }
+    rec = await advance(user.id, project_id, body.stage, params=params)
+    return rec.to_dict()
+
+
+@router.post("/{project_id}/lifecycle/pipeline")
+async def lifecycle_pipeline(project_id: str, body: LifecyclePipelineReq, request: Request, db=Depends(get_db)):
+    user = await get_current_user(request, db)
+    await ensure_personal_tenant(db, user)
+    from execution.app_lifecycle import run_pipeline
+    params = {"provider": body.provider, "source": body.source or "api"}
+    rec = await run_pipeline(
+        user.id,
+        project_id,
+        stages=body.stages,
+        params=params,
+        stop_on_failure=body.stop_on_failure,
+    )
+    return rec.to_dict()
