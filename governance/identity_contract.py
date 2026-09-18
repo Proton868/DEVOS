@@ -21,7 +21,7 @@ class DevOSIdentity:
     account_id: str          # canonical DevOS users.id
     auth_provider: str       # local | supabase
     session_id: Optional[str] = None
-    role: str = "member"     # member | elder | hegemon — label, not UCIP
+    role: str = "member"     # member | elder | hegemon — from users.role; see platform_roles.py
     plan: str = "recruit"    # product entitlement label
     status: str = "active"
     workspace_scope: Optional[str] = None

@@ -1,3 +1,4 @@
+from governance.platform_roles import can_administer_platform
 """
 API — Capabilities route (Agency OS Master Plan §1 Capability Registry).
 
@@ -87,7 +88,7 @@ async def export_uci_manifest(request: Request, db=Depends(get_db)):
 async def import_uci_manifest(request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    if not getattr(user, "is_admin", False):
+    if not can_administer_platform(user):
         from fastapi import HTTPException
         raise HTTPException(403, "admin required")
     body = await request.json()

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from api.deps import get_current_user, get_db, ensure_personal_tenant
 from core.database import User
 from core.config import settings
+from governance.platform_roles import public_role_label, is_hegemon, is_elder_or_above
 from governance.identity_contract import reject_client_authority_fields
 
 router = APIRouter(prefix="/api/account", tags=["account"])
@@ -24,8 +25,8 @@ def user_public(u: User) -> dict:
         "username": u.username,
         "email": u.email,
         "is_admin": bool(u.is_admin),
-        "role": getattr(u, "role", None) or ("hegemon" if u.is_admin else "member"),
-        "plan": getattr(u, "plan", None) or ("hegemon" if u.is_admin else "recruit"),
+        "role": public_role_label(u),
+        "plan": getattr(u, "plan", None) or "recruit",
         "onboarding_status": getattr(u, "onboarding_status", None) or "NOT_STARTED",
         "display_name": getattr(u, "display_name", None) or u.username,
         "preferred_name": getattr(u, "preferred_name", None),
@@ -115,9 +116,11 @@ async def bootstrap_owner(request: Request, db=Depends(get_db)):
     """Ensure configured owner/admin is Hegemon. Server-side only; not a frontend grant."""
     user = await get_current_user(request, db)
     owner_user = (getattr(settings, "ADMIN_USERNAME", None) or "admin").lower()
-    if user.is_admin or (user.username or "").lower() == owner_user:
+    # Only configured owner username or existing Hegemon may run bootstrap
+    if is_hegemon(user) or (user.username or "").lower() == owner_user:
         user.role = "hegemon"
         user.plan = "hegemon"
+        user.is_admin = True
         if (getattr(user, "onboarding_status", None) or "") in ("NOT_STARTED", ""):
             user.onboarding_status = "COMPLETED"
         await db.commit()

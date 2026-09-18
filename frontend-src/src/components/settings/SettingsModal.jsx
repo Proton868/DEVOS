@@ -484,7 +484,11 @@ function AccountPanel({ local, patch, onClose }) {
       <div className="settings-card" style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 10, marginBottom: 14 }}>
         <div className="settings-row"><span>Username</span><strong>{profile.username || "—"}</strong></div>
         <div className="settings-row"><span>Email</span><strong>{profile.email || "—"}</strong></div>
-        <div className="settings-row"><span>Role</span><strong>{profile.is_admin ? "Admin" : "Operator"}</strong></div>
+        <div className="settings-row"><span>Role</span><strong>{
+                  (profile.role || "").toLowerCase() === "hegemon" ? "Hegemon"
+                    : (profile.role || "").toLowerCase() === "elder" ? "Elder"
+                    : profile.is_admin ? "Elder" : "Member"
+                }</strong></div>
         <div className="settings-row"><span>Identity</span><strong>{profile.supabase_linked ? "Supabase linked" : "Local"}</strong></div>
       </div>
 

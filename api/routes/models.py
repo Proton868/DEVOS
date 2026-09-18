@@ -7,6 +7,7 @@ from governance.tenant_store import ensure_personal_tenant
 from api.deps import tenant_ctx
 
 from core.config import settings
+from governance.platform_roles import can_administer_platform, public_role_label
 import asyncio
 
 router = APIRouter()
@@ -80,7 +81,7 @@ async def get_provider_config(request: Request, db=Depends(get_db)):
             out[k] = {"configured": bool(val), "masked": _mask_secret(val) if val else ""}
         else:
             out[k] = val
-    out["_meta"] = {"is_admin": bool(getattr(user, "is_admin", False))}
+    out["_meta"] = {"is_admin": can_administer_platform(user), "role": public_role_label(user)}
     return out
 
 
@@ -90,8 +91,8 @@ async def save_provider_config(req: ProviderConfigUpdate, request: Request, db=D
     """Persist provider/model settings from Settings UI to .env and apply live."""
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    if not getattr(user, "is_admin", False):
-        raise HTTPException(403, "Admin required to change provider configuration")
+    if not can_administer_platform(user):
+        raise HTTPException(403, "Elder or Hegemon role required to change provider configuration")
     from core.config import update_env_settings
     updates = req.model_dump(exclude_none=True)
     if not updates:

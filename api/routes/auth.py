@@ -673,9 +673,9 @@ async def me(request: Request, db: AsyncSession = Depends(get_db)):
     from governance.tenant_store import ensure_personal_tenant
     tenant = await ensure_personal_tenant(db, user)
     return {"id": user.id, "username": user.username, "email": user.email,
-            "is_admin": user.is_admin, "supabase_linked": bool(user.supabase_id),
-            "role": getattr(user, "role", None) or ("hegemon" if user.is_admin else "member"),
-            "plan": getattr(user, "plan", None) or ("hegemon" if user.is_admin else "recruit"),
+            "is_admin": can_administer_platform(user), "supabase_linked": bool(user.supabase_id),
+            "role": public_role_label(user),
+            "plan": getattr(user, "plan", None) or "recruit",
             "onboarding_status": getattr(user, "onboarding_status", None) or "NOT_STARTED",
             "display_name": getattr(user, "display_name", None) or user.username,
             "avatar_url": getattr(user, "avatar_url", None),
@@ -728,24 +728,26 @@ async def supabase_sync(request: Request, response: Response, db: AsyncSession =
     )
     AuditLogger().log(AuditEventType.AUTH, actor_id=user.id, tenant_id="default",
                        action="supabase_sync", outcome="success")
+    _role = public_role_label(user)
+    _admin = can_administer_platform(user)
     return {
         "token": local_token,
         "id": user.id,
         "username": user.username,
         "email": user.email,
-        "is_admin": user.is_admin,
+        "is_admin": _admin,
         "default_tenant_id": getattr(user, "default_tenant_id", None),
-        "role": getattr(user, "role", None),
-        "plan": getattr(user, "plan", None),
+        "role": _role,
+        "plan": getattr(user, "plan", None) or "recruit",
         "supabase_linked": True,
         "user": {
             "id": user.id,
             "username": user.username,
             "email": user.email,
-            "is_admin": user.is_admin,
+            "is_admin": _admin,
             "default_tenant_id": getattr(user, "default_tenant_id", None),
-            "role": getattr(user, "role", None),
-            "plan": getattr(user, "plan", None),
+            "role": _role,
+            "plan": getattr(user, "plan", None) or "recruit",
             "supabase_linked": True,
         },
     }
@@ -799,13 +801,17 @@ async def delete_account(req: DeleteAccountReq, response: Response, request: Req
     user = await get_current_user(request, db)
     if not user:
         raise HTTPException(401)
-    if user.is_admin:
-        # Count admins — refuse to delete the last admin
+    from governance.platform_roles import is_hegemon, is_elder_or_above, effective_platform_role
+    if is_hegemon(user):
         from core.database import User as U
         from sqlalchemy import select, func
-        r = await db.execute(select(func.count()).select_from(U).where(U.is_admin == True, U.is_active == True))  # noqa: E712
-        if int(r.scalar() or 0) <= 1:
-            raise HTTPException(400, "Cannot delete the last admin account")
+        r = await db.execute(select(U).where(U.is_active == True))  # noqa: E712
+        hegemon_count = sum(1 for u in (r.scalars().all() or []) if is_hegemon(u))
+        if hegemon_count <= 1:
+            raise HTTPException(400, "Cannot delete the last Hegemon account")
+    elif is_elder_or_above(user):
+        # Elders may self-delete; cannot remove Hegemon via this path (self only)
+        pass
     if user.hashed_password:
         if not req.password or not check_pw(req.password, user.hashed_password):
             raise HTTPException(400, "Password required to delete this account")

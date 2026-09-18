@@ -1,3 +1,4 @@
+from governance.platform_roles import can_administer_platform
 from fastapi import APIRouter, Depends, Request, HTTPException
 from pydantic import BaseModel
 from typing import Any
@@ -45,7 +46,7 @@ async def get_job(job_id: str, request: Request, db=Depends(get_db)):
     if not job: raise HTTPException(404, "job not found")
     # Owner-scoped: tenant membership alone must not grant job IDOR access.
     # Explicit collaboration shares would be a separate authorized capability.
-    if str(job.owner_id) != str(user.id) and not getattr(user, "is_admin", False):
+    if str(job.owner_id) != str(user.id) and not can_administer_platform(user):
         raise HTTPException(status_code=403, detail="forbidden")
     return {"id":job.id,"job_type":job.job_type,"status":job.status,"payload":job.payload,
         "result":job.result,"error":job.error,"attempts":job.attempts,"isolation":job.isolation}
