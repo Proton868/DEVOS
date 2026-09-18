@@ -21,7 +21,7 @@ from typing import Optional
 
 from execution.files import FileService, PathViolation
 from execution.app_detect import detect_application
-from execution.isolation_runtime import wrap_command, isolation_available
+from execution.isolation_runtime import wrap_command, isolation_available, IsolationUnavailable
 from execution.log_stream import publish_log
 from execution.durable_store import upsert_runtime, new_id
 
@@ -156,11 +156,14 @@ class ApplicationRuntime:
         timeout: float = 300,
         allow_network: bool = False,
         env_extra: Optional[dict] = None,
+        trust: str = "untrusted",
     ) -> tuple[int, str, str]:
         env = filter_env(env_extra, allow_network=allow_network)
         self._log_buf.append(f"$ {' '.join(cmd)}\n")
         try:
-            run_cmd = wrap_command(cmd, cwd=self._cwd(), net=allow_network)
+            run_cmd = wrap_command(
+                cmd, cwd=self._cwd(), net=allow_network, trust=trust,
+            )
             proc = await asyncio.create_subprocess_exec(
                 *run_cmd,
                 cwd=self._cwd(),
@@ -168,6 +171,9 @@ class ApplicationRuntime:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+        except IsolationUnavailable as e:
+            self._log_buf.append(f"[isolation] {e.reason}\n")
+            return 126, "", str(e.reason)
         except FileNotFoundError as e:
             return 127, "", f"command not found: {cmd[0]} ({e})"
         try:
@@ -311,15 +317,24 @@ class ApplicationRuntime:
             "NEXT_TELEMETRY_DISABLED": "1",
         }
         self.status = AppRuntimeStatus(state=AppRuntimeState.STARTING, detail="starting", port=port)
-        env = filter_env(env_extra, allow_network=False)
+        env = filter_env(env_extra, allow_network=True)
         try:
+            # App code is untrusted; require isolation. Network needed for loopback listen.
+            run_cmd = wrap_command(cmd, cwd=self._cwd(), net=True, trust="untrusted")
             self._proc = await asyncio.create_subprocess_exec(
-                *cmd,
+                *run_cmd,
                 cwd=self._cwd(),
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
+        except IsolationUnavailable as e:
+            self.status = AppRuntimeStatus(
+                state=AppRuntimeState.FAILED,
+                detail=str(e.reason),
+                evidence={"isolation": "unavailable", "backend": e.backend},
+            )
+            return self.status
         except FileNotFoundError as e:
             self.status = AppRuntimeStatus(state=AppRuntimeState.FAILED, detail=str(e))
             return self.status

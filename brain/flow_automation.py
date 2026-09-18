@@ -21,6 +21,9 @@ complements snapshot-based resumability for the automation API.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import hashlib
 import logging
 import time
@@ -127,6 +130,45 @@ class AutomationRun:
             "updated_at": self.updated_at,
         })
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "AutomationRun":
+        mode = data.get("mode") or RunMode.MANUAL.value
+        status = data.get("status") or RunStatus.QUEUED.value
+        try:
+            mode_e = RunMode(mode)
+        except Exception:
+            mode_e = RunMode.MANUAL
+        try:
+            status_e = RunStatus(status)
+        except Exception:
+            status_e = RunStatus.QUEUED
+        trig = data.get("trigger") or {}
+        if isinstance(trig, dict):
+            trigger = TriggerSpec.from_dict(trig) if hasattr(TriggerSpec, "from_dict") else TriggerSpec(
+                type=str(trig.get("type") or "manual"),
+                config=dict(trig.get("config") or {}),
+            )
+        else:
+            trigger = TriggerSpec(type="manual")
+        return cls(
+            run_id=str(data.get("run_id") or ""),
+            workflow_id=str(data.get("workflow_id") or ""),
+            workflow_version=int(data.get("workflow_version") or 0),
+            owner_id=str(data.get("owner_id") or ""),
+            tenant_id=data.get("tenant_id"),
+            mode=mode_e,
+            status=status_e,
+            trigger=trigger,
+            idempotency_key=data.get("idempotency_key"),
+            correlation_id=data.get("correlation_id"),
+            execution_state=dict(data.get("execution_state") or {}),
+            result_summary=dict(data.get("result_summary") or {}),
+            error=data.get("error"),
+            cancel_requested=bool(data.get("cancel_requested")),
+            created_at=str(data.get("created_at") or ""),
+            updated_at=str(data.get("updated_at") or ""),
+        )
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -137,17 +179,71 @@ def _id() -> str:
 
 
 class AutomationRunStore:
-    """Process-local durable ledger (serializable). Production multi-node uses ExecutionJob."""
+    """Durable automation run ledger.
 
-    def __init__(self) -> None:
+    Serializes to disk so process restart can resume non-terminal runs.
+    Multi-node production still prefers ExecutionJob + workflow snapshot;
+    this store is the single-node coordination ledger used by flow_automation.
+    """
+
+    def __init__(self, path: Optional[str] = None) -> None:
         self._runs: dict[str, AutomationRun] = {}
         self._by_idem: dict[str, str] = {}
+        self._path = path or os.environ.get(
+            "DEVOS_AUTOMATION_RUN_STORE",
+            str(Path("data") / "automation_runs.json"),
+        )
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            p = Path(self._path)
+            if not p.is_file():
+                return
+            import json
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            for item in raw.get("runs") or []:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    run = AutomationRun.from_dict(item) if hasattr(AutomationRun, "from_dict") else None
+                    if run is None:
+                        # best-effort field reconstruct
+                        run = AutomationRun(**{
+                            k: item[k] for k in item
+                            if k in getattr(AutomationRun, "__dataclass_fields__", {})
+                        })
+                    self._runs[run.run_id] = run
+                    if run.idempotency_key:
+                        self._by_idem[f"{run.owner_id}:{run.idempotency_key}"] = run.run_id
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    def _persist(self) -> None:
+        try:
+            import json
+            p = Path(self._path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "runs": [
+                    (r.to_dict() if hasattr(r, "to_dict") else r.__dict__)
+                    for r in self._runs.values()
+                ]
+            }
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, default=str), encoding="utf-8")
+            tmp.replace(p)
+        except Exception:
+            pass
 
     def put(self, run: AutomationRun) -> AutomationRun:
         run.updated_at = _now()
         self._runs[run.run_id] = run
         if run.idempotency_key:
             self._by_idem[f"{run.owner_id}:{run.idempotency_key}"] = run.run_id
+        self._persist()
         return run
 
     def get(self, run_id: str) -> Optional[AutomationRun]:
@@ -172,7 +268,8 @@ def get_run_store() -> AutomationRunStore:
 
 def reset_run_store_for_tests() -> AutomationRunStore:
     global _STORE
-    _STORE = AutomationRunStore()
+    import tempfile
+    _STORE = AutomationRunStore(path=tempfile.mktemp(suffix="_automation_runs.json"))
     return _STORE
 
 

@@ -18,6 +18,7 @@ import { resolveIdeLayout } from "../ide/ideLayout";
 import IdeTabBar from "../ide/IdeTabBar";
 import { flattenDiagnostics } from "../ide/ideTabs";
 import { listIdeCommands } from "../ide/ideCommands";
+import { useLSP } from "../../hooks/useLSP";
 
 const GitPanel = lazy(() => import("../../components/sidebar/GitPanel"));
 const SearchPanel = lazy(() => import("../../components/sidebar/SearchPanel"));
@@ -139,6 +140,7 @@ export default function DevOSIde({ onClose, onCollapse }) {
   const [files, setFiles] = useState([]);
   const [ideSize, setIdeSize] = useState({ width: 900, height: 640 });
   const editorRef = useRef(null);
+  const monacoRef = useRef(null);
   const rootRef = useRef(null);
   const loadGen = useRef(0);
 
@@ -151,6 +153,15 @@ export default function DevOSIde({ onClose, onCollapse }) {
   const language =
     editor.language ||
     (editor.file ? getLanguageFromPath(editor.file) : "python");
+
+  const tabPath = editor.file || (target?.type === "file" ? target.path : null);
+  const { notifyOpen, notifyChange } = useLSP(
+    editorRef,
+    monacoRef,
+    tabPath,
+    language
+  );
+  const mergeIdeDiagnostics = useOsStore((s) => s.mergeIdeDiagnostics);
 
   // Measure IDE surface for internal spatial resolve
   useEffect(() => {
@@ -705,10 +716,34 @@ export default function DevOSIde({ onClose, onCollapse }) {
                     try {
                       markIdeTabModified?.(target.path, next !== original);
                     } catch (_) {}
+                    try {
+                      notifyChange?.(next);
+                    } catch (_) {}
                   }
                 }}
-                onMount={(ed) => {
+                onMount={(ed, monaco) => {
                   editorRef.current = ed;
+                  if (monaco) monacoRef.current = monaco;
+                  try {
+                    notifyOpen?.(content || "");
+                  } catch (_) {}
+                  // Publish Monaco markers into IDE diagnostics
+                  try {
+                    const model = ed.getModel?.();
+                    if (model && monaco?.editor?.onDidChangeMarkers) {
+                      monaco.editor.onDidChangeMarkers(() => {
+                        const marks = monaco.editor.getModelMarkers({ resource: model.uri }) || [];
+                        const diags = marks.map((mk) => ({
+                          path: tabPath || target?.path || "",
+                          message: mk.message,
+                          severity: mk.severity,
+                          line: mk.startLineNumber,
+                          column: mk.startColumn,
+                        }));
+                        mergeIdeDiagnostics?.(tabPath || target?.path || "unknown", diags);
+                      });
+                    }
+                  } catch (_) {}
                 }}
                 options={{
                   fontSize: 13,
