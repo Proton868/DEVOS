@@ -488,8 +488,16 @@ def mark_node_verified(
     node = _get_node(nodes, node_id)
     if not evidence or not isinstance(evidence, dict):
         raise ValueError("mark_node_verified requires non-empty verification evidence")
-    # Reject recovery-plan-shaped payloads used as fake verification.
-    if set(evidence.keys()) <= {"recovery", "recovery_plan", "plan"} and "ok" not in evidence and "checks" not in evidence:
+    # Recovery plans are never verification evidence. Require explicit signals.
+    has_verify_signal = any(
+        k in evidence and evidence.get(k) not in (None, "", False, [], {})
+        for k in ("ok", "passed", "checks", "files_changed", "status")
+    )
+    recovery_only_keys = {
+        "recovery", "recovery_plan", "plan", "decision", "reason",
+        "attempt", "failure_class", "has_failed_edge",
+    }
+    if not has_verify_signal or set(evidence.keys()) <= recovery_only_keys:
         raise ValueError("recovery metadata is not verification evidence")
     cur = NodeStatus(node.status)
     if cur == NodeStatus.VERIFIED and node.verification_evidence:
