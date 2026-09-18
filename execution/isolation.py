@@ -247,14 +247,21 @@ def detect_backends() -> dict:
 def _bwrap_operational() -> bool:
     """Verify bubblewrap can actually create a sandbox (not just that the binary exists).
 
-    Synchronous so it is safe to call from select_backend() whether or not an
-    asyncio event loop is already running. Must not use asyncio.run().
+    Genuinely synchronous: uses subprocess.run only. Safe to call from
+    select_backend() whether or not an asyncio event loop is already running.
+
+    Must NOT:
+      - define or return an async coroutine left unawaited;
+      - call asyncio.run() (nested loop would fail under async callers);
+      - treat binary presence alone as operational success.
     """
     bwrap = _which("bwrap", "bubblewrap")
     if not bwrap:
         return False
     try:
+        # Import inside try so a broken stdlib still yields False, not raise.
         import subprocess
+        # Real sandbox creation probe — not --version / path existence.
         r = subprocess.run(
             [
                 bwrap,
@@ -274,7 +281,7 @@ def _bwrap_operational() -> bool:
             timeout=5,
             check=False,
         )
-        return r.returncode == 0
+        return bool(r.returncode == 0)
     except Exception as e:
         logger.debug("bwrap operational probe failed: %s", e)
         return False

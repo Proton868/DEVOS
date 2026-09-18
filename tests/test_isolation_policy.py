@@ -328,6 +328,39 @@ def test_app_runtime_source_force_untrusted():
     assert classify_execution_request(policy="privileged", source="app_runtime") == POLICY_UNTRUSTED
 
 
+
+
+def test_bwrap_operational_returns_bool_not_coroutine():
+    """_bwrap_operational must return a real bool, never a coroutine/awaitable."""
+    import inspect
+    from execution.isolation import _bwrap_operational
+    assert not inspect.iscoroutinefunction(_bwrap_operational)
+    result = _bwrap_operational()
+    assert isinstance(result, bool)
+    assert not inspect.iscoroutine(result)
+    assert not inspect.isawaitable(result)
+
+
+def test_bwrap_operational_source_is_synchronous():
+    """Static regression: probe body must not introduce unawaited async helpers."""
+    import inspect
+    import ast
+    from execution import isolation as iso
+    src = inspect.getsource(iso._bwrap_operational)
+    # Parse AST so docstring mentions of asyncio.run do not false-positive.
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef):
+            raise AssertionError("async def found inside _bwrap_operational")
+        if isinstance(node, ast.Call):
+            # asyncio.run(...)
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "run":
+                if isinstance(func.value, ast.Name) and func.value.id == "asyncio":
+                    raise AssertionError("asyncio.run() call found in _bwrap_operational")
+    assert "subprocess.run" in src
+
+
 def test_bwrap_operational_safe_from_running_event_loop():
     """_bwrap_operational must not call asyncio.run() (nested loop would fail)."""
     from execution.isolation import _bwrap_operational, select_backend
