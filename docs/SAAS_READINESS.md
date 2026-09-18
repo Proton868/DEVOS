@@ -32,3 +32,8 @@ psql "$DATABASE_URL" -c "SELECT tablename, policyname FROM pg_policies WHERE sch
 - `GET /api/enterprise/tenants/mine` — memberships for the current user
 - Enterprise billing/audit/rbac with `tenant_id` require membership (403 otherwise)
 - `GET|POST|DELETE /api/notes` — personal notes only
+
+## Related product surfaces
+
+- Settings → Providers: unified OmniRoute/OpenRouter cards (`UnifiedProviders`)
+- Omni-Panel → Open OmniRoute (management UI from configured base URL)

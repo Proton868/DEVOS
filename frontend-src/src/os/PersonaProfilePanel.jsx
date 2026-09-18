@@ -116,7 +116,7 @@ export default function PersonaProfilePanel() {
         <label className="settings-label">Provider</label>
         <select className="settings-input" value={provider} onChange={(e) => setProvider(e.target.value)}>
           <option value="">System default</option>
-          {(providers.length ? providers : ["ollama", "openrouter", "deepseek", "openai", "gemini"]).map((pr) => {
+          {(providers.length ? providers : ["omniroute", "openrouter", "deepseek", "openai", "gemini"]).map((pr) => {
             const id = typeof pr === "string" ? pr : pr.id || pr.name;
             return <option key={id} value={id}>{id}</option>;
           })}

@@ -194,3 +194,9 @@ curl -fsS https://dev.carai.agency/api/health | jq .isolation
 ```
 
 Do **not** set `DEVOS_ALLOW_DEGRADED_ISOLATION=1` to force host execution.
+
+
+## Provider Settings (admin)
+
+OmniRoute keys editable via Settings (admin): `OMNIROUTE_BASE_URL`, `OMNIROUTE_API_KEY`, `OMNIROUTE_DEFAULT_MODEL`.  
+`SUPABASE_KEY` is **not** editable via the Settings API (service-role risk).

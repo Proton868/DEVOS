@@ -34,6 +34,9 @@ class ProviderConfigUpdate(BaseModel):
     """All fields optional — only supplied keys are changed. Matches the
     whitelist in core/config.py's EDITABLE_PROVIDER_KEYS."""
     DEFAULT_PROVIDER: str | None = None
+    OMNIROUTE_BASE_URL: str | None = None
+    OMNIROUTE_API_KEY: str | None = None
+    OMNIROUTE_DEFAULT_MODEL: str | None = None
     OLLAMA_HOST: str | None = None
     OLLAMA_DEFAULT_MODEL: str | None = None
     OPENROUTER_API_KEY: str | None = None
@@ -51,8 +54,6 @@ class ProviderConfigUpdate(BaseModel):
     NARAROUTER_API_KEY: str | None = None
     NARAROUTER_BASE_URL: str | None = None
     NARAROUTER_DEFAULT_MODEL: str | None = None
-    SUPABASE_URL: str | None = None
-    SUPABASE_KEY: str | None = None
     TAVILY_API_KEY: str | None = None
 
 
@@ -86,14 +87,11 @@ async def get_provider_config(request: Request, db=Depends(get_db)):
 
 @router.put("/providers/config")
 async def save_provider_config(req: ProviderConfigUpdate, request: Request, db=Depends(get_db)):
+    """Persist provider/model settings from Settings UI to .env and apply live."""
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
     if not getattr(user, "is_admin", False):
         raise HTTPException(403, "Admin required to change provider configuration")
-    """Persist provider/model settings edited from the Settings UI to .env
-    and apply them live — no server restart required."""
-    user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
     from core.config import update_env_settings
     updates = req.model_dump(exclude_none=True)
     if not updates:

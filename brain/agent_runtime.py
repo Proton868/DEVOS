@@ -1109,7 +1109,10 @@ class AgentRuntime:
                     "role": "user",
                     "content": (
                         f"TOOL RESULT [{action}]:\n"
-                        + json.dumps(_truncate_result(result), indent=2)[:6000]
+                        + compact_tool_result(
+                            _truncate_result(result) if isinstance(result, dict) else result,
+                            _budget,
+                        )[:6000]
                     ),
                 })
 
