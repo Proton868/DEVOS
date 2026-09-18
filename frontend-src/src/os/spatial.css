@@ -2761,3 +2761,113 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
   cursor: pointer;
   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
 }
+
+
+/* ── Flow / Automation dimension ───────────────────────────── */
+.sp-flow-dimension {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  position: relative;
+}
+.sp-flow-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: rgba(10, 12, 16, 0.88);
+  z-index: 5;
+}
+.sp-flow-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sp-text-0, #f8fafc);
+}
+.sp-flow-sub {
+  font-weight: 400;
+  color: var(--sp-text-2, #94a3b8);
+  font-size: 11px;
+}
+.sp-flow-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sp-flow-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  position: relative;
+}
+.sp-flow-canvas-host {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  touch-action: none;
+}
+.sp-flow-canvas-host .sp-canvas {
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+.sp-flow-inspector {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: rgba(12, 14, 18, 0.96);
+  border-left: 1px solid rgba(255,255,255,0.08);
+  z-index: 6;
+}
+.sp-flow-inspector--beside {
+  flex: 0 0 auto;
+}
+.sp-flow-inspector--overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  box-shadow: -12px 0 32px rgba(0,0,0,0.45);
+}
+.sp-flow-inspector--drawer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-left: none;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  box-shadow: 0 -12px 32px rgba(0,0,0,0.4);
+}
+.sp-flow-inspector--fullscreen {
+  position: absolute;
+  inset: 0;
+  border: none;
+  z-index: 8;
+}
+.sp-flow-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sp-text-2);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+}
+.sp-flow-inspector .sp-surface {
+  flex: 1 1 auto;
+  min-height: 0;
+}

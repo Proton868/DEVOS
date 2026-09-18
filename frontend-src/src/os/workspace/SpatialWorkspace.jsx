@@ -4,7 +4,7 @@
  */
 import React, { useCallback, useMemo } from "react";
 import useOsStore from "../store/osStore";
-import OrchestrationCanvas from "../canvas/OrchestrationCanvas";
+import FlowDimension from "../flow/FlowDimension";
 import DevOSIde from "../focus/DevOSIde";
 import AICopilot from "../focus/AICopilot";
 import AgentInspector from "../focus/AgentInspector";
@@ -118,8 +118,12 @@ export default function SpatialWorkspace() {
     dockedChat &&
     (chatModeSurface === "visible" || chatModeSurface === "fullscreen") &&
     !layout?.focusCollapsed;
+  const flowHostsInspector =
+    flowVisible &&
+    (plan.activeId === "flow" || plan.presentation === "stack" || !focusOpen);
   const showInspector =
     inspector.open &&
+    !flowHostsInspector &&
     (plan.surfaces.inspector?.mode === "visible" ||
       plan.surfaces.inspector?.mode === "overlay" ||
       plan.surfaces.inspector?.mode === "fullscreen");
@@ -197,9 +201,9 @@ export default function SpatialWorkspace() {
         <div
           className={`sp-canvas-layer ${
             focusOpen && !stack ? "sp-canvas-layer--with-focus" : ""
-          } ${flowMode === "fullscreen" ? "sp-dim-fullscreen" : ""}`}
+          } ${flowMode === "fullscreen" || plan.activeId === "flow" ? "sp-dim-fullscreen" : ""}`}
         >
-          <OrchestrationCanvas />
+          <FlowDimension active={flowVisible} />
           <MissionGlowOverlay />
           {layout?.fleetCollapsed === false && <AgencyDashboard />}
         </div>

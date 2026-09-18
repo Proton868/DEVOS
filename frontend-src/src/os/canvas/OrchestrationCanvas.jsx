@@ -110,7 +110,7 @@ export function buildGraph(scripts, chains) {
   return { nodes: nodesArr, edges };
 }
 
-export default function OrchestrationCanvas() {
+export default function OrchestrationCanvas({ touchEnabled = true } = {}) {
   const {
     nodes, edges, graphLoading, setGraph, setNodeState, viewport, setViewport,
     selectedNode, selectNode, openEditor, openTerminal, openInspector,
@@ -173,6 +173,76 @@ export default function OrchestrationCanvas() {
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, [onWheel]);
+
+  // Touch: pan + pinch zoom (spatial flow dimension)
+  useEffect(() => {
+    if (!touchEnabled) return undefined;
+    const el = canvasRef.current;
+    if (!el) return undefined;
+    let pan = null;
+    let pinch = null;
+
+    const dist = (t) => {
+      const [a, b] = t;
+      const dx = a.clientX - b.clientX;
+      const dy = a.clientY - b.clientY;
+      return Math.hypot(dx, dy);
+    };
+
+    const onStart = (e) => {
+      if (e.touches.length === 1) {
+        const vp = useOsStore.getState().viewport;
+        pan = {
+          sx: e.touches[0].clientX,
+          sy: e.touches[0].clientY,
+          ox: vp.x,
+          oy: vp.y,
+        };
+        pinch = null;
+        el.classList.add("panning");
+      } else if (e.touches.length === 2) {
+        pan = null;
+        const vp = useOsStore.getState().viewport;
+        pinch = { d0: dist(e.touches), z0: vp.zoom };
+      }
+    };
+    const onMove = (e) => {
+      if (pan && e.touches.length === 1) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - pan.sx;
+        const dy = e.touches[0].clientY - pan.sy;
+        setViewport({
+          ...useOsStore.getState().viewport,
+          x: pan.ox + dx,
+          y: pan.oy + dy,
+        });
+      } else if (pinch && e.touches.length === 2) {
+        e.preventDefault();
+        const d = dist(e.touches);
+        if (pinch.d0 > 0) {
+          const nz = Math.min(2, Math.max(0.3, pinch.z0 * (d / pinch.d0)));
+          setViewport({ ...useOsStore.getState().viewport, zoom: nz });
+        }
+      }
+    };
+    const onEnd = () => {
+      pan = null;
+      pinch = null;
+      el.classList.remove("panning");
+    };
+
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd);
+    el.addEventListener("touchcancel", onEnd);
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+      el.removeEventListener("touchcancel", onEnd);
+    };
+  }, [touchEnabled, setViewport]);
+
 
   const onPointerDown = (e) => {
     if (e.button === 0 && e.target === canvasRef.current) {
