@@ -114,6 +114,7 @@ class OrchestrationNode:
     risk: str = "low"
     status: str = NodeStatus.PENDING.value
     job_or_task_id: Optional[str] = None
+    operation_id: Optional[str] = None  # durable ExecutionOperation linkage when known
     authorization_decision: Optional[str] = None
     blocking_reason: Optional[str] = None
     verification_evidence: Optional[dict] = None
@@ -133,6 +134,7 @@ class OrchestrationNode:
             "risk": self.risk,
             "status": self.status,
             "job_or_task_id": self.job_or_task_id,
+            "operation_id": self.operation_id,
             "authorization_decision": self.authorization_decision,
             "blocking_reason": self.blocking_reason,
             "verification_evidence": self.verification_evidence,

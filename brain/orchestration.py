@@ -346,9 +346,11 @@ def _plan_from_dict(data: dict) -> OrchestrationPlan:
             risk=nd.get("risk") or "low",
             status=nd.get("status") or "pending",
             job_or_task_id=nd.get("job_or_task_id"),
+            operation_id=nd.get("operation_id"),
             authorization_decision=nd.get("authorization_decision"),
             blocking_reason=nd.get("blocking_reason"),
             verification_evidence=nd.get("verification_evidence"),
+            recovery_metadata=nd.get("recovery_metadata"),
         ))
     for ed in data.get("edges") or []:
         plan.edges.append(OrchestrationEdge(

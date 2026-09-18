@@ -866,7 +866,9 @@ async def run_mission_parallel(plan, max_parallel: Optional[int] = None) -> obje
                             if NodeStatus(node.status) != NodeStatus.FAILED:
                                 node.status = NodeStatus.FAILED.value
                             begin_node_recovery(plan.nodes, node.id)
+                            await persist_plan(plan)  # durable FAILED→RECOVERING
                             begin_node_replanning(plan.nodes, node.id)
+                            await persist_plan(plan)  # durable RECOVERING→REPLANNING
                             recovery_plan = {
                                 "decision": decision.decision_type,
                                 "reason": decision.reason,
@@ -879,6 +881,7 @@ async def run_mission_parallel(plan, max_parallel: Optional[int] = None) -> obje
                             apply_recovery_success(
                                 plan.nodes, node.id, recovery_plan=recovery_plan,
                             )
+                            await persist_plan(plan)  # durable REPLANNING→READY
                             plan.status = "replanning"
                             plan.emit("recovery.started", {
                                 "node_id": node.id,
