@@ -225,7 +225,7 @@ async def recover_stale_leases(db=None) -> int:
                 try:
                     from governance.execution_operations import (
                         load_operation, reconcile_operation,
-                        OP_UNKNOWN, OP_SUCCEEDED, OP_RUNNING, OP_RESERVED,
+                        OP_UNKNOWN, OP_SUCCEEDED, OP_RUNNING, OP_RESERVED, OP_FAILED, OP_CANCELLED,
                     )
                     op = await load_operation(op_id)
                     # RESERVED = side effect never started; safe to requeue for another worker
@@ -254,6 +254,23 @@ async def recover_stale_leases(db=None) -> int:
                             continue
                     if op and op.get("status") == OP_SUCCEEDED:
                         job.status = "succeeded"
+                        job.worker_id = None
+                        job.locked_at = None
+                        job.lease_expires_at = None
+                        recovered += 1
+                        continue
+                    # Already UNKNOWN/FAILED/CANCELLED: never requeue for duplicate side effect
+                    if op and op.get("status") in (OP_UNKNOWN, OP_FAILED, OP_CANCELLED):
+                        from governance.execution_operations import OP_FAILED as _F, OP_CANCELLED as _C
+                        st = op.get("status")
+                        job.status = "failed" if st in (OP_UNKNOWN, _F) else "failed"
+                        if st == _C:
+                            job.status = "cancelled"
+                        job.error = json.dumps({
+                            "reason_code": f"operation_{st}",
+                            "operation_id": op_id,
+                            "retryable": False,
+                        })
                         job.worker_id = None
                         job.locked_at = None
                         job.lease_expires_at = None
