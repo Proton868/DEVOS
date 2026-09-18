@@ -35,6 +35,12 @@ from brain.workflow_executor import (
     STEP_DENIED,
 )
 from governance.reliability import scrub_secrets
+from brain.automation_orchestration import (
+    select_next_step,
+    select_eligible_steps,
+    has_unresolved_unknown,
+)
+from brain.workflow_executor import ExecutionState as _ExecState
 
 logger = logging.getLogger("devos.automation_runtime")
 
@@ -132,18 +138,94 @@ async def execute_automation_run(
     await persist_run_durable(run)
     store.put(run)
 
-    result = await run_from_snapshot(
-        snap,
-        execution_state=state_in if state_in else None,
-        job_id=job_id or getattr(run, "execution_job_id", None),
-        extra_context={
-            "owner_id": run.owner_id,
-            "tenant_id": run.tenant_id,
-            "correlation_id": run.correlation_id,
-            "automation_run_id": run.run_id,
-            "run_mode": run.mode.value if hasattr(run.mode, "value") else str(run.mode),
-        },
+    extra = {
+        "owner_id": run.owner_id,
+        "tenant_id": run.tenant_id,
+        "correlation_id": run.correlation_id,
+        "automation_run_id": run.run_id,
+        "run_mode": run.mode.value if hasattr(run.mode, "value") else str(run.mode),
+    }
+    definition = dict(snap.get("definition") or {})
+    use_orch = bool(
+        definition.get("edges")
+        or definition.get("joins")
+        or (definition.get("metadata") or {}).get("edges")
+        or (definition.get("metadata") or {}).get("joins")
     )
+    jid = job_id or getattr(run, "execution_job_id", None)
+    if use_orch:
+        state = _ExecState.from_dict(state_in if state_in else None)
+        result = None
+        for _ in range(100):
+            if has_unresolved_unknown(state):
+                break
+            # Clear false "job complete" when graph still has eligible work
+            if state.terminal_status in (JOB_SUCCEEDED, "succeeded"):
+                if select_eligible_steps(snap, state):
+                    state.terminal_status = None
+                    state.error = None
+                    state.error_code = None
+                else:
+                    break
+            if state.terminal_status in ("failed", "cancelled", JOB_FAILED):
+                break
+            nxt = select_next_step(snap, state)
+            if not nxt:
+                break
+            state.current_step_id = nxt
+            # Ensure executor does not skip via stale terminal
+            state.terminal_status = None
+            result = await run_from_snapshot(
+                snap,
+                execution_state=state.to_dict(),
+                job_id=jid,
+                max_steps=1,
+                extra_context=extra,
+            )
+            state = _ExecState.from_dict(result.execution_state)
+            if result.error_code == "UNKNOWN_SIDE_EFFECT" or any(
+                isinstance(s, dict) and s.get("status") == STEP_UNKNOWN
+                for s in (result.steps or [])
+            ):
+                break
+            if result.status not in (JOB_SUCCEEDED, "succeeded") and result.permanent:
+                break
+        # Final result from accumulated state
+        from brain.workflow_executor import OrchestrationResult
+        if has_unresolved_unknown(state):
+            result = OrchestrationResult(
+                status=JOB_FAILED,
+                workflow_id=snap["workflow_id"],
+                workflow_version=int(snap["workflow_version"]),
+                steps=list(state.records.values()),
+                execution_state=state.to_dict(),
+                error=state.error or "UNKNOWN_SIDE_EFFECT",
+                error_code="UNKNOWN_SIDE_EFFECT",
+                permanent=True,
+            )
+        else:
+            failed = any(
+                isinstance(r, dict) and r.get("status") in (STEP_FAILED, STEP_DENIED)
+                for r in state.records.values()
+            )
+            result = OrchestrationResult(
+                status=JOB_FAILED if failed else JOB_SUCCEEDED,
+                workflow_id=snap["workflow_id"],
+                workflow_version=int(snap["workflow_version"]),
+                steps=list(state.records.values()),
+                execution_state=state.to_dict(),
+                error=state.error,
+                error_code=state.error_code,
+                permanent=failed,
+            )
+    else:
+        result = await run_from_snapshot(
+
+            snap,
+            execution_state=state_in if state_in else None,
+            job_id=jid,
+            extra_context=extra,
+        )
 
     steps = list(result.steps or [])
     has_unknown = any(
