@@ -24,6 +24,11 @@ from typing import Optional, Callable, Awaitable
 from sqlalchemy import select, or_, update, and_
 from core.database import AsyncSessionLocal, ExecutionJob, gen_id
 
+def _session_factory():
+    """Resolve session factory at call time so tests/app can rebind the engine."""
+    from core import database as _dbmod
+    return _dbmod.AsyncSessionLocal
+
 logger = logging.getLogger("devos.job_queue")
 REDIS_URL = os.environ.get("DEVOS_REDIS_URL") or os.environ.get("REDIS_URL") or ""
 QUEUE_KEY = os.environ.get("DEVOS_JOB_QUEUE_KEY", "devos:jobs")
@@ -304,7 +309,8 @@ async def recover_stale_leases(db=None) -> int:
 
     if db is not None:
         return await _do(db)
-    async with AsyncSessionLocal() as session:
+    Session = _session_factory()
+    async with Session() as session:
         n = await _do(session)
         if n:
             logger.warning("recovered %s stale job lease(s)", n)
@@ -359,7 +365,7 @@ async def claim_next(worker=None):
     if _redis:
         jid = await _redis.pop()
         if jid:
-            async with AsyncSessionLocal() as db:
+            async with _session_factory()() as db:
                 r = await db.execute(
                     select(ExecutionJob).where(
                         ExecutionJob.id == jid,
@@ -389,14 +395,14 @@ async def claim_next(worker=None):
                         from governance.failure_injection import maybe_crash
                         maybe_crash("after_job_claim")
                         return job
-    async with AsyncSessionLocal() as db:
+    async with _session_factory()() as db:
         return await _claim_sql(db, wid)
 
 
 async def heartbeat(job_id: str, worker: Optional[str] = None) -> bool:
     """Extend lease while work is in progress."""
     now = _utcnow()
-    async with AsyncSessionLocal() as db:
+    async with _session_factory()() as db:
         q = update(ExecutionJob).where(
             ExecutionJob.id == job_id,
             ExecutionJob.status == "running",
@@ -417,7 +423,7 @@ async def complete(job_id, *, status, result=None, error=None, isolation=None):
     """Mark job finished. Idempotent for terminal success — never reopens succeeded jobs."""
     from governance.reliability import scrub_secrets
 
-    async with AsyncSessionLocal() as db:
+    async with _session_factory()() as db:
         r = await db.execute(select(ExecutionJob).where(ExecutionJob.id == job_id))
         job = r.scalar_one_or_none()
         if not job:
@@ -521,7 +527,7 @@ class JobWorker:
             # Permanent failures (governance deny, validation, UNKNOWN after interrupt)
             # must not bounce through the transient retry queue.
             if result.get("permanent") and status == "failed":
-                async with AsyncSessionLocal() as db:
+                async with _session_factory()() as db:
                     r = await db.execute(select(ExecutionJob).where(ExecutionJob.id == job.id))
                     j = r.scalar_one_or_none()
                     if j:
