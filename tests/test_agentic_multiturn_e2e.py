@@ -7,6 +7,8 @@ Test taxonomy (this file = E2E + completion integration):
 
 Isolation: unique owner/tenant/run per test via uuid namespace.
 Cleanup: reset_agent_task_store_for_tests in fixture (process store).
+Coverage matrix: docs/architecture/agentic-automation-runtime.md
+  (Test Coverage Matrix — covered / partial / gap vs milestone checklist).
 """
 from __future__ import annotations
 
@@ -373,3 +375,31 @@ def test_tests_use_unique_namespaces():
     t2 = _task(b)
     assert t1.owner_id != t2.owner_id
     assert t1.task_id != t2.task_id
+
+
+def test_durable_turn_counter_increments():
+    """Coverage #12 — turn counter persists on checkpoint."""
+    ns = _ns()
+    t = _task(ns, contract=CompletionContract())
+    cp = checkpoint_from_task(t)
+    assert cp.turn == 0
+    apply_transition(cp, AgentRuntimeState.PLANNING)
+    cp.turn = 1
+    persist_checkpoint(t, cp)
+    from brain.agentic_automation import get_agent_task_store
+    reloaded = get_agent_task_store().get(t.task_id)
+    assert checkpoint_from_task(reloaded).turn == 1
+
+
+def test_fake_complete_does_not_satisfy_join_contract():
+    """Coverage #28 partial — fake complete fails validation (join must not treat as done)."""
+    ns = _ns()
+    c = CompletionContract(required_successful_capabilities=2, required_evidence=True)
+    t = _task(ns, contract=c)
+    cp = checkpoint_from_task(t)
+    apply_transition(cp, AgentRuntimeState.PLANNING)
+    persist_checkpoint(t, cp)
+    d = TurnDecision(kind="complete", complete=True, reason="done")
+    v = validate_completion(t, decision=d, cp=cp)
+    assert not v.ok
+    assert any("insufficient_successful_capabilities" in r for r in v.reasons)
