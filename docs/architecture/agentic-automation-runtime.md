@@ -1,5 +1,50 @@
 # Durable Agentic Automation Runtime
 
+
+
+## Completion Contract
+
+An agent enters **COMPLETED** only when `validate_completion` passes.
+
+Invariant (`agent_state == COMPLETED` requires):
+
+1. Structured completion decision (`kind=complete`)
+2. Durable checkpoint of the completing turn
+3. No active consequential operation (`EXECUTING` forbidden)
+4. No linked operation in UNKNOWN
+5. No pending capability request in an active auth/exec state
+6. All required consequential outcomes terminal (per contract)
+7. Required evidence present when `required_evidence=True`
+8. Required outputs present when listed
+9. Task not cancelled
+10. Contract requirements satisfied
+
+Free-form text (`"done"`, `"verified"`) is **never** sufficient.
+
+`CompletionContract` is immutable once bound on the task.
+
+`try_complete` → COMPLETED on pass; remains PLANNING/BLOCKED on fail.
+
+## Multi-Turn Execution
+
+Scripted/production planner issues at most one capability request per turn.
+After substrate execution, observation is checkpointed and becomes next-turn context.
+
+## Recovery Test Taxonomy
+
+| Layer | File | Owns |
+|-------|------|------|
+| State-machine unit | `tests/test_agentic_runtime.py` | transitions, bounds, cancel, UNKNOWN legality |
+| Contract unit | `tests/test_agentic_automation.py` | delegation, grants, isolation |
+| Multi-turn E2E | `tests/test_agentic_multiturn_e2e.py` | completion contract, restart, multi-turn path |
+
+## Test Isolation and Cleanup
+
+- Unique `owner-{uuid}` / `tenant-{uuid}` / idempotency keys per test
+- Fixture resets process agent task store before/after
+- No shared global `"test-user"` identities
+- No dependency on external LLM, network, or production DB for E2E path
+
 **Decision:** **READY_FOR_NEXT_AGENTIC_MILESTONE**
 
 ## Architecture

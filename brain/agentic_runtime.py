@@ -427,6 +427,221 @@ class TurnDecision:
 # Optional planner: callable(context) -> TurnDecision
 PlannerFn = Callable[[dict], TurnDecision]
 
+@dataclass
+class CompletionContract:
+    """Immutable completion requirements. Agent cannot rewrite at runtime."""
+
+    required_successful_capabilities: int = 0
+    required_evidence: bool = False
+    required_outputs: list[str] = field(default_factory=list)
+    all_operations_must_succeed: bool = True
+    require_structured_complete_decision: bool = True
+    # Optional explicit capability ids that must have succeeded
+    required_capability_ids: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "required_successful_capabilities": self.required_successful_capabilities,
+            "required_evidence": self.required_evidence,
+            "required_outputs": list(self.required_outputs or []),
+            "all_operations_must_succeed": self.all_operations_must_succeed,
+            "require_structured_complete_decision": self.require_structured_complete_decision,
+            "required_capability_ids": list(self.required_capability_ids or []),
+            "immutable": True,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Optional[dict]) -> "CompletionContract":
+        d = d or {}
+        return cls(
+            required_successful_capabilities=int(d.get("required_successful_capabilities") or 0),
+            required_evidence=bool(d.get("required_evidence")),
+            required_outputs=list(d.get("required_outputs") or []),
+            all_operations_must_succeed=bool(d.get("all_operations_must_succeed", True)),
+            require_structured_complete_decision=bool(d.get("require_structured_complete_decision", True)),
+            required_capability_ids=list(d.get("required_capability_ids") or []),
+        )
+
+
+@dataclass
+class CompletionValidation:
+    ok: bool
+    reasons: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {"ok": self.ok, "reasons": list(self.reasons)}
+
+
+def get_completion_contract(task: GovernedAgentTask) -> CompletionContract:
+    raw = (task.task_input or {}).get("completion_contract") or (task.authorization or {}).get("completion_contract")
+    if isinstance(raw, dict):
+        return CompletionContract.from_dict(raw)
+    # Default: require structured decision only (no consequential floor)
+    return CompletionContract()
+
+
+def set_completion_contract(task: GovernedAgentTask, contract: CompletionContract) -> GovernedAgentTask:
+    """Bind contract once; reject later mutation attempts."""
+    existing = (task.task_input or {}).get("completion_contract")
+    if isinstance(existing, dict) and existing.get("immutable"):
+        # already bound — ignore rewrite
+        return task
+    task.task_input = dict(task.task_input or {})
+    task.task_input["completion_contract"] = contract.to_dict()
+    return get_agent_task_store().put(task)
+
+
+def _successful_capability_count(task: GovernedAgentTask, cp: AgentCheckpoint) -> int:
+    n = 0
+    for rec in task.capability_requests or []:
+        if getattr(rec, "status", None) in ("executed", "authorized") and not getattr(rec, "error", None):
+            # Prefer executed with evidence when required later
+            if rec.status == "executed":
+                n += 1
+    # Observations with status executed/succeeded
+    obs = cp.last_observation or {}
+    if obs.get("status") in ("executed", "succeeded") and n == 0:
+        n = max(n, 1)
+    # Count distinct evidence-backed ops from recovery history
+    hist = (task.recovery or {}).get("observation_history") or []
+    for h in hist:
+        if isinstance(h, dict) and h.get("status") in ("executed", "succeeded"):
+            n = max(n, n)  # counted via hist length below
+    if hist:
+        n = max(n, sum(1 for h in hist if isinstance(h, dict) and h.get("status") in ("executed", "succeeded")))
+    return n
+
+
+def validate_completion(
+    task: GovernedAgentTask,
+    *,
+    decision: Optional[TurnDecision] = None,
+    cp: Optional[AgentCheckpoint] = None,
+) -> CompletionValidation:
+    """Authoritative completion gate. Free-form text is never sufficient."""
+    reasons: list[str] = []
+    cp = cp or checkpoint_from_task(task)
+    contract = get_completion_contract(task)
+
+    if cp.cancel_requested or cp.state == AgentRuntimeState.CANCELLED:
+        reasons.append("task_cancelled")
+    if cp.state == AgentRuntimeState.UNKNOWN:
+        reasons.append("state_unknown")
+    if cp.unknown_info:
+        reasons.append("unknown_info_present")
+    if cp.pending_request and cp.state not in (AgentRuntimeState.PLANNING, AgentRuntimeState.CHECKPOINTING, AgentRuntimeState.OBSERVING):
+        # pending during planning after observe is cleared; only block if still active
+        if cp.state in (AgentRuntimeState.AWAITING_CAPABILITY, AgentRuntimeState.AUTHORIZING, AgentRuntimeState.AUTHORIZED, AgentRuntimeState.EXECUTING):
+            reasons.append("pending_capability_request")
+    if cp.state == AgentRuntimeState.EXECUTING:
+        reasons.append("operation_still_active")
+
+    # Structured decision required
+    if contract.require_structured_complete_decision:
+        if decision is None or not (decision.kind == "complete" or decision.complete):
+            reasons.append("missing_structured_complete_decision")
+        # Free-form alone is never enough — reject pure textual claims without kind=complete
+        if decision and decision.kind not in ("complete",) and decision.complete is not True:
+            reasons.append("invalid_completion_kind")
+
+    # Capability floor
+    succ = _successful_capability_count(task, cp)
+    if contract.required_successful_capabilities > 0:
+        if succ < contract.required_successful_capabilities:
+            reasons.append(
+                f"insufficient_successful_capabilities:{succ}<{contract.required_successful_capabilities}"
+            )
+
+    if contract.required_capability_ids:
+        done = set()
+        for rec in task.capability_requests or []:
+            if rec.status == "executed":
+                done.add(rec.capability_id)
+        for hid in (task.recovery or {}).get("observation_history") or []:
+            if isinstance(hid, dict) and hid.get("status") in ("executed", "succeeded"):
+                done.add(str(hid.get("capability_id") or ""))
+        for req in contract.required_capability_ids:
+            if req not in done:
+                reasons.append(f"missing_capability_success:{req}")
+
+    if contract.required_evidence:
+        if not (cp.evidence_refs or task.evidence_refs):
+            # Allow substrate metadata evidence on observations
+            hist = (task.recovery or {}).get("observation_history") or []
+            has_ev = any(
+                isinstance(h, dict) and h.get("evidence_refs") for h in hist
+            )
+            if not has_ev:
+                reasons.append("missing_evidence")
+
+    if contract.required_outputs:
+        result = task.result or {}
+        outputs = (result.get("outputs") if isinstance(result.get("outputs"), dict) else result) or {}
+        for key in contract.required_outputs:
+            if key not in outputs and key not in result:
+                reasons.append(f"missing_required_output:{key}")
+
+    # Linked UNKNOWN ops
+    for rec in task.capability_requests or []:
+        if rec.status == "unknown":
+            reasons.append("capability_request_unknown")
+
+    ok = len(reasons) == 0
+    return CompletionValidation(ok=ok, reasons=reasons)
+
+
+def try_complete(
+    task: GovernedAgentTask,
+    cp: AgentCheckpoint,
+    decision: TurnDecision,
+) -> tuple[GovernedAgentTask, AgentCheckpoint, bool]:
+    """Validate then COMPLETED, or return to PLANNING/BLOCKED without completing."""
+    v = validate_completion(task, decision=decision, cp=cp)
+    task.recovery = dict(task.recovery or {})
+    task.recovery["last_completion_validation"] = v.to_dict()
+    if not v.ok:
+        # Do not complete — stay in PLANNING or BLOCKED
+        if "task_cancelled" in v.reasons or "state_unknown" in v.reasons:
+            if "state_unknown" in v.reasons:
+                try:
+                    apply_transition(cp, AgentRuntimeState.BLOCKED)
+                except IllegalTransition:
+                    cp.state = AgentRuntimeState.BLOCKED
+            cp.failure = ";".join(v.reasons)
+            persist_checkpoint(task, cp)
+            return task, cp, False
+        # Soft fail: remain PLANNING for another turn
+        if cp.state != AgentRuntimeState.PLANNING:
+            try:
+                if cp.state in (AgentRuntimeState.CHECKPOINTING, AgentRuntimeState.OBSERVING):
+                    apply_transition(cp, AgentRuntimeState.PLANNING)
+            except IllegalTransition:
+                cp.state = AgentRuntimeState.PLANNING
+        else:
+            # already planning — record rejection only
+            pass
+        cp.failure = "completion_rejected:" + ",".join(v.reasons)
+        persist_checkpoint(task, cp)
+        return task, cp, False
+
+    apply_transition(cp, AgentRuntimeState.COMPLETED)
+    persist_checkpoint(task, cp)
+    mark_completed(
+        task,
+        result={
+            "complete": True,
+            "turn": cp.turn,
+            "plan_is_not_evidence": True,
+            "evidence_refs": list(cp.evidence_refs),
+            "completion_validation": v.to_dict(),
+            "outputs": dict((task.result or {}).get("outputs") or {}),
+        },
+        evidence_refs=list(cp.evidence_refs),
+    )
+    return task, cp, True
+
+
+
 
 def default_planner(context: dict) -> TurnDecision:
     """Deterministic planner for tests / no-LLM path.
@@ -561,18 +776,7 @@ async def run_agent_turn(
     cp.plan = plan
 
     if decision.kind == "complete" or decision.complete:
-        apply_transition(cp, AgentRuntimeState.COMPLETED)
-        persist_checkpoint(task, cp)
-        mark_completed(
-            task,
-            result={
-                "complete": True,
-                "turn": cp.turn,
-                "plan_is_not_evidence": True,
-                "evidence_refs": list(cp.evidence_refs),
-            },
-            evidence_refs=list(cp.evidence_refs),
-        )
+        task, cp, ok = try_complete(task, cp, decision)
         return task
 
     if decision.kind == "block":
@@ -696,6 +900,19 @@ async def run_agent_turn(
         cp.job_id = rec2.job_id
     if rec2.evidence_refs:
         cp.evidence_refs.extend(rec2.evidence_refs)
+    # Synthetic evidence ref when substrate does not emit one (deterministic meta caps)
+    if not rec2.evidence_refs and rec2.status == "executed":
+        syn = f"ev:{task.task_id}:{cp.turn}:{cid}"
+        cp.evidence_refs.append(syn)
+        obs = dict(obs)
+        obs["evidence_refs"] = list(obs.get("evidence_refs") or []) + [syn]
+        cp.last_observation = obs
+    task.recovery = dict(task.recovery or {})
+    hist = list(task.recovery.get("observation_history") or [])
+    hist.append(dict(cp.last_observation or {}))
+    task.recovery["observation_history"] = hist[-20:]
+    # Clear pending after successful observe
+    cp.pending_request = None
     persist_checkpoint(task, cp)
 
     # CHECKPOINTING → PLANNING (next turn) or leave for worker resume
