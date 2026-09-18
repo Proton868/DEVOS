@@ -40,3 +40,23 @@ def test_alignment_migration_adds_actor_id_and_related():
 def test_skipped_base_migration_does_not_imply_actor_id():
     """schema_migrations listing base file ≠ ALTER; alignment migration required."""
     assert ALIGN.name > BASE.name
+
+
+def test_idempotency_unique_migration_exists():
+    mig = ROOT / "supabase" / "migrations" / "20260918160000_execution_operations_idempotency_unique.sql"
+    assert mig.is_file()
+    text = mig.read_text()
+    assert "ux_execution_operations_idempotency" in text
+    assert "CREATE UNIQUE INDEX" in text
+    assert "COALESCE(tenant_id" in text
+    assert "WHERE idempotency_key IS NOT NULL" in text
+    assert "DROP TABLE" not in text.upper()
+    # Fail closed on existing duplicates — no silent delete
+    assert "duplicate" in text.lower()
+    assert "RAISE EXCEPTION" in text
+
+
+def test_orm_init_db_creates_idempotency_unique_index():
+    """init_db bootstrap must create the same logical unique index."""
+    assert "ux_execution_operations_idempotency" in DB
+    assert "CREATE UNIQUE INDEX" in DB

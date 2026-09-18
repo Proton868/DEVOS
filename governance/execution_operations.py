@@ -186,9 +186,11 @@ async def reserve_operation(
                 await db.commit()
                 return op_id
             except Exception as ie:
-                # Concurrent insert race: re-select existing idempotent op
+                # Concurrent insert race under unique index: re-select authoritative op
                 await db.rollback()
-                if idempotency_key:
+                from sqlalchemy.exc import IntegrityError
+                is_unique = isinstance(ie, IntegrityError) or "unique" in str(ie).lower() or "duplicate" in str(ie).lower()
+                if idempotency_key and is_unique:
                     q2 = await db.execute(
                         select(ExecutionOperation).where(
                             ExecutionOperation.owner_id == owner_id,
