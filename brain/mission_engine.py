@@ -22,6 +22,13 @@ from brain.orchestration_dag import (
     compute_readiness,
     propagate_failure,
     validate_dag,
+    has_recovery_path,
+    begin_node_recovery,
+    begin_node_replanning,
+    apply_recovery_success,
+    apply_recovery_failure,
+    mark_node_verified,
+    reconcile_after_recovery,
 )
 from brain.orchestration_runtime import NodeExecutionRequest, run_node_on_agent_runtime
 from brain.specialty_policy import evaluate_node_request
@@ -570,7 +577,10 @@ async def dispatch_node(plan, node: OrchestrationNode) -> dict:
         return {"node_id": node.id, "success": False, "cancelled": True}
 
     if not result.success:
-        node.status = NodeStatus.FAILED.value
+        try:
+            node.set_status(NodeStatus.FAILED)
+        except Exception:
+            node.status = NodeStatus.FAILED.value
         fc = classify_failure(result.error, result.status)
         return {
             "node_id": node.id,
@@ -580,7 +590,7 @@ async def dispatch_node(plan, node: OrchestrationNode) -> dict:
             "result": result.to_dict(),
         }
 
-    # Verify this node
+    # Verify this node — verification is separate from recovery metadata
     node.status = NodeStatus.VERIFYING.value
     evidence = await verify_workspace_artifacts(
         user_id=plan.user_id,
@@ -589,16 +599,23 @@ async def dispatch_node(plan, node: OrchestrationNode) -> dict:
         expected_outputs=list(node.expected_outputs or []),
         files_changed=list(result.files_changed or []),
     )
-    node.verification_evidence = evidence
     if evidence.get("passed"):
         try:
-            node.set_status(NodeStatus.VERIFIED)
-            node.set_status(NodeStatus.COMPLETED)
+            mark_node_verified(plan.nodes, node.id, dict(evidence))
+            try:
+                node.set_status(NodeStatus.COMPLETED)
+            except Exception:
+                node.status = NodeStatus.COMPLETED.value
+            reconcile_after_recovery(plan.nodes, plan.edges, node.id)
         except Exception:
+            node.verification_evidence = evidence
             node.status = NodeStatus.COMPLETED.value
         return {"node_id": node.id, "success": True, "result": result.to_dict(), "evidence": evidence}
 
-    node.status = NodeStatus.FAILED.value
+    try:
+        node.set_status(NodeStatus.FAILED)
+    except Exception:
+        node.status = NodeStatus.FAILED.value
     return {
         "node_id": node.id,
         "success": False,
@@ -831,18 +848,73 @@ async def run_mission_parallel(plan, max_parallel: Optional[int] = None) -> obje
                         return plan
                     if decision.decision_type in (
                         DecisionType.REPAIR.value, DecisionType.REPLAN.value, DecisionType.ADD_NODE.value,
+                        DecisionType.RETRY.value,
                     ):
                         attempts[node.id] = attempts.get(node.id, 0) + 1
-                        plan.status = "recovering"
-                        plan.emit("recovery.started", {"node_id": node.id, "decision": decision.to_dict()})
-                        plan.status = "replanning"
-                        fc = FailureClass(decision.failure_class or FailureClass.UNKNOWN.value)
-                        apply_revision(plan, node, fc)
+                        if attempts[node.id] > max_attempts:
+                            apply_recovery_failure(
+                                plan.nodes, node.id, reason="recovery_attempts_exhausted",
+                            )
+                            plan.emit("recovery.exhausted", {
+                                "node_id": node.id, "attempts": attempts[node.id],
+                            })
+                            await persist_plan(plan)
+                            continue
+                        # Canonical DAG recovery: FAILED → RECOVERING → REPLANNING → READY
+                        # Does not invent edges; does not mark VERIFIED.
+                        try:
+                            if NodeStatus(node.status) != NodeStatus.FAILED:
+                                node.status = NodeStatus.FAILED.value
+                            begin_node_recovery(plan.nodes, node.id)
+                            begin_node_replanning(plan.nodes, node.id)
+                            recovery_plan = {
+                                "decision": decision.decision_type,
+                                "reason": decision.reason,
+                                "attempt": attempts[node.id],
+                                "failure_class": decision.failure_class,
+                                "has_failed_edge": has_recovery_path(
+                                    plan.nodes, plan.edges, node.id,
+                                ),
+                            }
+                            apply_recovery_success(
+                                plan.nodes, node.id, recovery_plan=recovery_plan,
+                            )
+                            plan.status = "replanning"
+                            plan.emit("recovery.started", {
+                                "node_id": node.id,
+                                "decision": decision.to_dict(),
+                                "dag_status": node.status,
+                            })
+                            if decision.decision_type in (
+                                DecisionType.REPAIR.value,
+                                DecisionType.REPLAN.value,
+                                DecisionType.ADD_NODE.value,
+                            ):
+                                fc = FailureClass(
+                                    decision.failure_class or FailureClass.UNKNOWN.value
+                                )
+                                apply_revision(plan, node, fc)
+                            # Node is READY for re-execution via existing dispatch path
+                            plan.emit("recovery.ready", {
+                                "node_id": node.id,
+                                "job_or_task_id": node.job_or_task_id,
+                                "attempt": attempts[node.id],
+                            })
+                        except Exception as rec_err:
+                            logger.warning(
+                                "dag recovery transition failed node=%s: %s",
+                                node.id, rec_err,
+                            )
+                            try:
+                                apply_recovery_failure(
+                                    plan.nodes, node.id, reason=str(rec_err)[:200],
+                                )
+                            except Exception:
+                                node.status = NodeStatus.FAILED.value
+                            plan.emit("recovery.failed", {
+                                "node_id": node.id, "error": str(rec_err)[:300],
+                            })
                         await persist_plan(plan)
-                    elif decision.decision_type == DecisionType.RETRY.value:
-                        attempts[node.id] = attempts.get(node.id, 0) + 1
-                        node.status = NodeStatus.PENDING.value
-                        plan.emit("recovery.retry", {"node_id": node.id, "attempt": attempts[node.id]})
 
         # XP only on verified success — existing path after full mission complete
         # loop continues until no ready / terminal

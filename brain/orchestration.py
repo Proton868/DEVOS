@@ -29,6 +29,13 @@ from brain.orchestration_dag import (
     check_node_invariants,
     nodes_from_steps,
     DAGValidationError,
+    has_recovery_path,
+    begin_node_recovery,
+    begin_node_replanning,
+    apply_recovery_success,
+    apply_recovery_failure,
+    mark_node_verified,
+    reconcile_after_recovery,
 )
 from brain.specialty_policy import evaluate_node_request, get_specialty_policy
 from brain.orchestration_store import persist_plan, load_plan as load_plan_row
@@ -900,43 +907,73 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
                 propagate_failure(plan.nodes, plan.edges, step.id)
             plan.set_status(OrchStatus.FAILED)
             plan.emit("job.failed", {"step_id": step.id})
-            # Recovery path: replan once
-            plan.set_status(OrchStatus.RECOVERING)
-            plan.emit("recovery.started", {"step_id": step.id})
-            plan.set_status(OrchStatus.REPLANNING)
-            # Simple recovery: retry same step once marked pending
-            step.status = "pending"
-            plan.set_status(OrchStatus.PLAN_READY)
-            plan.set_status(OrchStatus.ACTION_REQUESTED)
-            # Retry once inline
-            ok2, _ = await authorize_plan_execution(plan)
-            if not ok2:
-                return plan
-            plan.set_status(OrchStatus.DELEGATING)
-            plan.set_status(OrchStatus.DELEGATED)
-            plan.set_status(OrchStatus.QUEUED)
-            plan.set_status(OrchStatus.RUNNING)
-            step.status = "running"
-            try:
-                result2 = await run_node_on_agent_runtime(NodeExecutionRequest(
-                    plan_id=plan.id,
-                    node_id=step.id,
-                    user_id=plan.user_id,
-                    workspace_id=plan.workspace_id or "default",
-                    persona_id=step.persona_id,
-                    objective=objective + "\n(Retry after failure)",
-                    effective_caps=list(step.required_capabilities or []),
-                    authorization_decision="allow",
-                ))
-                success = bool(result2.success)
-                files_changed = list(result2.files_changed or [])
-                if result2.task_id:
-                    step.job_or_task_id = result2.task_id
-                    if node:
+            # Canonical DAG recovery (bounded one attempt) — not automatic infinite retry
+            recovery_ok = False
+            if node is not None:
+                prior_job = node.job_or_task_id
+                try:
+                    plan.set_status(OrchStatus.RECOVERING)
+                    begin_node_recovery(plan.nodes, step.id)
+                    plan.emit("recovery.started", {
+                        "step_id": step.id,
+                        "job_or_task_id": node.job_or_task_id,
+                        "has_failed_edge": has_recovery_path(plan.nodes, plan.edges, step.id),
+                    })
+                    plan.set_status(OrchStatus.REPLANNING)
+                    begin_node_replanning(plan.nodes, step.id)
+                    apply_recovery_success(
+                        plan.nodes,
+                        step.id,
+                        recovery_plan={
+                            "decision": "retry",
+                            "reason": "bounded_inline_recovery",
+                            "attempt": 1,
+                        },
+                    )
+                    # READY — re-execute via existing runtime path only
+                    assert node.status == NodeStatus.READY.value
+                    assert node.job_or_task_id == prior_job or prior_job is None
+                    step.status = "running"
+                    try:
+                        node.set_status(NodeStatus.AUTHORIZATION_PENDING)
+                        node.set_status(NodeStatus.AUTHORIZED)
+                        node.set_status(NodeStatus.QUEUED)
+                        node.set_status(NodeStatus.RUNNING)
+                    except Exception:
+                        node.status = NodeStatus.RUNNING.value
+                    plan.set_status(OrchStatus.RUNNING)
+                    result2 = await run_node_on_agent_runtime(NodeExecutionRequest(
+                        plan_id=plan.id,
+                        node_id=step.id,
+                        user_id=plan.user_id,
+                        workspace_id=plan.workspace_id or "default",
+                        persona_id=step.persona_id,
+                        objective=objective + "\n(Retry after failure)",
+                        effective_caps=list(step.required_capabilities or []),
+                        authorization_decision=(node.authorization_decision or "allow"),
+                    ))
+                    success = bool(result2.success)
+                    files_changed = list(result2.files_changed or [])
+                    if result2.task_id:
+                        step.job_or_task_id = result2.task_id
+                        # New execution id may be issued; keep correlation on node
                         node.job_or_task_id = result2.task_id
-            except Exception as e2:
-                plan.emit("job.failed", {"step_id": step.id, "error": str(e2)[:300], "retry": True})
-                success = False
+                    recovery_ok = success
+                    if not success:
+                        apply_recovery_failure(
+                            plan.nodes, step.id, reason=(result2.error or "retry_failed")[:200],
+                        )
+                except Exception as e2:
+                    plan.emit("job.failed", {
+                        "step_id": step.id, "error": str(e2)[:300], "retry": True,
+                    })
+                    try:
+                        apply_recovery_failure(plan.nodes, step.id, reason=str(e2)[:200])
+                    except Exception:
+                        if node:
+                            node.status = NodeStatus.FAILED.value
+                    success = False
+                    recovery_ok = False
             if not success:
                 step.status = "failed"
                 plan.set_status(OrchStatus.FAILED)
@@ -946,17 +983,24 @@ async def execute_plan(plan: OrchestrationPlan) -> OrchestrationPlan:
         node = next((n for n in plan.nodes if n.id == step.id), None)
         if node:
             node.job_or_task_id = step.job_or_task_id
-            node.verification_evidence = {
+            evidence = {
                 "success": True,
+                "ok": True,
                 "files_changed": list(files_changed or []),
                 "files_changed_count": len(files_changed or []),
+                "checks": list(step.verification_criteria or []) or ["runtime_success"],
                 "criteria": list(step.verification_criteria or []),
             }
             try:
                 node.status = NodeStatus.VERIFYING.value
-                node.set_status(NodeStatus.VERIFIED)
-                node.set_status(NodeStatus.COMPLETED)
+                mark_node_verified(plan.nodes, step.id, evidence)
+                try:
+                    node.set_status(NodeStatus.COMPLETED)
+                except Exception:
+                    node.status = NodeStatus.COMPLETED.value
+                reconcile_after_recovery(plan.nodes, plan.edges, step.id)
             except Exception:
+                node.verification_evidence = evidence
                 node.status = NodeStatus.COMPLETED.value
         done.add(step.id)
         del remaining[step.id]
