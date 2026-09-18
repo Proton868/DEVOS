@@ -21,6 +21,7 @@ import {
 } from "../spatial/resolveLayout";
 import { PRIMARY_NAV_ORDER } from "../spatial/registry";
 import { useSpatialViewport } from "../spatial/useSpatialViewport";
+import { resolveNuhaPresentation } from "../nuha/nuhaLayout";
 
 export default function SpatialWorkspace() {
   const webIntelOpen = useOsStore((s) => s.webIntel?.open);
@@ -103,12 +104,32 @@ export default function SpatialWorkspace() {
     });
   }, [plan.presentation, plan.activeId, plan.orientation, plan.showDimensionNav, plan.visibleIds, setSpatialMeta]);
 
-  const dockedChat = copilot.open && chatMode === "docked";
-  const floatingChat = copilot.open && chatMode === "floating";
-
   const ideMode = plan.surfaces.ide?.mode;
   const chatModeSurface = plan.surfaces.chat?.mode;
   const flowMode = plan.surfaces.flow?.mode;
+
+  const otherPrimaryOpen = !!(
+    editor?.open ||
+    (preview?.open && !preview?.minimized) ||
+    (plan.activeId && plan.activeId !== "chat")
+  );
+  const nuhaPres = resolveNuhaPresentation(viewport, {
+    preferred: nuhaPreferred || "auto",
+    otherPrimaryOpen: otherPrimaryOpen && plan.activeId !== "chat",
+    explicitChatDimension: plan.activeId === "chat" || layout?.activeWorkspace === "chat",
+  });
+  // Overlay intent from openCopilot
+  const forceOverlay = !!(copilot?.asOverlay);
+  const nuhaPresentation = forceOverlay
+    ? (viewport.width < 640 ? "sheet" : "overlay")
+    : nuhaPres.presentation;
+
+  const dockedChat =
+    copilot.open &&
+    (nuhaPresentation === "docked" || nuhaPresentation === "fullscreen");
+  const sheetChat = copilot.open && nuhaPresentation === "sheet";
+  const overlayChat = copilot.open && nuhaPresentation === "overlay";
+  const floatingChat = copilot.open && chatMode === "floating" && !dockedChat && !sheetChat && !overlayChat;
 
   const showIde =
     editor.open &&
@@ -116,7 +137,10 @@ export default function SpatialWorkspace() {
     !layout?.focusCollapsed;
   const showDockedChat =
     dockedChat &&
-    (chatModeSurface === "visible" || chatModeSurface === "fullscreen") &&
+    (chatModeSurface === "visible" ||
+      chatModeSurface === "fullscreen" ||
+      nuhaPresentation === "docked" ||
+      nuhaPresentation === "fullscreen") &&
     !layout?.focusCollapsed;
   const flowHostsInspector =
     flowVisible &&
@@ -169,7 +193,7 @@ export default function SpatialWorkspace() {
     setActiveWorkspace?.(id === "flow" ? "canvas" : id);
     if (id === "chat") {
       setFocusCollapsed(false);
-      openCopilot?.();
+      openCopilot?.(null, null, null, { asDimension: true });
     } else if (id === "ide") {
       setFocusCollapsed(false);
       if (!editor?.open) openEditor?.({ file: null });
@@ -245,7 +269,7 @@ export default function SpatialWorkspace() {
               />
             )}
             {showInspector && <AgentInspector />}
-            {showDockedChat && <AICopilot />}
+            {showDockedChat && <AICopilot presentation={nuhaPresentation} />}
           </div>
         </>
       )}
@@ -351,9 +375,15 @@ export default function SpatialWorkspace() {
         </div>
       )}
 
-      {floatingChat && (
-        <div className="sp-chat-float">
-          <AICopilot floating />
+      {(overlayChat || floatingChat) && (
+        <div className={`sp-chat-float ${overlayChat ? "sp-chat-float--overlay" : ""}`}>
+          <AICopilot floating presentation="overlay" />
+        </div>
+      )}
+
+      {sheetChat && (
+        <div className="sp-chat-sheet" role="dialog" aria-label="Nuha">
+          <AICopilot presentation="sheet" />
         </div>
       )}
 

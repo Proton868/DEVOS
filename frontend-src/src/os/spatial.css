@@ -2871,3 +2871,46 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
   flex: 1 1 auto;
   min-height: 0;
 }
+
+
+/* ── Nuha spatial presentations ────────────────────────────── */
+.sp-copilot.fullscreen {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+  height: 100%;
+}
+.sp-copilot.sheet {
+  width: 100%;
+  max-height: min(78vh, 640px);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -12px 40px rgba(0,0,0,0.45);
+}
+.sp-chat-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  max-height: min(78vh, 640px);
+  background: rgba(10, 12, 16, 0.98);
+  border-top: 1px solid rgba(255,255,255,0.08);
+  animation: sp-sheet-up 0.2s ease-out;
+}
+@keyframes sp-sheet-up {
+  from { transform: translateY(12%); opacity: 0.8; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.sp-chat-float--overlay {
+  z-index: 54;
+}
+.sp-chat-float--overlay .sp-copilot {
+  width: min(420px, 92vw);
+  max-height: min(80vh, 720px);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px;
+}

@@ -178,9 +178,32 @@ const useOsStore = create((set, get) => ({
   openPersonaProfile: (id) => set({ personaProfileOpen: id || "nuha", overlay: "persona-profile" }),
   closePersonaProfile: () => set({ personaProfileOpen: null, overlay: null }),
   copilot: { open: false, nodeId: null, seed: null, personaId: "nuha" },
-  openCopilot: (nodeId = null, seed = null, personaId = null) =>
+  // Spatial return context when Nuha is an overlay/sheet over another dimension
+  nuhaReturn: null, // { activeWorkspace, focusCollapsed } | null
+  nuhaPreferred: "auto", // auto | docked | overlay | sheet | fullscreen
+  setNuhaPreferred: (mode) => set({ nuhaPreferred: mode || "auto" }),
+  openCopilot: (nodeId = null, seed = null, personaId = null, opts = null) =>
     set((s) => {
-      const layout = { ...s.layout, focusCollapsed: false, activeWorkspace: "chat" };
+      const options = opts && typeof opts === "object" ? opts : {};
+      const current = s.layout?.activeWorkspace || "canvas";
+      const otherPrimary =
+        options.asOverlay === true ||
+        (current !== "chat" && (s.editor?.open || s.preview?.open || current === "canvas" || current === "ide" || current === "preview"));
+      // Remember where to return when opening over another workspace
+      let nuhaReturn = s.nuhaReturn;
+      if (otherPrimary && current !== "chat") {
+        nuhaReturn = {
+          activeWorkspace: current,
+          focusCollapsed: !!s.layout?.focusCollapsed,
+        };
+      }
+      const forceChatDim = options.asDimension === true;
+      const layout = {
+        ...s.layout,
+        focusCollapsed: false,
+        // Only claim chat as active dimension when explicitly requested or nothing else is primary
+        activeWorkspace: forceChatDim || !otherPrimary ? "chat" : current,
+      };
       try { localStorage.setItem("devos_sp_layout", JSON.stringify(layout)); } catch (_) {}
       return {
         copilot: {
@@ -188,11 +211,32 @@ const useOsStore = create((set, get) => ({
           nodeId,
           seed,
           personaId: (personaId || s.activePersonaId || "nuha").toLowerCase(),
+          asOverlay: !!options.asOverlay || (!!otherPrimary && !forceChatDim),
         },
         layout,
+        nuhaReturn,
+        chatMode: options.chatMode || s.chatMode || "docked",
       };
     }),
-  closeCopilot: () => set((s) => ({ copilot: { ...s.copilot, open: false, seed: null } })),
+  closeCopilot: () =>
+    set((s) => {
+      const ret = s.nuhaReturn;
+      let layout = { ...s.layout };
+      if (ret && ret.activeWorkspace) {
+        layout = {
+          ...layout,
+          activeWorkspace: ret.activeWorkspace,
+          focusCollapsed:
+            ret.focusCollapsed !== undefined ? !!ret.focusCollapsed : layout.focusCollapsed,
+        };
+        try { localStorage.setItem("devos_sp_layout", JSON.stringify(layout)); } catch (_) {}
+      }
+      return {
+        copilot: { ...s.copilot, open: false, seed: null, asOverlay: false },
+        layout,
+        nuhaReturn: null,
+      };
+    }),
 
   // ── Inspector ────────────────────────────────────────────
   inspector: { open: false, nodeId: null },

@@ -29,7 +29,7 @@ function buildContextNote({ node, editorFile, editorContent, personaName }) {
   return p;
 }
 
-export default function AICopilot({ floating = false }) {
+export default function AICopilot({ floating = false, presentation = null }) {
   const {
     copilot, closeCopilot, nodes, editor, chatMode, toggleChatMode,
     activePersonaId, setActivePersona, openPersonaProfile,
@@ -378,7 +378,7 @@ export default function AICopilot({ floating = false }) {
   return (
     <div
       ref={(el) => { dragRef.current = el; nuhaHostRef.current = el; }}
-      className={`sp-copilot ${floating ? "floating" : "docked"}`}
+      className={`sp-copilot ${floating || presentation === "overlay" ? "floating" : presentation === "sheet" ? "sheet" : presentation === "fullscreen" ? "fullscreen" : "docked"}`}
       style={style}
     >
       <div className="sp-copilot-head" onMouseDown={onDragStart}>

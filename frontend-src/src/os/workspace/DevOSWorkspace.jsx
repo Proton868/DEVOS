@@ -31,7 +31,7 @@ export default function DevOSWorkspace() {
     const st = useOsStore.getState();
     if (!st.copilot?.open) {
       st.setActivePersona?.("nuha");
-      st.openCopilot(null, null, "nuha");
+      st.openCopilot(null, null, "nuha", { asDimension: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
