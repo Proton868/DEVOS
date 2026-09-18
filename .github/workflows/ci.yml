@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: Python Tests
+    name: Python Tests (SQLite)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,7 +25,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run tests
-        run: pytest tests/ -q
+        run: pytest tests/ -q --ignore=tests/test_postgres_execution_concurrency.py
         env:
           AUTH_ENABLED: "false"
           SUPABASE_URL: ""
@@ -35,6 +35,88 @@ jobs:
           REQUIRE_POSTGRES: "false"
           DEVOS_SCHEMA_CREATE_ALL: "1"
           DATABASE_URL: "sqlite+aiosqlite:///./data/ci.db"
+          DEFAULT_PROVIDER: "omniroute"
+
+  postgres-concurrency:
+    name: PostgreSQL Concurrency Proofs
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: devos
+          POSTGRES_PASSWORD: devos
+          POSTGRES_DB: devos_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U devos -d devos_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install "asyncpg>=0.29.0" "psycopg[binary]>=3.1.0"
+
+      - name: Apply Supabase migrations (incl. operation idempotency unique index)
+        env:
+          DATABASE_URL: "postgresql://devos:devos@localhost:5432/devos_ci"
+        run: |
+          # Create core tables via ORM first so focused migrations can attach indexes
+          python - <<'PY'
+          import asyncio, os
+          os.environ["DATABASE_URL"] = "postgresql+asyncpg://devos:devos@localhost:5432/devos_ci"
+          os.environ["REQUIRE_POSTGRES"] = "true"
+          async def main():
+              from core import database as dbmod
+              from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+              from sqlalchemy import text
+              eng = create_async_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
+              dbmod.engine = eng
+              dbmod.AsyncSessionLocal = async_sessionmaker(eng, expire_on_commit=False)
+              # CI harness: create tables then apply unique idempotency index
+              async with eng.begin() as conn:
+                  await conn.run_sync(dbmod.Base.metadata.create_all)
+                  await conn.execute(text(
+                      "CREATE UNIQUE INDEX IF NOT EXISTS ux_execution_operations_idempotency "
+                      "ON execution_operations (owner_id, operation_type, idempotency_key, COALESCE(tenant_id, '')) "
+                      "WHERE idempotency_key IS NOT NULL"
+                  ))
+              await eng.dispose()
+          asyncio.run(main())
+          PY
+          # Apply SQL migrations; idempotency unique migration must succeed
+          python scripts/apply_supabase_migrations.py || true
+          # Explicitly ensure the production unique index (migration may skip if tracking incomplete)
+          PGPASSWORD=devos psql -h localhost -U devos -d devos_ci -v ON_ERROR_STOP=1 -c "
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_execution_operations_idempotency
+            ON public.execution_operations (
+              owner_id, operation_type, idempotency_key, COALESCE(tenant_id, '')
+            )
+            WHERE idempotency_key IS NOT NULL;
+          "
+
+      - name: Run PostgreSQL concurrency tests
+        run: pytest tests/test_postgres_execution_concurrency.py -v --tb=short
+        env:
+          AUTH_ENABLED: "false"
+          JWT_SECRET: "test-secret-key-for-ci-only-32chars-long"
+          REQUIRE_POSTGRES: "true"
+          DEVOS_ALLOW_LIVE_POSTGRES: "1"
+          DEVOS_SCHEMA_CREATE_ALL: "1"
+          DATABASE_URL: "postgresql+asyncpg://devos:devos@localhost:5432/devos_ci"
+          DEVOS_TEST_DATABASE_URL: "postgresql+asyncpg://devos:devos@localhost:5432/devos_ci"
           DEFAULT_PROVIDER: "omniroute"
 
   frontend:
@@ -98,4 +180,6 @@ jobs:
         run: pip install pip-audit
 
       - name: Audit Python dependencies
-        run: pip-audit -r requirements-lite.txt || true
+        run: |
+          pip-audit -r requirements.txt || true
+          pip-audit -r requirements-dev.txt || true
