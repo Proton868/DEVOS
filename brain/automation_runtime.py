@@ -154,70 +154,41 @@ async def execute_automation_run(
     )
     jid = job_id or getattr(run, "execution_job_id", None)
     if use_orch:
-        state = _ExecState.from_dict(state_in if state_in else None)
-        result = None
-        for _ in range(100):
-            if has_unresolved_unknown(state):
-                break
-            # Clear false "job complete" when graph still has eligible work
-            if state.terminal_status in (JOB_SUCCEEDED, "succeeded"):
-                if select_eligible_steps(snap, state):
-                    state.terminal_status = None
-                    state.error = None
-                    state.error_code = None
-                else:
-                    break
-            if state.terminal_status in ("failed", "cancelled", JOB_FAILED):
-                break
-            nxt = select_next_step(snap, state)
-            if not nxt:
-                break
-            state.current_step_id = nxt
-            # Ensure executor does not skip via stale terminal
-            state.terminal_status = None
-            result = await run_from_snapshot(
-                snap,
-                execution_state=state.to_dict(),
-                job_id=jid,
-                max_steps=1,
-                extra_context=extra,
-            )
-            state = _ExecState.from_dict(result.execution_state)
-            if result.error_code == "UNKNOWN_SIDE_EFFECT" or any(
-                isinstance(s, dict) and s.get("status") == STEP_UNKNOWN
-                for s in (result.steps or [])
-            ):
-                break
-            if result.status not in (JOB_SUCCEEDED, "succeeded") and result.permanent:
-                break
-        # Final result from accumulated state
+        from brain.automation_parallel import (
+            execute_parallel_graph,
+            finalize_parallel_state,
+            planned_operation_keys,
+            concurrency_policy,
+            select_schedulable_steps,
+        )
         from brain.workflow_executor import OrchestrationResult
-        if has_unresolved_unknown(state):
-            result = OrchestrationResult(
-                status=JOB_FAILED,
-                workflow_id=snap["workflow_id"],
-                workflow_version=int(snap["workflow_version"]),
-                steps=list(state.records.values()),
-                execution_state=state.to_dict(),
-                error=state.error or "UNKNOWN_SIDE_EFFECT",
-                error_code="UNKNOWN_SIDE_EFFECT",
-                permanent=True,
-            )
-        else:
-            failed = any(
-                isinstance(r, dict) and r.get("status") in (STEP_FAILED, STEP_DENIED)
-                for r in state.records.values()
-            )
-            result = OrchestrationResult(
-                status=JOB_FAILED if failed else JOB_SUCCEEDED,
-                workflow_id=snap["workflow_id"],
-                workflow_version=int(snap["workflow_version"]),
-                steps=list(state.records.values()),
-                execution_state=state.to_dict(),
-                error=state.error,
-                error_code=state.error_code,
-                permanent=failed,
-            )
+        state = _ExecState.from_dict(state_in if state_in else None)
+        # Pre-compute logical op keys for observability / duplicate protection
+        elig0 = select_eligible_steps(snap, state)
+        op_keys = planned_operation_keys(
+            run_id=run.run_id,
+            workflow_version=int(run.workflow_version or 1),
+            step_ids=elig0,
+        )
+        state.context.setdefault("_parallel", {})
+        state.context["_parallel"]["op_keys"] = op_keys
+        state.context["_parallel"]["concurrency"] = concurrency_policy()
+        state = await execute_parallel_graph(
+            snap, state, job_id=jid, extra_context=extra,
+        )
+        st_status, permanent, err = finalize_parallel_state(snap, state)
+        result = OrchestrationResult(
+            status=st_status if st_status in (JOB_SUCCEEDED, JOB_FAILED) else (
+                JOB_FAILED if permanent else JOB_SUCCEEDED
+            ),
+            workflow_id=snap["workflow_id"],
+            workflow_version=int(snap["workflow_version"]),
+            steps=list(state.records.values()),
+            execution_state=state.to_dict(),
+            error=err or state.error,
+            error_code="UNKNOWN_SIDE_EFFECT" if permanent and "UNKNOWN" in (err or "") else state.error_code,
+            permanent=permanent,
+        )
     else:
         result = await run_from_snapshot(
 
