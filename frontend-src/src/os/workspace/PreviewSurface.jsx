@@ -11,7 +11,7 @@ import {
   X, Monitor, Smartphone, Tablet, ChevronDown, Terminal, Settings, MoreHorizontal,
 } from "lucide-react";
 import useOsStore from "../store/osStore";
-import { getToken, baseUrl } from "../../services/api";
+import { getToken, baseUrl, api } from "../../services/api";
 import { resolvePreviewChrome } from "../preview/previewLayout";
 
 function currentProjectId(explicit) {
@@ -59,6 +59,8 @@ export default function PreviewSurface({ embedded = false }) {
   const [notice, setNotice] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [consoleLines, setConsoleLines] = useState([]);
+  const [runtimeSnap, setRuntimeSnap] = useState(null);
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
   const rootRef = useRef(null);
   const [size, setSize] = useState({ width: 800, height: 600 });
 
@@ -146,25 +148,50 @@ export default function PreviewSurface({ embedded = false }) {
     setNotice(null);
   }, []);
 
+  const refreshRuntime = useCallback(async () => {
+    try {
+      const snap = await api.runtimeStatus(projectId);
+      setRuntimeSnap(snap);
+      return snap;
+    } catch (e) {
+      setConsoleLines((lines) =>
+        [...lines, `[runtime] status failed: ${e?.message || e}`].slice(-80)
+      );
+      return null;
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!preview?.open || preview.minimized) return undefined;
+    refreshRuntime();
+    const id = setInterval(() => {
+      refreshRuntime();
+    }, 12000);
+    return () => clearInterval(id);
+  }, [preview?.open, preview?.minimized, projectId, refreshRuntime]);
+
   const runtimeAction = useCallback(
     async (action) => {
-      const sessionTok = getToken();
-      if (!sessionTok) return;
+      setRuntimeBusy(true);
       try {
-        await fetch(`${baseUrl()}/api/delivery/${encodeURIComponent(projectId)}/runtime`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${sessionTok}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ action }),
-        });
+        const snap = await api.runtimeAction(projectId, action);
+        setRuntimeSnap(snap);
         setConsoleLines((lines) =>
-          [...lines, `[runtime] ${action} requested`].slice(-80)
+          [
+            ...lines,
+            `[runtime] ${action} → ${snap?.state || "?"} health=${snap?.health || "?"}`,
+          ].slice(-80)
         );
-        setNonce((n) => n + 1);
+        if (action === "start" || action === "restart") {
+          setNonce((n) => n + 1);
+        }
       } catch (e) {
         setPreviewError(String(e?.message || e));
+        setConsoleLines((lines) =>
+          [...lines, `[runtime] ${action} error: ${e?.message || e}`].slice(-80)
+        );
+      } finally {
+        setRuntimeBusy(false);
       }
     },
     [projectId, setPreviewError]
@@ -286,21 +313,59 @@ export default function PreviewSurface({ embedded = false }) {
         : "100%",
   };
 
+  const rtState = runtimeSnap?.state || "—";
+  const rtHealth = runtimeSnap?.health || "unknown";
+  const rtKind = runtimeSnap?.detection?.kind || runtimeSnap?.components?.[0]?.name || "";
+
   const primary = (
     <>
-      <button type="button" className="sp-pv-btn" onClick={() => runtimeAction("start")} title="Start">
+      <span
+        className={"sp-pv-rt-badge sp-pv-rt-badge--" + String(rtHealth).replace(/[^a-z]/gi, "")}
+        title={(runtimeSnap?.detail || "") + (rtKind ? ` · ${rtKind}` : "")}
+      >
+        {runtimeBusy ? "…" : rtState}
+        {rtHealth && rtHealth !== "unknown" ? ` · ${rtHealth}` : ""}
+      </span>
+      <button
+        type="button"
+        className="sp-pv-btn"
+        disabled={runtimeBusy}
+        onClick={() => runtimeAction("start")}
+        title="Start runtime"
+      >
         <Play size={14} />
         {chrome.showLabels && <span>Start</span>}
       </button>
-      <button type="button" className="sp-pv-btn" onClick={() => runtimeAction("stop")} title="Stop">
+      <button
+        type="button"
+        className="sp-pv-btn"
+        disabled={runtimeBusy}
+        onClick={() => runtimeAction("stop")}
+        title="Stop runtime"
+      >
         <Square size={14} />
         {chrome.showLabels && <span>Stop</span>}
       </button>
-      <button type="button" className="sp-pv-btn" onClick={() => runtimeAction("restart")} title="Restart">
+      <button
+        type="button"
+        className="sp-pv-btn"
+        disabled={runtimeBusy}
+        onClick={() => runtimeAction("restart")}
+        title="Restart runtime"
+      >
         <RotateCcw size={14} />
         {chrome.showLabels && <span>Restart</span>}
       </button>
-      <button type="button" className="sp-pv-btn" onClick={onRefresh} title="Refresh">
+      <button
+        type="button"
+        className="sp-pv-btn"
+        disabled={runtimeBusy}
+        onClick={() => runtimeAction("rebuild")}
+        title="Rebuild (install + build)"
+      >
+        {chrome.showLabels ? <span>Rebuild</span> : <span>Rb</span>}
+      </button>
+      <button type="button" className="sp-pv-btn" onClick={onRefresh} title="Refresh preview">
         <RefreshCw size={14} />
         {chrome.showLabels && <span>Refresh</span>}
       </button>
@@ -332,6 +397,26 @@ export default function PreviewSurface({ embedded = false }) {
         Zoom 100%
       </button>
       <hr />
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          runtimeAction("health");
+          setMenuOpen(false);
+        }}
+      >
+        Health check
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          runtimeAction("test");
+          setMenuOpen(false);
+        }}
+      >
+        Run tests
+      </button>
       <button
         type="button"
         role="menuitem"

@@ -265,6 +265,28 @@ const filesApi = {
     `${BASE}/api/files/${getCurrentProject()}/download?path=${encodeURIComponent(path)}`,
 };
 
+
+// ── Application runtime / delivery (Preview dimension) ───────
+const deliveryApi = {
+  runtimeStatus: (projectId) =>
+    req(`/api/delivery/${encodeURIComponent(projectId)}/runtime/status`),
+  runtimeAction: (projectId, action, port = 3911) =>
+    req(`/api/delivery/${encodeURIComponent(projectId)}/runtime`, {
+      method: "POST",
+      body: JSON.stringify({ action, port }),
+    }),
+  runtimeLogsRecent: (projectId, runtimeId) => {
+    const q = runtimeId ? `?runtime_id=${encodeURIComponent(runtimeId)}` : "";
+    return req(`/api/delivery/${encodeURIComponent(projectId)}/runtime/logs/recent${q}`);
+  },
+  deployProviders: () => req(`/api/delivery/deploy/providers`),
+  deployProject: (projectId, provider) =>
+    req(`/api/delivery/${encodeURIComponent(projectId)}/deploy`, {
+      method: "POST",
+      body: JSON.stringify({ provider }),
+    }),
+};
+
 const searchApi = {
   searchFiles: (query, max_results = 20) =>
     req(`/api/search/files`, {
@@ -852,6 +874,7 @@ export const api = {
   ...governanceApi,
   ...flowApi,
   ...workersApi,
+  ...deliveryApi,
   ...searchApi,
   ...builderApi,
   ...chatApi,

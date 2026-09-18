@@ -24,7 +24,7 @@ router = APIRouter()
 
 
 class RuntimeAction(BaseModel):
-    action: str  # install|build|start|stop|restart|status
+    action: str  # install|build|start|stop|restart|status|rebuild|health|test
     port: int = 3911
 
 
@@ -32,36 +32,24 @@ class RuntimeAction(BaseModel):
 async def runtime_status(project_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    rt = get_runtime(user.id, project_id)
-    detection = detect_application(__import__("execution.files", fromlist=["FileService"]).FileService(user.id, project_id))
-    if not rt:
-        return {"state": "STOPPED", "detection": detection}
-    return {**rt.status.to_dict(), "detection": detection}
+    from execution.runtime_service import snapshot
+    return snapshot(user.id, project_id, probe=True).to_dict()
 
 
 @router.post("/{project_id}/runtime")
 async def runtime_action(project_id: str, body: RuntimeAction, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
     await ensure_personal_tenant(db, user)
-    rt = get_runtime(user.id, project_id) or ApplicationRuntime(
-        AppRuntimeSpec(user_id=user.id, project_id=project_id)
-    )
-    act = (body.action or "").lower()
-    if act == "install":
-        st = await rt.install()
-    elif act == "build":
-        st = await rt.build()
-    elif act == "start":
-        st = await rt.start(port=body.port)
-    elif act == "stop":
-        st = await rt.stop()
-    elif act == "restart":
-        st = await rt.restart()
-    elif act == "status":
-        st = rt.status
-    else:
-        raise HTTPException(400, detail={"code": "INVALID_ACTION", "message": act})
-    return st.to_dict()
+    from execution.runtime_service import run_lifecycle_action
+    try:
+        snap = await run_lifecycle_action(
+            user.id, project_id, body.action, port=body.port
+        )
+    except ValueError as e:
+        msg = str(e)
+        code = msg.split(":")[0] if ":" in msg else "INVALID_ACTION"
+        raise HTTPException(400, detail={"code": code, "message": msg})
+    return snap.to_dict()
 
 
 class ShareReq(BaseModel):

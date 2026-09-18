@@ -3278,3 +3278,18 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
 .sp-ide-diag-item:hover { background: rgba(255,255,255,0.04); }
 .sp-ide-diag-path { color: var(--sp-accent, #00ffb3); }
 .sp-ide-diag-msg { color: var(--sp-text-2); }
+
+.sp-pv-rt-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  color: var(--sp-text-2);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-pv-rt-badge--healthy { color: #00ffb3; border: 1px solid rgba(0,255,179,0.3); }
+.sp-pv-rt-badge--unhealthy { color: #ff7b7b; border: 1px solid rgba(255,100,100,0.3); }
+.sp-pv-rt-badge--na { opacity: 0.7; }

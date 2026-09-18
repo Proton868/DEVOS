@@ -691,3 +691,11 @@ try:
     ensure_meta_contracts_registered()
 except Exception:
     pass
+
+# Runtime lifecycle capabilities (Preview / IDE / Flow / Nuha)
+try:
+    from governance.runtime_capabilities import ensure_runtime_capabilities_registered
+    ensure_runtime_capabilities_registered()
+except Exception:
+    pass
+
