@@ -11,10 +11,21 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+try:
+    from sqlalchemy import select
+except ImportError:  # pragma: no cover - test environments without SQLAlchemy
+    select = None  # type: ignore
+try:
+    from sqlalchemy.ext.asyncio import AsyncSession
+except ImportError:  # pragma: no cover
+    AsyncSession = object  # type: ignore
 
-from core.database import WorkflowRecord, gen_id
+try:
+    from core.database import WorkflowRecord, gen_id
+except ImportError:  # pragma: no cover
+    WorkflowRecord = None  # type: ignore
+    gen_id = lambda: __import__('uuid').uuid4().hex  # type: ignore
+
 from brain.workflow import Workflow
 
 logger = logging.getLogger("devos.workflow_store")

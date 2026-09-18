@@ -29,6 +29,12 @@ class StepType(str, Enum):
     APPROVAL   = "approval"     # Human approval gate
     SUBFLOW    = "subflow"      # Nested workflow
     NOTIFY     = "notify"       # Send notification
+    # Flow automation layer (first-class; not canvas-only hacks)
+    SCRIPT     = "script"       # Python / JS / TS script capability
+    HTTP       = "http"         # HTTP/API request
+    LOOP       = "loop"         # Bounded iteration over items or count
+    TRANSFORM  = "transform"    # Pure data transformation
+    DATABASE   = "database"     # Governed database operation
 
 
 @dataclass

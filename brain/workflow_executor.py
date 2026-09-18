@@ -405,6 +405,16 @@ async def _run_step(step: WorkflowStep, context: dict, attempt: int) -> StepReco
         rec.side_effect = "none"
     elif st == StepType.CAPABILITY:
         return await _run_capability_step(step, context, attempt)
+    elif st == StepType.SCRIPT:
+        return await _run_script_step(step, context, attempt)
+    elif st == StepType.HTTP:
+        return await _run_http_step(step, context, attempt)
+    elif st == StepType.LOOP:
+        return await _run_loop_step(step, context, attempt)
+    elif st == StepType.TRANSFORM:
+        return await _run_transform_step(step, context, attempt)
+    elif st == StepType.DATABASE:
+        return await _run_database_step(step, context, attempt)
     else:
         rec.status = STEP_FAILED
         rec.error = f"Unsupported step type: {st}"
@@ -413,6 +423,318 @@ async def _run_step(step: WorkflowStep, context: dict, attempt: int) -> StepReco
     rec.finished_at = _now_iso()
     rec.duration_ms = int((time.monotonic() - t0) * 1000)
     return rec
+
+
+async def _run_script_step(step: WorkflowStep, context: dict, attempt: int) -> StepRecord:
+    """First-class script step (Python/JS/TS) via isolation — not a canvas hack."""
+    t0 = time.monotonic()
+    rec = StepRecord(
+        step_id=step.id, type=step.type.value, status=STEP_RUNNING,
+        attempt=attempt, started_at=_now_iso(),
+    )
+    inputs = step.inputs or {}
+    code = inputs.get("code") or inputs.get("source") or ""
+    lang = (inputs.get("language") or "python").lower().strip()
+    if lang in ("js", "javascript", "typescript", "ts"):
+        lang = "node" if lang in ("js", "javascript") else "node"
+        # TypeScript executes as node only when pre-transpiled source provided
+        if (inputs.get("language") or "").lower() in ("typescript", "ts") and not inputs.get("transpiled"):
+            rec.status = STEP_FAILED
+            rec.error = "TypeScript requires transpiled JS in inputs.code (transpiled=true)"
+            rec.error_code = "VALIDATION_ERROR"
+            rec.finished_at = _now_iso()
+            rec.duration_ms = int((time.monotonic() - t0) * 1000)
+            return rec
+    if lang not in ("python", "bash", "node"):
+        rec.status = STEP_FAILED
+        rec.error = f"unsupported script language: {lang}"
+        rec.error_code = "VALIDATION_ERROR"
+        rec.finished_at = _now_iso()
+        rec.duration_ms = int((time.monotonic() - t0) * 1000)
+        return rec
+    if not code or not isinstance(code, str):
+        rec.status = STEP_FAILED
+        rec.error = "script step requires inputs.code"
+        rec.error_code = "VALIDATION_ERROR"
+        rec.finished_at = _now_iso()
+        rec.duration_ms = int((time.monotonic() - t0) * 1000)
+        return rec
+
+    cap = step.capability or (
+        "ucip:execution.python" if lang == "python"
+        else "ucip:execution.node" if lang == "node"
+        else "ucip:execution.bash"
+    )
+    decision, reason = await _ucip_gate(cap, inputs, context)
+    if decision == "DENY":
+        rec.status = STEP_DENIED
+        rec.error = f"UCIP DENY: {reason}"
+        rec.error_code = "GOVERNANCE_DENIED"
+        rec.finished_at = _now_iso()
+        rec.duration_ms = int((time.monotonic() - t0) * 1000)
+        return rec
+    ok, auth_msg = _require_authority_safe(cap, context)
+    if not ok:
+        rec.status = STEP_DENIED
+        rec.error = auth_msg
+        rec.error_code = "GOVERNANCE_DENIED"
+        rec.finished_at = _now_iso()
+        rec.duration_ms = int((time.monotonic() - t0) * 1000)
+        return rec
+
+    timeout = min(int(step.timeout_s or 60), 120)
+    try:
+        from governance.sandbox import SandboxedExecutor
+        exe = SandboxedExecutor(allow_network=False)
+        result = await exe.run(
+            code=code,
+            language=lang,
+            timeout=timeout,
+            inject_secrets={},  # never inject secrets into untrusted script
+        )
+        rec.side_effect = "local"
+        if isinstance(result, dict) and result.get("success") is False:
+            rec.status = STEP_FAILED
+            rec.error = str(result.get("stderr") or result.get("error") or "script failed")[:500]
+            rec.error_code = "SCRIPT_FAILED"
+            rec.outputs = scrub_secrets({
+                "exit_code": result.get("exit_code"),
+                "stdout": str(result.get("stdout") or "")[:MAX_OUTPUT_CHARS],
+            })
+        else:
+            rec.status = STEP_SUCCEEDED
+            rec.outputs = scrub_secrets(
+                result if isinstance(result, dict) else {"result": result}
+            )
+            rec.message = "script executed in isolation"
+    except Exception as e:
+        # Isolation unavailable — fail closed (no host fallback)
+        rec.status = STEP_FAILED
+        rec.error = f"script isolation unavailable: {type(e).__name__}: {e}"[:500]
+        rec.error_code = "ISOLATION_UNAVAILABLE"
+        rec.side_effect = "none"
+    rec.finished_at = _now_iso()
+    rec.duration_ms = int((time.monotonic() - t0) * 1000)
+    return rec
+
+
+async def _run_http_step(step: WorkflowStep, context: dict, attempt: int) -> StepRecord:
+    """HTTP/API step — network only when UCIP capability allows."""
+    t0 = time.monotonic()
+    rec = StepRecord(
+        step_id=step.id, type=step.type.value, status=STEP_RUNNING,
+        attempt=attempt, started_at=_now_iso(),
+    )
+    inputs = step.inputs or {}
+    url = inputs.get("url") or ""
+    method = (inputs.get("method") or "GET").upper()
+    if not url or not isinstance(url, str) or not url.startswith(("http://", "https://")):
+        rec.status = STEP_FAILED
+        rec.error = "http step requires absolute http(s) url"
+        rec.error_code = "VALIDATION_ERROR"
+        rec.finished_at = _now_iso()
+        rec.duration_ms = int((time.monotonic() - t0) * 1000)
+        return rec
+    cap = step.capability or "ucip:api.call"
+    decision, reason = await _ucip_gate(cap, inputs, context)
+    if decision != "APPROVE" and decision != "ALLOW":
+        # Some gates return APPROVE; treat DENY/ESCALATE specially
+        if decision == "DENY":
+            rec.status = STEP_DENIED
+            rec.error = f"UCIP DENY: {reason}"
+            rec.error_code = "GOVERNANCE_DENIED"
+            rec.finished_at = _now_iso()
+            rec.duration_ms = int((time.monotonic() - t0) * 1000)
+            return rec
+        if decision == "ESCALATE_TO_HUMAN":
+            rec.status = STEP_PENDING_APPROVAL
+            rec.error = "Human approval required for HTTP"
+            rec.error_code = "GOVERNANCE_DENIED"
+            rec.finished_at = _now_iso()
+            rec.duration_ms = int((time.monotonic() - t0) * 1000)
+            return rec
+    ok, auth_msg = _require_authority_safe(cap, context)
+    if not ok:
+        rec.status = STEP_DENIED
+        rec.error = auth_msg
+        rec.error_code = "GOVERNANCE_DENIED"
+        rec.finished_at = _now_iso()
+        rec.duration_ms = int((time.monotonic() - t0) * 1000)
+        return rec
+
+    # Credential refs only — never accept raw secret values from step inputs
+    if inputs.get("secret") or inputs.get("password") or inputs.get("token"):
+        rec.status = STEP_FAILED
+        rec.error = "raw secrets in step inputs forbidden; use credential_ref"
+        rec.error_code = "VALIDATION_ERROR"
+        rec.finished_at = _now_iso()
+        rec.duration_ms = int((time.monotonic() - t0) * 1000)
+        return rec
+
+    timeout = min(float(step.timeout_s or 30), 60.0)
+    try:
+        import urllib.request
+        import urllib.error
+        data = None
+        headers = {}
+        hdr_in = inputs.get("headers") or {}
+        if isinstance(hdr_in, dict):
+            for k, v in list(hdr_in.items())[:20]:
+                if str(k).lower() in ("authorization", "cookie", "x-api-key"):
+                    continue  # must come from credential binding, not plain inputs
+                headers[str(k)] = str(v)[:200]
+        body = inputs.get("body")
+        if body is not None and method in ("POST", "PUT", "PATCH"):
+            import json as _json
+            raw = body if isinstance(body, (bytes, bytearray)) else _json.dumps(body).encode("utf-8")
+            data = raw
+            headers.setdefault("Content-Type", "application/json")
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = resp.read(MAX_OUTPUT_CHARS)
+                rec.status = STEP_SUCCEEDED
+                rec.side_effect = "external"
+                rec.outputs = scrub_secrets({
+                    "status_code": getattr(resp, "status", None),
+                    "body": payload.decode("utf-8", errors="replace")[:MAX_OUTPUT_CHARS],
+                })
+        except urllib.error.HTTPError as he:
+            body = he.read(MAX_OUTPUT_CHARS) if hasattr(he, "read") else b""
+            rec.status = STEP_FAILED
+            rec.side_effect = "external"
+            rec.error = f"HTTP {he.code}"
+            rec.error_code = "HTTP_ERROR"
+            rec.outputs = scrub_secrets({
+                "status_code": he.code,
+                "body": body.decode("utf-8", errors="replace")[:MAX_OUTPUT_CHARS],
+            })
+    except Exception as e:
+        rec.status = STEP_FAILED
+        rec.error = f"http error: {type(e).__name__}: {e}"[:500]
+        rec.error_code = "HTTP_ERROR"
+        rec.side_effect = "unknown"
+    rec.finished_at = _now_iso()
+    rec.duration_ms = int((time.monotonic() - t0) * 1000)
+    return rec
+
+
+async def _run_loop_step(step: WorkflowStep, context: dict, attempt: int) -> StepRecord:
+    """Bounded loop — never unbounded. Collects iteration outputs only."""
+    t0 = time.monotonic()
+    rec = StepRecord(
+        step_id=step.id, type=step.type.value, status=STEP_RUNNING,
+        attempt=attempt, started_at=_now_iso(),
+    )
+    inputs = step.inputs or {}
+    max_iter = int(inputs.get("max_iterations") or step.metadata.get("max_iterations") or 10)
+    max_iter = max(1, min(max_iter, 50))
+    items = inputs.get("items")
+    if items is None:
+        count = int(inputs.get("count") or max_iter)
+        items = list(range(max(0, min(count, max_iter))))
+    if not isinstance(items, list):
+        rec.status = STEP_FAILED
+        rec.error = "loop items must be a list"
+        rec.error_code = "VALIDATION_ERROR"
+        rec.finished_at = _now_iso()
+        rec.duration_ms = int((time.monotonic() - t0) * 1000)
+        return rec
+    results = []
+    for i, item in enumerate(items[:max_iter]):
+        results.append({"index": i, "item": item})
+    rec.status = STEP_SUCCEEDED
+    rec.message = f"loop prepared {len(results)} iterations (bounded)"
+    rec.outputs = scrub_secrets({"iterations": results, "max_iterations": max_iter})
+    rec.side_effect = "none"
+    rec.finished_at = _now_iso()
+    rec.duration_ms = int((time.monotonic() - t0) * 1000)
+    return rec
+
+
+async def _run_transform_step(step: WorkflowStep, context: dict, attempt: int) -> StepRecord:
+    """Pure transformation over context — no side effects."""
+    t0 = time.monotonic()
+    rec = StepRecord(
+        step_id=step.id, type=step.type.value, status=STEP_RUNNING,
+        attempt=attempt, started_at=_now_iso(),
+    )
+    inputs = step.inputs or {}
+    mapping = inputs.get("map") or inputs.get("mapping") or {}
+    source = inputs.get("source")
+    data = source if source is not None else context
+    out = {}
+    if isinstance(mapping, dict) and mapping:
+        for dest, src_key in list(mapping.items())[:50]:
+            if isinstance(src_key, str) and isinstance(data, dict):
+                out[str(dest)] = data.get(src_key)
+            else:
+                out[str(dest)] = src_key
+    else:
+        # Identity / pick keys
+        keys = inputs.get("keys") or []
+        if isinstance(data, dict) and keys:
+            out = {k: data.get(k) for k in keys if isinstance(k, str)}
+        elif isinstance(data, dict):
+            out = {k: data[k] for k in list(data.keys())[:50]}
+        else:
+            out = {"value": data}
+    rec.status = STEP_SUCCEEDED
+    rec.outputs = scrub_secrets(out)
+    rec.side_effect = "none"
+    rec.message = "transform applied"
+    rec.finished_at = _now_iso()
+    rec.duration_ms = int((time.monotonic() - t0) * 1000)
+    return rec
+
+
+async def _run_database_step(step: WorkflowStep, context: dict, attempt: int) -> StepRecord:
+    """Database ops — fail closed without explicit governed path; no raw SQL from untrusted alone."""
+    t0 = time.monotonic()
+    rec = StepRecord(
+        step_id=step.id, type=step.type.value, status=STEP_RUNNING,
+        attempt=attempt, started_at=_now_iso(),
+    )
+    inputs = step.inputs or {}
+    # Refuse raw SQL unless explicitly allowed by capability + context flag
+    if inputs.get("sql") and not context.get("allow_database_sql"):
+        rec.status = STEP_DENIED
+        rec.error = "raw SQL database steps require governed allow_database_sql context"
+        rec.error_code = "GOVERNANCE_DENIED"
+        rec.finished_at = _now_iso()
+        rec.duration_ms = int((time.monotonic() - t0) * 1000)
+        return rec
+    cap = step.capability or "ucip:api.call"
+    decision, reason = await _ucip_gate(cap, inputs, context)
+    if decision == "DENY":
+        rec.status = STEP_DENIED
+        rec.error = f"UCIP DENY: {reason}"
+        rec.error_code = "GOVERNANCE_DENIED"
+        rec.finished_at = _now_iso()
+        rec.duration_ms = int((time.monotonic() - t0) * 1000)
+        return rec
+    ok, auth_msg = _require_authority_safe(cap, context)
+    if not ok:
+        rec.status = STEP_DENIED
+        rec.error = auth_msg
+        rec.error_code = "GOVERNANCE_DENIED"
+        rec.finished_at = _now_iso()
+        rec.duration_ms = int((time.monotonic() - t0) * 1000)
+        return rec
+    # Foundation: structured operation descriptor only (no host DB driver call here)
+    op = inputs.get("operation") or "query"
+    rec.status = STEP_SUCCEEDED
+    rec.message = "database step accepted (governed descriptor; driver binding required for live IO)"
+    rec.outputs = scrub_secrets({
+        "operation": op,
+        "executed": False,
+        "reason": "foundation_descriptor_only",
+    })
+    rec.side_effect = "none"
+    rec.finished_at = _now_iso()
+    rec.duration_ms = int((time.monotonic() - t0) * 1000)
+    return rec
+
 
 
 def _next_step_id(step: WorkflowStep, result: StepRecord, steps: dict[str, WorkflowStep]) -> Optional[str]:
