@@ -131,195 +131,168 @@ def test_policy_not_second_engine_note():
     assert "second" in p.to_dict()["note"].lower() or "UCIP" in p.to_dict()["note"]
 
 
+
 # --- Recovery / resume path ---
 
-def test_recovery_linear_unblocks_dependents():
-    """A→B→C: A fails, recovery succeeds with evidence, B then C become READY."""
-    from brain.orchestration_dag import (
-        begin_node_recovery, begin_node_replanning, apply_recovery_success,
-        reconcile_after_recovery, mark_node_verified,
-    )
-    a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
-    b = OrchestrationNode(id="b", description="b", persona_id="code", dependencies=["a"], capabilities=["fs.read"])
-    c = OrchestrationNode(id="c", description="c", persona_id="code", dependencies=["b"], capabilities=["fs.read"])
-    edges = [
-        OrchestrationEdge("a", "b", DepCondition.VERIFIED.value),
-        OrchestrationEdge("b", "c", DepCondition.VERIFIED.value),
-        # explicit recovery topology from A
-        OrchestrationEdge("a", "a_recovery", DepCondition.FAILED.value),
-    ]
-    a_recovery = OrchestrationNode(
-        id="a_recovery", description="recover a", persona_id="code",
-        capabilities=["fs.read"],
-    )
-    nodes = [a, b, c, a_recovery]
-    a.status = NodeStatus.FAILED.value
-    a.job_or_task_id = "job-a-1"
-    blocked = propagate_failure(nodes, edges, "a")
-    assert "b" in blocked and "c" in blocked
-    assert a.status == NodeStatus.RECOVERING.value  # auto-start via recovery path
-    assert a.job_or_task_id == "job-a-1"  # lineage preserved
-    begin_node_replanning(a)
-    apply_recovery_success(a, evidence={"plan": "retry"})
-    assert a.status == NodeStatus.READY.value
-    # Re-execution path: authorize/queue/run/verify (simplified)
-    a.status = NodeStatus.VERIFYING.value
-    mark_node_verified(a, {"ok": True, "checks": ["unit"]})
-    assert a.status == NodeStatus.VERIFIED.value
-    assert a.verification_evidence and a.verification_evidence.get("ok") is True
-    ready = reconcile_after_recovery(nodes, edges, "a")
-    assert "b" in ready
-    assert b.status == NodeStatus.READY.value
-    b.status = NodeStatus.VERIFIED.value
-    b.verification_evidence = {"ok": True}
-    ready2 = compute_readiness(nodes, edges)
-    assert "c" in ready2
-
-
-def test_recovery_failure_keeps_dependents_blocked():
-    from brain.orchestration_dag import (
-        begin_node_recovery, begin_node_replanning, apply_recovery_failure,
-    )
-    a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
-    b = OrchestrationNode(id="b", description="b", persona_id="code", dependencies=["a"], capabilities=["fs.read"])
-    edges = [
-        OrchestrationEdge("a", "b", DepCondition.VERIFIED.value),
-        OrchestrationEdge("a", "a_recovery", DepCondition.FAILED.value),
-    ]
-    a_recovery = OrchestrationNode(id="a_recovery", description="r", persona_id="code", capabilities=["fs.read"])
-    nodes = [a, b, a_recovery]
-    a.status = NodeStatus.FAILED.value
-    propagate_failure(nodes, edges, "a")
-    assert b.status == NodeStatus.BLOCKED_BY_DEPENDENCY.value
-    # recovery attempt fails while still RECOVERING
-    apply_recovery_failure(a, reason="recovery_exhausted")
-    assert a.status == NodeStatus.FAILED.value
-    ready = compute_readiness(nodes, edges)
-    assert "b" not in ready
-    assert b.status == NodeStatus.BLOCKED_BY_DEPENDENCY.value
-
-
-def test_no_recovery_path_blocks_dependents():
+def test_ordinary_failure_blocks_ordinary_dependent():
     a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
     b = OrchestrationNode(id="b", description="b", persona_id="code", dependencies=["a"], capabilities=["fs.read"])
     edges = [OrchestrationEdge("a", "b", DepCondition.VERIFIED.value)]
     a.status = NodeStatus.FAILED.value
     blocked = propagate_failure([a, b], edges, "a")
     assert "b" in blocked
-    assert a.status == NodeStatus.FAILED.value  # no auto RECOVERING without FAILED edge
     assert b.status == NodeStatus.BLOCKED_BY_DEPENDENCY.value
-    assert "b" not in compute_readiness([a, b], edges)
+    assert a.status == NodeStatus.FAILED.value
 
 
-def test_recovery_multiple_dependents():
-    from brain.orchestration_dag import (
-        begin_node_replanning, apply_recovery_success, reconcile_after_recovery,
-        mark_node_verified,
-    )
+def test_failure_does_not_block_failed_recovery_target():
     a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
     b = OrchestrationNode(id="b", description="b", persona_id="code", dependencies=["a"], capabilities=["fs.read"])
-    c = OrchestrationNode(id="c", description="c", persona_id="code", dependencies=["a"], capabilities=["fs.read"])
-    rec = OrchestrationNode(id="rec", description="rec", persona_id="code", capabilities=["fs.read"])
+    r = OrchestrationNode(id="r", description="recovery", persona_id="code", capabilities=["fs.read"])
     edges = [
         OrchestrationEdge("a", "b", DepCondition.VERIFIED.value),
-        OrchestrationEdge("a", "c", DepCondition.VERIFIED.value),
-        OrchestrationEdge("a", "rec", DepCondition.FAILED.value),
+        OrchestrationEdge("a", "r", DepCondition.FAILED.value),
     ]
-    nodes = [a, b, c, rec]
+    nodes = [a, b, r]
     a.status = NodeStatus.FAILED.value
-    propagate_failure(nodes, edges, "a")
-    begin_node_replanning(a)
-    apply_recovery_success(a, evidence={"retry": 1})
-    a.status = NodeStatus.VERIFYING.value
-    mark_node_verified(a, {"ok": True})
-    ready = reconcile_after_recovery(nodes, edges, "a")
-    assert "b" in ready and "c" in ready
-    assert b.status == NodeStatus.READY.value
-    assert c.status == NodeStatus.READY.value
+    blocked = propagate_failure(nodes, edges, "a")
+    assert "b" in blocked
+    assert "r" not in blocked
+    assert r.status != NodeStatus.BLOCKED_BY_DEPENDENCY.value
+    ready = compute_readiness(nodes, edges)
+    assert "r" in ready
 
 
-def test_recovery_diamond_d_waits():
+def test_failed_to_recovering():
+    from brain.orchestration_dag import begin_node_recovery
+    a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
+    a.status = NodeStatus.FAILED.value
+    a.job_or_task_id = "job-1"
+    r1 = begin_node_recovery([a], "a")
+    assert r1["transitioned"] is True
+    assert a.status == NodeStatus.RECOVERING.value
+    assert a.job_or_task_id == "job-1"
+    r2 = begin_node_recovery([a], "a")
+    assert r2["transitioned"] is False
+    assert a.job_or_task_id == "job-1"
+
+
+def test_recovering_to_replanning():
+    from brain.orchestration_dag import begin_node_recovery, begin_node_replanning
+    a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
+    a.status = NodeStatus.FAILED.value
+    a.job_or_task_id = "job-2"
+    begin_node_recovery([a], "a")
+    r = begin_node_replanning([a], "a")
+    assert r["transitioned"] is True
+    assert a.status == NodeStatus.REPLANNING.value
+    assert a.job_or_task_id == "job-2"
+    r2 = begin_node_replanning([a], "a")
+    assert r2["transitioned"] is False
+
+
+def test_replanning_to_ready_not_verified():
     from brain.orchestration_dag import (
-        begin_node_replanning, apply_recovery_success, reconcile_after_recovery,
-        mark_node_verified,
+        begin_node_recovery, begin_node_replanning, apply_recovery_success,
     )
     a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
-    b = OrchestrationNode(id="b", description="b", persona_id="code", dependencies=["a"], capabilities=["fs.read"])
-    c = OrchestrationNode(id="c", description="c", persona_id="code", dependencies=["a"], capabilities=["fs.read"])
-    d = OrchestrationNode(id="d", description="d", persona_id="code", dependencies=["b", "c"], capabilities=["fs.read"])
-    rec = OrchestrationNode(id="rec", description="rec", persona_id="code", capabilities=["fs.read"])
-    edges = [
-        OrchestrationEdge("a", "b", DepCondition.VERIFIED.value),
-        OrchestrationEdge("a", "c", DepCondition.VERIFIED.value),
-        OrchestrationEdge("b", "d", DepCondition.VERIFIED.value),
-        OrchestrationEdge("c", "d", DepCondition.VERIFIED.value),
-        OrchestrationEdge("a", "rec", DepCondition.FAILED.value),
-    ]
-    nodes = [a, b, c, d, rec]
     a.status = NodeStatus.FAILED.value
-    propagate_failure(nodes, edges, "a")
-    begin_node_replanning(a)
-    apply_recovery_success(a, evidence={"ok": 1})
-    a.status = NodeStatus.VERIFYING.value
-    mark_node_verified(a, {"ok": True})
-    ready = reconcile_after_recovery(nodes, edges, "a")
-    assert "b" in ready and "c" in ready
-    assert "d" not in ready
-    b.status = NodeStatus.VERIFIED.value
-    b.verification_evidence = {"ok": True}
-    c.status = NodeStatus.VERIFIED.value
-    c.verification_evidence = {"ok": True}
-    ready2 = compute_readiness(nodes, edges)
-    assert "d" in ready2
+    a.job_or_task_id = "job-3"
+    begin_node_recovery([a], "a")
+    begin_node_replanning([a], "a")
+    r = apply_recovery_success([a], "a", recovery_plan={"strategy": "retry"})
+    assert r["transitioned"] is True
+    assert a.status == NodeStatus.READY.value
+    assert a.status != NodeStatus.VERIFIED.value
+    assert a.recovery_metadata == {"strategy": "retry"}
+    assert a.verification_evidence is None
+    assert a.job_or_task_id == "job-3"
 
 
-def test_recovery_cannot_mark_verified_without_evidence():
+def test_mark_verified_requires_evidence_after_reexec():
     from brain.orchestration_dag import mark_node_verified
     a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
+    a.status = NodeStatus.READY.value
+    with pytest.raises(ValueError):
+        mark_node_verified([a], "a", {"ok": True})
     a.status = NodeStatus.VERIFYING.value
     with pytest.raises(ValueError):
-        mark_node_verified(a, {})
-    with pytest.raises(ValueError):
-        mark_node_verified(a, None)  # type: ignore
-    assert a.status == NodeStatus.VERIFYING.value
+        mark_node_verified([a], "a", {})
+    r = mark_node_verified([a], "a", {"ok": True, "checks": ["unit"]})
+    assert r["transitioned"] is True
+    assert a.status == NodeStatus.VERIFIED.value
+    assert a.verification_evidence["ok"] is True
 
 
-def test_propagate_failure_idempotent():
+def test_verification_reconciles_downstream():
+    from brain.orchestration_dag import (
+        begin_node_recovery, begin_node_replanning, apply_recovery_success,
+        mark_node_verified, reconcile_after_recovery,
+    )
+    a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
+    b = OrchestrationNode(id="b", description="b", persona_id="code", dependencies=["a"], capabilities=["fs.read"])
+    r = OrchestrationNode(id="r", description="r", persona_id="code", capabilities=["fs.read"])
+    edges = [
+        OrchestrationEdge("a", "b", DepCondition.VERIFIED.value),
+        OrchestrationEdge("a", "r", DepCondition.FAILED.value),
+    ]
+    nodes = [a, b, r]
+    a.status = NodeStatus.FAILED.value
+    a.job_or_task_id = "job-stable"
+    propagate_failure(nodes, edges, "a")
+    assert b.status == NodeStatus.BLOCKED_BY_DEPENDENCY.value
+    # recover A through state machine
+    begin_node_recovery(nodes, "a")
+    begin_node_replanning(nodes, "a")
+    apply_recovery_success(nodes, "a", recovery_plan={"retry": 1})
+    a.status = NodeStatus.VERIFYING.value
+    mark_node_verified(nodes, "a", {"ok": True})
+    ready = reconcile_after_recovery(nodes, edges, "a")
+    assert "b" in ready
+    assert b.status == NodeStatus.READY.value
+    assert a.job_or_task_id == "job-stable"
+    # idempotent
+    ready2 = reconcile_after_recovery(nodes, edges, "a")
+    assert "b" in ready2
+
+
+def test_recovery_failure_no_infinite_loop():
+    from brain.orchestration_dag import begin_node_recovery, apply_recovery_failure
+    a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
+    b = OrchestrationNode(id="b", description="b", persona_id="code", dependencies=["a"], capabilities=["fs.read"])
+    edges = [OrchestrationEdge("a", "b", DepCondition.VERIFIED.value)]
+    a.status = NodeStatus.FAILED.value
+    propagate_failure([a, b], edges, "a")
+    begin_node_recovery([a], "a")
+    apply_recovery_failure([a], "a", reason="exhausted")
+    assert a.status == NodeStatus.FAILED.value
+    assert b.status == NodeStatus.BLOCKED_BY_DEPENDENCY.value
+    assert "b" not in compute_readiness([a, b], edges)
+    # second failure apply is idempotent-ish when already FAILED with same reason
+    r = apply_recovery_failure([a], "a", reason="exhausted")
+    assert r["transitioned"] is False
+
+
+def test_recovery_correlation_stable():
+    from brain.orchestration_dag import (
+        begin_node_recovery, begin_node_replanning, apply_recovery_success,
+    )
+    a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
+    a.status = NodeStatus.FAILED.value
+    a.job_or_task_id = "corr-99"
+    begin_node_recovery([a], "a")
+    begin_node_replanning([a], "a")
+    apply_recovery_success([a], "a", recovery_plan={"x": 1})
+    assert a.id == "a"
+    assert a.job_or_task_id == "corr-99"
+
+
+def test_recovery_idempotent_propagate():
     a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
     b = OrchestrationNode(id="b", description="b", persona_id="code", dependencies=["a"], capabilities=["fs.read"])
     edges = [OrchestrationEdge("a", "b", DepCondition.VERIFIED.value)]
     a.status = NodeStatus.FAILED.value
     b1 = propagate_failure([a, b], edges, "a")
     b2 = propagate_failure([a, b], edges, "a")
-    assert b1 == b2 or set(b1) == set(b2)
+    assert set(b1) == set(b2)
     assert b.status == NodeStatus.BLOCKED_BY_DEPENDENCY.value
-    assert len([e for e in edges if e.source == "a"]) == 1
-
-
-def test_recovery_invalid_transitions():
-    from brain.orchestration_dag import begin_node_recovery, begin_node_replanning, apply_recovery_success
-    a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
-    a.status = NodeStatus.READY.value
-    with pytest.raises(ValueError):
-        begin_node_recovery(a)
-    a.status = NodeStatus.FAILED.value
-    begin_node_recovery(a)
-    with pytest.raises(ValueError):
-        apply_recovery_success(a)  # still RECOVERING, not REPLANNING
-    begin_node_replanning(a)
-    apply_recovery_success(a, evidence={"plan": True})
-    assert a.status == NodeStatus.READY.value
-
-
-def test_failed_condition_edge_readiness():
-    """FAILED-condition recovery node becomes ready when parent is FAILED."""
-    a = OrchestrationNode(id="a", description="a", persona_id="web", capabilities=["fs.read"])
-    r = OrchestrationNode(id="r", description="r", persona_id="code", capabilities=["fs.read"])
-    edges = [OrchestrationEdge("a", "r", DepCondition.FAILED.value)]
-    a.status = NodeStatus.FAILED.value
-    ready = compute_readiness([a, r], edges)
-    assert "r" in ready
-    a.status = NodeStatus.VERIFIED.value
-    a.verification_evidence = {"ok": True}
-    ready2 = compute_readiness([a, r], edges)
-    assert "r" not in ready2

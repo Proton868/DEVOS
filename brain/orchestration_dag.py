@@ -117,6 +117,8 @@ class OrchestrationNode:
     authorization_decision: Optional[str] = None
     blocking_reason: Optional[str] = None
     verification_evidence: Optional[dict] = None
+    # Recovery plan metadata — never treated as verification evidence.
+    recovery_metadata: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return {
@@ -134,6 +136,7 @@ class OrchestrationNode:
             "authorization_decision": self.authorization_decision,
             "blocking_reason": self.blocking_reason,
             "verification_evidence": self.verification_evidence,
+            "recovery_metadata": self.recovery_metadata,
         }
 
     def set_status(self, new: NodeStatus) -> None:
@@ -319,79 +322,195 @@ def recovery_eligible_targets(
     ]
 
 
-def begin_node_recovery(node: OrchestrationNode) -> NodeStatus:
-    """FAILED → RECOVERING. Preserves job_or_task_id lineage."""
+def _get_node(nodes: list[OrchestrationNode], node_id: str) -> OrchestrationNode:
+    for n in nodes:
+        if n.id == node_id:
+            return n
+    raise KeyError(f"node not found: {node_id}")
+
+
+def begin_node_recovery(nodes: list[OrchestrationNode], node_id: str) -> dict:
+    """FAILED → RECOVERING. Preserves node identity and job/task correlation.
+
+    Idempotent: if already RECOVERING, reports transitioned=False.
+    Returns {node_id, from, to, transitioned, job_or_task_id}.
+    """
+    node = _get_node(nodes, node_id)
     cur = NodeStatus(node.status)
+    job_id = node.job_or_task_id
+    if cur == NodeStatus.RECOVERING:
+        return {
+            "node_id": node_id,
+            "from": cur.value,
+            "to": cur.value,
+            "transitioned": False,
+            "job_or_task_id": job_id,
+        }
     if cur != NodeStatus.FAILED:
         raise ValueError(f"begin_node_recovery requires FAILED, got {cur.value}")
     node.set_status(NodeStatus.RECOVERING)
-    # Lineage: keep original job_or_task_id; recovery metadata is additive.
-    meta = dict(node.verification_evidence or {}) if isinstance(node.verification_evidence, dict) else {}
-    # Do not clear verification_evidence here — recovery evidence is applied later.
     node.blocking_reason = None
-    return NodeStatus(node.status)
+    # Preserve job_or_task_id and verification_evidence (do not clear).
+    assert node.job_or_task_id == job_id
+    return {
+        "node_id": node_id,
+        "from": NodeStatus.FAILED.value,
+        "to": NodeStatus.RECOVERING.value,
+        "transitioned": True,
+        "job_or_task_id": node.job_or_task_id,
+    }
 
 
-def begin_node_replanning(node: OrchestrationNode) -> NodeStatus:
-    """RECOVERING → REPLANNING."""
+def begin_node_replanning(nodes: list[OrchestrationNode], node_id: str) -> dict:
+    """RECOVERING → REPLANNING. Idempotent if already REPLANNING."""
+    node = _get_node(nodes, node_id)
     cur = NodeStatus(node.status)
+    job_id = node.job_or_task_id
+    if cur == NodeStatus.REPLANNING:
+        return {
+            "node_id": node_id,
+            "from": cur.value,
+            "to": cur.value,
+            "transitioned": False,
+            "job_or_task_id": job_id,
+        }
     if cur != NodeStatus.RECOVERING:
         raise ValueError(f"begin_node_replanning requires RECOVERING, got {cur.value}")
     node.set_status(NodeStatus.REPLANNING)
-    return NodeStatus(node.status)
+    assert node.job_or_task_id == job_id
+    return {
+        "node_id": node_id,
+        "from": NodeStatus.RECOVERING.value,
+        "to": NodeStatus.REPLANNING.value,
+        "transitioned": True,
+        "job_or_task_id": node.job_or_task_id,
+    }
 
 
 def apply_recovery_success(
-    node: OrchestrationNode,
-    *,
-    evidence: Optional[dict] = None,
-) -> NodeStatus:
-    """REPLANNING → READY after recovery planning succeeds.
+    nodes: list[OrchestrationNode],
+    node_id: str,
+    recovery_plan: Optional[dict] = None,
+) -> dict:
+    """REPLANNING → READY. Stores recovery_plan in recovery_metadata only.
 
-    Does NOT mark VERIFIED/COMPLETED — that still requires verification evidence
-    via the normal VERIFYING → VERIFIED path after re-execution.
+    MUST NOT mark VERIFIED — recovery success means eligible for re-execution.
     """
+    node = _get_node(nodes, node_id)
     cur = NodeStatus(node.status)
+    job_id = node.job_or_task_id
+    if cur == NodeStatus.READY and node.recovery_metadata is not None:
+        return {
+            "node_id": node_id,
+            "from": cur.value,
+            "to": cur.value,
+            "transitioned": False,
+            "job_or_task_id": job_id,
+            "status": cur.value,
+        }
     if cur != NodeStatus.REPLANNING:
         raise ValueError(f"apply_recovery_success requires REPLANNING, got {cur.value}")
-    if evidence is not None:
-        # Store recovery planning evidence without claiming verification success.
-        base = dict(node.verification_evidence) if isinstance(node.verification_evidence, dict) else {}
-        base["recovery"] = evidence
-        node.verification_evidence = base
+    if recovery_plan is not None:
+        node.recovery_metadata = dict(recovery_plan)
+    # Explicitly do not touch verification_evidence / VERIFIED status.
     node.set_status(NodeStatus.READY)
     node.blocking_reason = None
-    return NodeStatus(node.status)
+    assert node.job_or_task_id == job_id
+    assert node.status != NodeStatus.VERIFIED.value
+    return {
+        "node_id": node_id,
+        "from": NodeStatus.REPLANNING.value,
+        "to": NodeStatus.READY.value,
+        "transitioned": True,
+        "job_or_task_id": node.job_or_task_id,
+        "status": node.status,
+    }
 
 
-def apply_recovery_failure(node: OrchestrationNode, *, reason: str = "recovery_failed") -> NodeStatus:
-    """End a failed recovery attempt.
+def apply_recovery_failure(
+    nodes: list[OrchestrationNode],
+    node_id: str,
+    reason: Optional[str] = None,
+) -> dict:
+    """End a failed recovery attempt (no automatic infinite retry).
 
-    RECOVERING → FAILED (retryable failure state).
-    REPLANNING → CANCELLED (terminal; transition table has no REPLANNING→FAILED).
+    RECOVERING → FAILED.
+    REPLANNING → CANCELLED (no REPLANNING→FAILED in the transition table).
     """
+    node = _get_node(nodes, node_id)
     cur = NodeStatus(node.status)
+    job_id = node.job_or_task_id
+    why = reason or "recovery_failed"
     if cur == NodeStatus.RECOVERING:
         node.set_status(NodeStatus.FAILED)
-        node.blocking_reason = reason
-        return NodeStatus(node.status)
+        node.blocking_reason = why
+        return {
+            "node_id": node_id,
+            "from": NodeStatus.RECOVERING.value,
+            "to": NodeStatus.FAILED.value,
+            "transitioned": True,
+            "job_or_task_id": job_id,
+            "reason": why,
+        }
     if cur == NodeStatus.REPLANNING:
         node.set_status(NodeStatus.CANCELLED)
-        node.blocking_reason = reason
-        return NodeStatus(node.status)
+        node.blocking_reason = why
+        return {
+            "node_id": node_id,
+            "from": NodeStatus.REPLANNING.value,
+            "to": NodeStatus.CANCELLED.value,
+            "transitioned": True,
+            "job_or_task_id": job_id,
+            "reason": why,
+        }
+    if cur in (NodeStatus.FAILED, NodeStatus.CANCELLED) and node.blocking_reason == why:
+        return {
+            "node_id": node_id,
+            "from": cur.value,
+            "to": cur.value,
+            "transitioned": False,
+            "job_or_task_id": job_id,
+            "reason": why,
+        }
     raise ValueError(f"apply_recovery_failure requires RECOVERING|REPLANNING, got {cur.value}")
 
 
-def mark_node_verified(node: OrchestrationNode, evidence: dict) -> NodeStatus:
-    """VERIFYING → VERIFIED only when evidence is present (evidence-based)."""
-    if not evidence:
+def mark_node_verified(
+    nodes: list[OrchestrationNode],
+    node_id: str,
+    evidence: dict,
+) -> dict:
+    """VERIFYING → VERIFIED only with non-empty verification evidence.
+
+    recovery_metadata alone must not satisfy this requirement.
+    Node must be VERIFYING (i.e. has gone through re-execution path).
+    """
+    node = _get_node(nodes, node_id)
+    if not evidence or not isinstance(evidence, dict):
         raise ValueError("mark_node_verified requires non-empty verification evidence")
+    # Reject recovery-plan-shaped payloads used as fake verification.
+    if set(evidence.keys()) <= {"recovery", "recovery_plan", "plan"} and "ok" not in evidence and "checks" not in evidence:
+        raise ValueError("recovery metadata is not verification evidence")
     cur = NodeStatus(node.status)
+    if cur == NodeStatus.VERIFIED and node.verification_evidence:
+        return {
+            "node_id": node_id,
+            "from": cur.value,
+            "to": cur.value,
+            "transitioned": False,
+            "job_or_task_id": node.job_or_task_id,
+        }
     if cur != NodeStatus.VERIFYING:
         raise ValueError(f"mark_node_verified requires VERIFYING, got {cur.value}")
     node.verification_evidence = dict(evidence)
     node.set_status(NodeStatus.VERIFIED)
-    return NodeStatus(node.status)
+    return {
+        "node_id": node_id,
+        "from": NodeStatus.VERIFYING.value,
+        "to": NodeStatus.VERIFIED.value,
+        "transitioned": True,
+        "job_or_task_id": node.job_or_task_id,
+    }
 
 
 def reconcile_after_recovery(
@@ -501,31 +620,21 @@ def propagate_failure(
     nodes: list[OrchestrationNode],
     edges: list[OrchestrationEdge],
     failed_id: str,
-    *,
-    begin_recovery: bool = True,
 ) -> list[str]:
-    """Propagate failure to dependents with recovery awareness.
+    """Propagate failure to ordinary dependents with recovery-edge awareness.
 
     - Ordinary VERIFIED/COMPLETED dependents become BLOCKED_BY_DEPENDENCY.
-    - Explicit FAILED-condition recovery edges are NOT blocked (they may become READY).
-    - If a recovery path exists and begin_recovery is True, the failed node
-      transitions FAILED → RECOVERING (orchestration state only; no execution).
-    - Descendants are not terminally BLOCKED while recovery remains possible.
+    - Explicit FAILED-condition recovery edges are NOT blocked (targets may
+      become READY via compute_readiness while the parent is FAILED).
+    - Does NOT invent automatic FAILED→RECOVERING transitions; Nuha/callers
+      invoke begin_node_recovery explicitly when appropriate.
     - Idempotent: re-running does not duplicate blocks or edges.
     """
     by_id = {n.id: n for n in nodes}
-    failed = by_id.get(failed_id)
-    if failed and NodeStatus(failed.status) == NodeStatus.FAILED:
-        if begin_recovery and has_recovery_path(nodes, edges, failed_id):
-            try:
-                begin_node_recovery(failed)
-            except ValueError:
-                pass
-
     blocked: list[str] = []
     children = _children_map(nodes, edges)
 
-    # BFS over ordinary (non-FAILED-condition) descendants
+    # BFS over ordinary (non-FAILED-condition) descendants only
     stack = [
         tid for tid, cond in children.get(failed_id, [])
         if cond != DepCondition.FAILED.value
