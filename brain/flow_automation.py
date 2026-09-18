@@ -25,6 +25,7 @@ import os
 from pathlib import Path
 
 import hashlib
+import json
 import logging
 import time
 import uuid
@@ -511,3 +512,299 @@ def bump_workflow_version(wf: Workflow) -> Workflow:
     rev = int(getattr(wf, "revision", 0) or 0) + 1
     setattr(wf, "revision", rev)
     return wf
+
+
+# ── Durable run persistence (Postgres/SQLite via ORM) ─────────────────────────
+
+
+def trigger_idempotency_key(
+    *,
+    workflow_id: str,
+    workflow_version: int,
+    trigger: TriggerSpec,
+    delivery_id: Optional[str] = None,
+    schedule_occurrence: Optional[str] = None,
+) -> Optional[str]:
+    """Build logical operation identity for a trigger delivery.
+
+    - manual without delivery_id → None (new operation each time unless caller supplies key)
+    - webhook/event → requires delivery_id (provider event/delivery id)
+    - schedule → requires schedule_occurrence (e.g. 2026-09-18T12:00:00Z slot)
+    """
+    t = trigger.type if isinstance(trigger.type, TriggerType) else TriggerType(str(trigger.type))
+    if t == TriggerType.MANUAL and not delivery_id:
+        return None
+    parts = {
+        "workflow_id": workflow_id,
+        "version": int(workflow_version),
+        "trigger": t.value,
+        "delivery_id": delivery_id or "",
+        "schedule_occurrence": schedule_occurrence or "",
+    }
+    raw = json.dumps(parts, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def publish_workflow_version(wf: Workflow) -> Workflow:
+    """Mark workflow as published (executable). Definition is snapshotted at trigger time.
+
+    Editing after publish should bump revision via bump_workflow_version / store update;
+    runs always carry definition_snapshot from the version used at trigger.
+    """
+    setattr(wf, "status", "published")
+    setattr(wf, "enabled", bool(getattr(wf, "enabled", True)))
+    return wf
+
+
+def _utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+async def persist_run_durable(run: AutomationRun) -> bool:
+    """Upsert automation run into automation_run_records. Best-effort durable."""
+    try:
+        from core.database import AsyncSessionLocal, AutomationRunRecord
+        async with AsyncSessionLocal() as db:
+            row = await db.get(AutomationRunRecord, run.run_id)
+            payload = {
+                "workflow_id": run.workflow_id,
+                "workflow_version": int(run.workflow_version or 1),
+                "owner_id": run.owner_id,
+                "tenant_id": run.tenant_id,
+                "status": run.status.value if isinstance(run.status, RunStatus) else str(run.status),
+                "mode": run.mode.value if isinstance(run.mode, RunMode) else str(run.mode),
+                "trigger_type": (
+                    run.trigger.type.value
+                    if run.trigger and isinstance(run.trigger.type, TriggerType)
+                    else (run.trigger.type if run.trigger else "manual")
+                ),
+                "trigger_identity": (run.trigger.config or {}).get("delivery_id")
+                or (run.trigger.config or {}).get("schedule_occurrence")
+                if run.trigger
+                else None,
+                "idempotency_key": run.idempotency_key,
+                "operation_id": getattr(run, "operation_id", None),
+                "job_id": getattr(run, "execution_job_id", None) or (run.execution_state or {}).get("job_id"),
+                "correlation_id": run.correlation_id,
+                "definition_snapshot": scrub_secrets(dict(run.execution_state or {})),
+                "result_summary": scrub_secrets(dict(run.result_summary or {})) if run.result_summary else None,
+                "error": (run.error or "")[:4000] or None,
+                "cancel_requested": bool(run.cancel_requested),
+                "updated_at": _utcnow_naive(),
+            }
+            # Prefer explicit attributes when set by trigger path
+            if getattr(run, "operation_id", None):
+                payload["operation_id"] = run.operation_id
+            if getattr(run, "execution_job_id", None):
+                payload["job_id"] = run.execution_job_id
+            if getattr(run, "definition_snapshot", None):
+                payload["definition_snapshot"] = scrub_secrets(dict(run.definition_snapshot))
+            if row is None:
+                row = AutomationRunRecord(id=run.run_id, created_at=_utcnow_naive(), **{
+                    k: v for k, v in payload.items() if k != "updated_at"
+                })
+                row.updated_at = payload["updated_at"]
+                db.add(row)
+            else:
+                for k, v in payload.items():
+                    setattr(row, k, v)
+            await db.commit()
+            return True
+    except Exception:
+        logger.warning("persist_run_durable failed", exc_info=True)
+        return False
+
+
+async def load_run_durable(run_id: str) -> Optional[AutomationRun]:
+    try:
+        from core.database import AsyncSessionLocal, AutomationRunRecord
+        async with AsyncSessionLocal() as db:
+            row = await db.get(AutomationRunRecord, run_id)
+            if not row:
+                return None
+            return _row_to_run(row)
+    except Exception:
+        logger.debug("load_run_durable failed", exc_info=True)
+        return None
+
+
+def _row_to_run(row) -> AutomationRun:
+    trigger = TriggerSpec(
+        type=TriggerType(row.trigger_type or "manual"),
+        enabled=True,
+        config={
+            k: v
+            for k, v in {
+                "delivery_id": row.trigger_identity if row.trigger_type in ("webhook", "event") else None,
+                "schedule_occurrence": row.trigger_identity if row.trigger_type == "schedule" else None,
+            }.items()
+            if v
+        },
+    )
+    run = AutomationRun(
+        run_id=row.id,
+        workflow_id=row.workflow_id,
+        workflow_version=int(row.workflow_version or 1),
+        owner_id=row.owner_id,
+        tenant_id=row.tenant_id,
+        mode=RunMode(row.mode) if row.mode in {m.value for m in RunMode} else RunMode.MANUAL,
+        status=RunStatus(row.status) if row.status in {s.value for s in RunStatus} else RunStatus.QUEUED,
+        trigger=trigger,
+        idempotency_key=row.idempotency_key,
+        correlation_id=row.correlation_id or "",
+        execution_state=dict(row.definition_snapshot or {}),
+        result_summary=dict(row.result_summary or {}) if row.result_summary else {},
+        error=row.error,
+        cancel_requested=bool(row.cancel_requested),
+        created_at=row.created_at or _utcnow_naive(),
+        updated_at=row.updated_at or _utcnow_naive(),
+    )
+    setattr(run, "operation_id", row.operation_id)
+    setattr(run, "execution_job_id", row.job_id)
+    setattr(run, "definition_snapshot", dict(row.definition_snapshot or {}))
+    return run
+
+
+async def find_run_by_idempotency_durable(
+    owner_id: str, idempotency_key: str
+) -> Optional[AutomationRun]:
+    if not idempotency_key:
+        return None
+    try:
+        from core.database import AsyncSessionLocal, AutomationRunRecord
+        from sqlalchemy import select
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(
+                select(AutomationRunRecord)
+                .where(
+                    AutomationRunRecord.owner_id == owner_id,
+                    AutomationRunRecord.idempotency_key == idempotency_key,
+                )
+                .order_by(AutomationRunRecord.created_at.desc())
+                .limit(1)
+            )
+            row = r.scalar_one_or_none()
+            return _row_to_run(row) if row else None
+    except Exception:
+        logger.debug("find_run_by_idempotency_durable failed", exc_info=True)
+        return None
+
+
+async def trigger_automation_run(
+    wf: Workflow,
+    *,
+    owner_id: str,
+    tenant_id: Optional[str] = None,
+    mode: RunMode = RunMode.PRODUCTION,
+    trigger: Optional[TriggerSpec] = None,
+    delivery_id: Optional[str] = None,
+    schedule_occurrence: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    store: Optional[AutomationRunStore] = None,
+) -> AutomationRun:
+    """Resolve trigger → durable run + ExecutionJob/Operation (authoritative spine).
+
+    Disabled automations reject new triggers. Already-running executions are not
+    cancelled by disable. Idempotent triggers converge on existing run/op.
+    """
+    store = store or get_run_store()
+    if getattr(wf, "enabled", True) is False:
+        raise PermissionError("automation_disabled")
+
+    status = (getattr(wf, "status", None) or "draft").lower()
+    # Allow draft in tests; production triggers should prefer published
+    version = int(getattr(wf, "revision", None) or 0) or 1
+    try:
+        if not getattr(wf, "revision", None) and getattr(wf, "version", None):
+            version = int(str(wf.version).split(".")[0]) or version
+    except Exception:
+        pass
+
+    trigger = trigger or TriggerSpec(type=TriggerType.MANUAL)
+    if delivery_id and trigger.config is not None:
+        trigger.config = dict(trigger.config or {})
+        trigger.config["delivery_id"] = delivery_id
+    if schedule_occurrence and trigger.config is not None:
+        trigger.config = dict(trigger.config or {})
+        trigger.config["schedule_occurrence"] = schedule_occurrence
+
+    ikey = idempotency_key or trigger_idempotency_key(
+        workflow_id=str(wf.workflow_id),
+        workflow_version=version,
+        trigger=trigger,
+        delivery_id=delivery_id,
+        schedule_occurrence=schedule_occurrence,
+    )
+
+    if ikey:
+        prior = await find_run_by_idempotency_durable(owner_id, ikey)
+        if prior is None:
+            prior = store.get_by_idempotency(owner_id, ikey)
+        if prior and prior.status in (
+            RunStatus.SUCCEEDED,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+            RunStatus.QUEUED,
+            RunStatus.RUNNING,
+        ):
+            return prior
+
+    correlation_id = _id()
+    snap = build_snapshot_from_workflow(wf, correlation_id=correlation_id, enabled_check=True)
+    definition_snapshot = scrub_secrets(dict(snap))
+
+    run = AutomationRun(
+        run_id=_id(),
+        workflow_id=str(snap["workflow_id"]),
+        workflow_version=int(snap["workflow_version"]),
+        owner_id=owner_id,
+        tenant_id=tenant_id,
+        mode=mode,
+        status=RunStatus.QUEUED,
+        trigger=trigger,
+        idempotency_key=ikey,
+        correlation_id=correlation_id,
+        execution_state={},
+        created_at=_now(),
+        updated_at=_now(),
+    )
+    setattr(run, "definition_snapshot", definition_snapshot)
+
+    # Bind consequential execution via existing job queue (op reserved atomically)
+    try:
+        from workers.job_queue import enqueue
+        job = await enqueue(
+            owner_id=owner_id,
+            tenant_id=tenant_id or owner_id,
+            job_type="workflow",
+            payload={
+                "workflow_id": run.workflow_id,
+                "workflow_version": run.workflow_version,
+                "run_id": run.run_id,
+                "snapshot": definition_snapshot,
+                "trigger": trigger.to_dict(),
+            },
+            actor_id=owner_id,
+            idempotency_key=ikey,
+            correlation={"correlation_id": correlation_id, "run_id": run.run_id},
+            workflow_id=run.workflow_id,
+            workflow_version=run.workflow_version,
+        )
+        setattr(run, "execution_job_id", job.id)
+        setattr(run, "operation_id", job.operation_id)
+        run.status = RunStatus.QUEUED
+        if job.operation_id:
+            run.execution_state = {
+                "job_id": job.id,
+                "operation_id": job.operation_id,
+            }
+    except Exception as e:
+        run.status = RunStatus.FAILED
+        run.error = f"enqueue_failed:{type(e).__name__}:{str(e)[:200]}"
+        store.put(run)
+        await persist_run_durable(run)
+        raise
+
+    store.put(run)
+    await persist_run_durable(run)
+    return run

@@ -1165,8 +1165,38 @@ class WorkflowRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
+class AutomationRunRecord(Base):
+    """Durable automation run projection — not a second execution ledger.
+
+    ExecutionOperation / ExecutionJob remain authoritative for consequential state.
+    This table links trigger + immutable workflow version to op/job identities
+    so runs survive process restart.
+    """
+    __tablename__ = "automation_run_records"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    workflow_id: Mapped[str] = mapped_column(String, index=True)
+    workflow_version: Mapped[int] = mapped_column(Integer, default=1)
+    owner_id: Mapped[str] = mapped_column(String, index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    mode: Mapped[str] = mapped_column(String(32), default="manual")
+    trigger_type: Mapped[str] = mapped_column(String(32), default="manual")
+    trigger_identity: Mapped[Optional[str]] = mapped_column(String(256), nullable=True, index=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(192), nullable=True, index=True)
+    operation_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    job_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    definition_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    result_summary: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
 class EvidenceRecord(Base):
     __tablename__ = "evidence_records"
+
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
     owner_id: Mapped[str] = mapped_column(String, index=True)
     tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
