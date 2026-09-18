@@ -47,6 +47,72 @@
 --      -- or JSON:
 --      -- SELECT json_agg(t) FROM agentic_runtime_checkpoints t;
 --
+
+-- PRE-ROLLBACK DATA VERIFICATION (run these queries first; do not skip)
+-- --------------------------------------------------------------------
+-- Goal: understand impact before DROP TABLE destroys rows.
+-- Exit if any check indicates an active dependency you still need.
+--
+-- V1. Table exists?
+--     SELECT to_regclass('public.agentic_runtime_checkpoints') AS reg;
+--     -- NULL  → nothing to roll back; still safe to run this script (IF EXISTS).
+--     -- non-NULL → continue V2–V6.
+--
+-- V2. Row counts and state distribution
+--     SELECT COUNT(*) AS total_rows FROM agentic_runtime_checkpoints;
+--     SELECT state, COUNT(*) AS n
+--       FROM agentic_runtime_checkpoints
+--      GROUP BY state
+--      ORDER BY n DESC;
+--
+-- V3. In-flight / non-terminal work that would be lost
+--     SELECT task_id, owner_id, tenant_id, state, turn, operation_id, job_id, updated_at
+--       FROM agentic_runtime_checkpoints
+--      WHERE state NOT IN ('completed', 'failed', 'cancelled')
+--      ORDER BY updated_at DESC
+--      LIMIT 100;
+--     -- If this returns rows, pause: those tasks may still be recoverable from
+--     -- this table. Prefer draining or exporting before DROP.
+--
+-- V4. UNKNOWN / BLOCKED rows (must not be silently discarded without review)
+--     SELECT task_id, owner_id, state, failure, unknown_info, updated_at
+--       FROM agentic_runtime_checkpoints
+--      WHERE state IN ('unknown', 'blocked')
+--      ORDER BY updated_at DESC
+--      LIMIT 100;
+--
+-- V5. Cross-check linked operations still exist (optional; requires ops table)
+--     SELECT c.task_id, c.operation_id, c.state AS cp_state
+--       FROM agentic_runtime_checkpoints c
+--      WHERE c.operation_id IS NOT NULL
+--        AND c.state IN ('executing', 'unknown', 'observing')
+--      LIMIT 50;
+--     -- Manually join/inspect execution_operations if present in your schema.
+--
+-- V6. Tenant/owner footprint (isolation audit sample)
+--     SELECT owner_id, tenant_id, COUNT(*) AS n
+--       FROM agentic_runtime_checkpoints
+--      GROUP BY owner_id, tenant_id
+--      ORDER BY n DESC
+--      LIMIT 50;
+--
+-- V7. Optional full export before DROP (recommended if V2 total_rows > 0)
+--     COPY (
+--       SELECT * FROM agentic_runtime_checkpoints
+--     ) TO '/tmp/agentic_runtime_checkpoints_backup.csv' WITH CSV HEADER;
+--
+--     -- Verify export non-empty when table had rows:
+--     --   wc -l /tmp/agentic_runtime_checkpoints_backup.csv
+--
+-- PASS CRITERIA TO PROCEED WITH DROP
+-- ----------------------------------
+-- [ ] V1 understood (table missing or present)
+-- [ ] V2 reviewed (no unexpected row volume)
+-- [ ] V3 empty OR operator explicitly accepts loss of in-flight checkpoints
+-- [ ] V4 reviewed (UNKNOWN/BLOCKED exported or accepted)
+-- [ ] V7 backup taken if total_rows > 0 and data may be needed
+-- [ ] Application revision does not hard-require this table
+--
 -- HOW TO APPLY ROLLBACK
 -- ---------------------
 -- psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \

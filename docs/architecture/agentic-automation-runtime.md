@@ -105,6 +105,25 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
   -f supabase/migrations/20260918200000_agentic_runtime_checkpoints.down.sql
 ```
 
+
+### Pre-rollback data verification
+
+Run against production (or the target database) **before** applying the down migration:
+
+| # | Check | SQL / action | Pass criteria |
+|---|--------|--------------|---------------|
+| V1 | Table present | `SELECT to_regclass('public.agentic_runtime_checkpoints');` | Understood (NULL = no-op drop) |
+| V2 | Counts by state | `SELECT state, COUNT(*) … GROUP BY state` | Volume expected |
+| V3 | In-flight rows | Rows where `state NOT IN ('completed','failed','cancelled')` | Empty **or** loss explicitly accepted |
+| V4 | UNKNOWN / BLOCKED | `state IN ('unknown','blocked')` | Reviewed / exported |
+| V5 | Linked ops sample | Rows with `operation_id` in executing/unknown/observing | Cross-checked if ops table exists |
+| V6 | Owner/tenant footprint | `GROUP BY owner_id, tenant_id` | Isolation sample OK |
+| V7 | Backup | `COPY (SELECT * FROM …) TO '…csv'` | File non-empty if `total_rows > 0` |
+
+Do **not** proceed with `DROP TABLE` until V3/V4 are acknowledged and V7 backup exists when the table holds data.
+
+Checklist is also embedded in `20260918200000_agentic_runtime_checkpoints.down.sql`.
+
 **After rollback:**
 
 ```sql
