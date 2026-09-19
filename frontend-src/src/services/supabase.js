@@ -57,19 +57,34 @@ export async function ensureSupabase() {
   return _initPromise;
 }
 
-/** Sync accessor — may be null until ensureSupabase() resolves. */
-export const supabase = _client;
+/**
+ * Live singleton accessor. Always returns current _client (may be null until
+ * ensureSupabase() completes). Never capture a stale snapshot at module load.
+ */
+export function getSupabaseClient() {
+  return _client;
+}
 
+/**
+ * Auth token resolution: Supabase session is authoritative when present.
+ * Only fall back to localStorage devos_token when no active Supabase session.
+ */
 export async function getToken() {
-  const local = localStorage.getItem("devos_token");
-  if (local) return local;
   const client = (await ensureSupabase()) || _client;
-  if (!client) return null;
+  if (client) {
+    try {
+      const {
+        data: { session },
+      } = await client.auth.getSession();
+      if (session?.access_token) {
+        return session.access_token;
+      }
+    } catch {
+      // fall through to local DevOS token
+    }
+  }
   try {
-    const {
-      data: { session },
-    } = await client.auth.getSession();
-    return session?.access_token || null;
+    return localStorage.getItem("devos_token") || null;
   } catch {
     return null;
   }
@@ -131,9 +146,10 @@ export async function verifyPhoneOtp(phone, token) {
 }
 
 export async function signOutSupabase() {
-  const client = (await ensureSupabase()) || _client;
+  const client = (await ensureSupabase()) || getSupabaseClient();
   if (!client) return { error: null };
-  return client.auth.signOut();
+  // Local scope only — do not attempt global/server-wide sign-out from the browser.
+  return client.auth.signOut({ scope: "local" });
 }
 
 export async function getSession() {

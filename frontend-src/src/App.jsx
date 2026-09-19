@@ -190,11 +190,15 @@ export default function App() {
   // Prefer Supabase SDK session events over manual hash parsing alone
   useEffect(() => {
     let unsub = () => {};
+    let cancelled = false;
     (async () => {
       try {
-        const { supabase } = await import("./services/supabase");
-        if (!supabase) return;
-        const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
+        const { ensureSupabase, getSupabaseClient } = await import("./services/supabase");
+        await ensureSupabase();
+        if (cancelled) return;
+        const client = getSupabaseClient();
+        if (!client) return;
+        const { data } = client.auth.onAuthStateChange(async (event, session) => {
           if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && session?.access_token) {
             try {
               const { syncSupabaseSession } = await import("./services/api");
@@ -213,10 +217,17 @@ export default function App() {
             setUser(null);
           }
         });
+        if (cancelled) {
+          data?.subscription?.unsubscribe?.();
+          return;
+        }
         unsub = () => data?.subscription?.unsubscribe?.();
       } catch (e) {}
     })();
-    return () => unsub();
+    return () => {
+      cancelled = true;
+      unsub();
+    };
   }, [setUser]);
 
 

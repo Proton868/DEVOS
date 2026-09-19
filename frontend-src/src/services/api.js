@@ -78,14 +78,16 @@ export function setToken(token) {
 // locally-authenticated user has no Supabase session anyway); otherwise
 // falls back to the current Supabase session's access token, if any.
 async function resolveAuthToken() {
-  const local = getToken();
-  if (local) return local;
+  // Supabase session is authoritative when present (see supabase.getToken).
+  // Local devos_token is only used when no active Supabase session exists.
   try {
     const { getToken: getSupabaseToken } = await import("./supabase");
-    return await getSupabaseToken();
+    const sb = await getSupabaseToken();
+    if (sb) return sb;
   } catch {
-    return null;
+    // fall through to local DevOS JWT
   }
+  return getToken() || null;
 }
 
 export async function login(username, password) {
@@ -153,8 +155,11 @@ export async function logout() {
     keys.forEach((k) => localStorage.removeItem(k));
   } catch {}
   try {
-    const { supabase } = await import("./supabase");
-    if (supabase) await supabase.auth.signOut();
+    const { getSupabaseClient, ensureSupabase, signOutSupabase } = await import("./supabase");
+    await ensureSupabase();
+    if (getSupabaseClient()) {
+      await signOutSupabase();
+    }
   } catch {}
 }
 
