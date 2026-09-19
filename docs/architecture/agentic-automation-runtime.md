@@ -588,3 +588,23 @@ pg = pytest.mark.skipif(
 **AGENT step completion:** `execute_agent_step_body` now calls `try_complete` / `CompletionContract` — workflow SUCCEEDED requires authoritative completion, not free-text claims.
 
 **Remaining limitations:** Full JobWorker multi-process claim under AGENT is partial without live worker pool; PG tests skip when `DATABASE_URL` is not Postgres.
+
+## LLM Planner (bounded, untrusted)
+
+```text
+LLM Planner
+    → Structured Plan (JSON schema)
+    → Agent Runtime (state machine)
+    → UCIP / CapabilitySubstrate
+    → Execution (ExecutionOperation / Job)
+    → Evidence
+    → CompletionContract
+```
+
+**The LLM is an untrusted planning component. It does not possess execution authority.**
+
+- Free-form text (including the word “done”) is not executable and cannot complete a mission.
+- Only structured actions (`capability_request`, `observe`, `complete`, `wait`, `block`, `fail`) are accepted.
+- Capability requests enter the existing `request_capability` path; the planner never invokes capabilities.
+- Provider failures and malformed output become governed `block`/`fail` decisions — no side effects.
+- Deterministic `default_planner` / `FakeLLMProvider` remain available for tests; CI does not call external models.

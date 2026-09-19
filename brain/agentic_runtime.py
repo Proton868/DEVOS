@@ -778,6 +778,16 @@ async def run_agent_turn(
 
     context = build_agent_context(task, cp)
     decision = planner(context)
+    # Untrusted planner output — re-validate structured contract
+    try:
+        from brain.agentic_llm_planner import parse_structured_plan, validate_plan_against_context, PlannerValidationError
+        _plan = parse_structured_plan(decision)
+        _plan = validate_plan_against_context(_plan, context)
+        decision = _plan.to_turn_decision()
+    except PlannerValidationError as _pve:
+        decision = TurnDecision(kind="block", reason=f"planner_invalid:{_pve}")
+    except Exception:
+        pass  # non-LLM TurnDecision path stays as-is when already valid
     # Bound plan size
     plan = decision.to_dict()
     plan_s = json.dumps(plan, default=str)
