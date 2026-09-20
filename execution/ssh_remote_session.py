@@ -126,9 +126,104 @@ class RemoteSshSession:
         for ws in dead:
             self.detach(ws)
 
+    async def handle_disconnect(self, reason: str = "network_loss") -> None:
+        """Surface DISCONNECTED to clients and mark transport dropped."""
+        from governance.ssh_reconnect import get_controller, DisconnectReason
+        self.transport.mark_dropped(self.transport_session.session_id, reason=reason)
+        ctrl = get_controller(self._session_key())
+        if self.transport_session.host_fingerprint:
+            ctrl.pinned_fingerprint = (
+                ctrl.pinned_fingerprint or self.transport_session.host_fingerprint
+            )
+        ctrl.mark_disconnected(reason)
+        await self.notify_state(
+            "DISCONNECTED",
+            reason=reason,
+            host_identity=self.host_evidence,
+        )
+
+    async def reconnect(
+        self,
+        *,
+        reason: str = "network_loss",
+        private_key_pem: Optional[str] = None,
+        password: Optional[str] = None,
+        passphrase: Optional[str] = None,
+        agent_forwarding: bool = False,
+        host_verify=None,
+        max_attempts: int = 5,
+        backoff_s: float = 0.05,
+    ):
+        """Live TCP reconnect for this interactive session.
+
+        Emits RECONNECTING then RECONNECTED or FAILED to attached clients.
+        Refuses success if host identity changed.
+        """
+        from execution.ssh_transport import SshConnectParams, SshHostVerifyFailed, SshTransportError
+        from governance.ssh_reconnect import SessionConnectionState
+
+        await self.notify_state("RECONNECTING", reason=reason)
+        params = SshConnectParams(
+            host=self.transport_session.host,
+            port=self.transport_session.port,
+            username=self.transport_session.username,
+            host_key_fingerprint=self.transport_session.host_fingerprint,
+            host_key_type=self.transport_session.host_key_type,
+        )
+        try:
+            sess = await self.transport.reconnect(
+                self.transport_session.session_id,
+                params,
+                private_key_pem=private_key_pem,
+                password=password,
+                passphrase=passphrase,
+                agent_forwarding=agent_forwarding,
+                host_verify=host_verify,
+                session_key=self._session_key(),
+                reason=reason,
+                max_attempts=max_attempts,
+                backoff_s=backoff_s,
+            )
+            self.transport_session = sess
+            # Refresh evidence fingerprint if present
+            if sess.host_fingerprint:
+                self.host_evidence = dict(self.host_evidence or {})
+                self.host_evidence["fingerprint_sha256"] = sess.host_fingerprint
+                self.host_evidence["key_type"] = sess.host_key_type
+            await self.notify_state(
+                "RECONNECTED",
+                reason=reason,
+                host_identity=self.host_evidence,
+            )
+            await self.notify_state(
+                "CONNECTED",
+                reason=reason,
+                host_identity=self.host_evidence,
+            )
+            return sess
+        except SshHostVerifyFailed as e:
+            await self.notify_state(
+                "FAILED",
+                reason="host_identity_changed",
+                error=e.code,
+                host_identity=self.host_evidence,
+            )
+            raise
+        except SshTransportError as e:
+            await self.notify_state(
+                "FAILED",
+                reason=reason,
+                error=e.code,
+                host_identity=self.host_evidence,
+            )
+            raise
+
     async def close(self) -> None:
+        from governance.ssh_reconnect import get_controller
         await self.transport.close(self.transport_session.session_id)
         self.transport_session.connected = False
+        get_controller(self._session_key()).mark_disconnected("session_closed")
+        await self.notify_state("DISCONNECTED", reason="session_closed")
 
 
 async def get_or_create_remote_session(
