@@ -358,3 +358,31 @@ Contract: `devos.incident.json` (version=1, declarative policies only)
 Not provided: second runtime/engine/evidence store, monitoring/alerting platform, auto-remediation, shell/network/infra control, planner-defined criteria.
 
 See `execution/project_incident.py` and `tests/test_agentic_incident.py` (AC-183..AC-220).
+
+
+## Full Lifecycle E2E Proof (P0–P7)
+
+Test module: `tests/test_agentic_runtime_e2e.py`
+
+```text
+CREATE → DEPLOY → OBSERVE → MAINTAIN → RE-OBSERVE → INCIDENT → RESOLUTION
+```
+
+| Gate | Phase | Artifact (pytest tmp `e2e_artifacts/`) |
+|------|--------|------------------------------------------|
+| P0 | CREATE | `create.json` |
+| P1 | DEPLOY | `deploy.json` |
+| P2 | OBSERVE | `observe.json` |
+| P3 | MAINTAIN | `maintain.json` |
+| P4 | RE-OBSERVE | `reobserve.json` |
+| P5 | INCIDENT | `incident.json` |
+| P6 | RESOLUTION | `resolution.json` |
+| P7 | FINAL AUDIT | `lifecycle.json` |
+
+Also: `cleanup.json` (teardown), `failure.json` (on injected failure).
+
+**Domain independence:** Task = agent/work · Operation = capability execution · Observation = system state · Incident = governed condition.
+
+Rules: Operation SUCCEEDED ≠ Observation HEALTHY; Observation HEALTHY ≠ Incident RESOLVED without criteria; Maintenance RESOLVED ≠ Incident RESOLVED without criteria.
+
+Failure injection covers CREATE→blocked DEPLOY, MAINTAIN FAILED (no false repair), HEALTHY→no maintain/incident, cross-owner isolation. Cleanup is fixture teardown (success and failure).
