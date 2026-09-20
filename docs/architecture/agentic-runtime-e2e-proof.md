@@ -150,5 +150,6 @@ Loop:
 | AC-13 | UNKNOWN remains unresolved | YES |
 | AC-14 | Idempotency remains governed | YES |
 | AC-15 | Idempotent repair replay is stable | YES |
+| AC-16 | Concurrent repair converges safely | YES |
 
 See `tests/test_agentic_build_repair.py`.

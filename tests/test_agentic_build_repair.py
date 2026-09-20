@@ -1,4 +1,4 @@
-"""Governed Agentic Build/Repair Loop — acceptance matrix AC-01..AC-15."""
+"""Governed Agentic Build/Repair Loop — acceptance matrix AC-01..AC-16."""
 from __future__ import annotations
 
 import asyncio
@@ -449,6 +449,83 @@ def test_ac15_idempotent_repair_replay_is_stable():
     assert (rec2.result or {}).get("digest") == after
 
     # Validation still trusted-success after idempotent replay
+    out = _run(execute_project_validate(_contract(), _validate_req()))
+    assert out["success"] is True
+    assert out["status"] == "passed"
+    assert out["evidence"]["success"] is True
+
+
+def test_ac16_concurrent_repair_converges():
+    """AC-16: Concurrency proof on the repair path.
+
+    Concurrent governed artifact.write calls with the same correct content must:
+    - leave a single correct final artifact (digest matches fixed content)
+    - not corrupt the file with partial/interleaved writes
+    - still pass trusted project.validate afterward
+
+    Concurrent writes from a different owner/project must not modify owner1's workspace.
+    """
+    fs = _seed_project(owner="owner1", project="proj1")
+    fixed = (FIXTURE / SOURCE_PATH).read_text().replace(BROKEN_SNIPPET, FIXED_SNIPPET)
+    expected_digest = content_hash(fixed.encode("utf-8"))
+    before = content_hash((fs.root / SOURCE_PATH).read_bytes())
+    assert before != expected_digest
+
+    t1 = delegate_agent_task(
+        owner_id="owner1",
+        requested_capabilities=CAPS,
+        task_input={"project_id": "proj1"},
+    )
+    t2 = delegate_agent_task(
+        owner_id="owner1",
+        requested_capabilities=CAPS,
+        task_input={"project_id": "proj1"},
+    )
+    # Cross-owner task — must not touch owner1/proj1
+    t_other = delegate_agent_task(
+        owner_id="owner2",
+        requested_capabilities=CAPS,
+        task_input={"project_id": "otherproj"},
+    )
+
+    async def _write(task, content):
+        return await request_capability(
+            task,
+            capability_id=CAP_ARTIFACT_WRITE,
+            inputs={"path": SOURCE_PATH, "content": content},
+            execute=True,
+        )
+
+    async def _burst():
+        return await asyncio.gather(
+            _write(t1, fixed),
+            _write(t2, fixed),
+            _write(t1, fixed),
+            _write(t_other, fixed),
+            return_exceptions=True,
+        )
+
+    results = _run(_burst())
+    # All same-owner writes should execute; other-owner has its own workspace
+    statuses = []
+    for r in results:
+        if isinstance(r, Exception):
+            statuses.append(f"exc:{type(r).__name__}")
+        else:
+            statuses.append(r.status)
+    assert statuses.count("executed") >= 3, statuses
+
+    final = (fs.root / SOURCE_PATH).read_text()
+    assert FIXED_SNIPPET in final
+    assert BROKEN_SNIPPET not in final
+    assert content_hash((fs.root / SOURCE_PATH).read_bytes()) == expected_digest
+
+    # owner2 workspace is separate — either empty of this path or has its own copy
+    fs2 = FileService("owner2", "otherproj")
+    if (fs2.root / SOURCE_PATH).exists():
+        # If other owner wrote, it must not have been into owner1's tree
+        assert fs2.root.resolve() != fs.root.resolve()
+
     out = _run(execute_project_validate(_contract(), _validate_req()))
     assert out["success"] is True
     assert out["status"] == "passed"
