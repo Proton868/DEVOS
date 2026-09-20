@@ -95,3 +95,22 @@ Family: `workspace.list`, `artifact.stat`, `artifact.read`, `artifact.write`, `a
 Invariant: Artifact capability ≠ filesystem access. Planner proposes; runtime validates; UCIP authorizes.
 
 See `execution/workspace_capabilities.py`.
+
+
+## project.validate
+
+Governed validation capability. Planner selects only an allowlisted **profile**:
+
+| Profile | Behavior |
+|---------|----------|
+| `structure` | Static workspace inspection via FileService (no process) |
+| `verify` | Structure + recognized project markers |
+| `test` | Existing runtime lifecycle `test` action (isolated) |
+
+```
+Agent → Catalog → Runtime → UCIP → Operation/Job → Runtime/Isolation → Evidence → Observation
+```
+
+Planner cannot supply: command, shell, argv, workspace_root, env, isolation, success/evidence forgeries.
+
+See `execution/project_validate.py`.
