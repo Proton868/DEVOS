@@ -973,10 +973,25 @@ def cancel_maintenance_request(
     *,
     actor: str = "owner",
     reason: str = "cancelled",
+    owner_id: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> dict:
     req = load_request(fs, mid)
     if not req:
         raise ProjectMaintainError("NOT_FOUND", mid)
+    if owner_id is not None or project_id is not None:
+        try:
+            require_owner_id(owner_id)
+            require_project_id(project_id)
+            assert_ownership_match(
+                expected_owner=str(req.get("owner_id") or ""),
+                actual_owner=owner_id,
+                expected_project=str(req.get("project_id") or ""),
+                actual_project=project_id,
+                resource="maintenance_request",
+            )
+        except SecurityPolicyError as e:
+            raise _policy(e) from e
     prev = req["status"]
     if prev in (REQ_RESOLVED, REQ_REJECTED, REQ_CANCELLED, REQ_FAILED):
         raise ProjectMaintainError("INVALID_TRANSITION", f"cannot cancel terminal {prev}")
@@ -1002,6 +1017,8 @@ def cancel_maintenance_request(
         "new_status": REQ_CANCELLED,
         "actor": actor,
         "reason": reason,
+        "owner_id": req.get("owner_id"),
+        "project_id": req.get("project_id"),
     })
     return req
 
@@ -1123,7 +1140,10 @@ async def execute_project_maintain(contract, req) -> dict:
     elif action == "reconcile":
         out = reconcile_maintenance_request(fs, mid)
     elif action == "cancel":
-        out = cancel_maintenance_request(fs, mid, actor=owner, reason=str(inputs.get("reason") or "cancelled"))
+        out = cancel_maintenance_request(
+            fs, mid, actor=owner, reason=str(inputs.get("reason") or "cancelled"),
+            owner_id=owner, project_id=project_id,
+        )
     elif action == "status":
         out = load_request(fs, mid) or {}
     else:

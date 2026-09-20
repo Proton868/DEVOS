@@ -723,10 +723,26 @@ def cancel_incident(
     *,
     actor: str = "owner",
     reason: str = "cancelled",
+    owner_id: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> dict:
     inc = load_incident(fs, iid)
     if not inc:
         raise ProjectIncidentError("NOT_FOUND", iid)
+    # Defense-in-depth: capability path always supplies identity
+    if owner_id is not None or project_id is not None:
+        try:
+            require_owner_id(owner_id)
+            require_project_id(project_id)
+            assert_ownership_match(
+                expected_owner=str(inc.get("owner_id") or ""),
+                actual_owner=owner_id,
+                expected_project=str(inc.get("project_id") or ""),
+                actual_project=project_id,
+                resource="incident",
+            )
+        except SecurityPolicyError as e:
+            raise _policy(e) from e
     prev = inc["status"]
     if not _can_transition(prev, INC_CANCELLED):
         raise ProjectIncidentError("INVALID_TRANSITION", f"cannot cancel from {prev}")
@@ -739,6 +755,8 @@ def cancel_incident(
         "new_status": INC_CANCELLED,
         "actor": actor,
         "reason": reason,
+        "owner_id": inc.get("owner_id"),
+        "project_id": inc.get("project_id"),
     })
     return inc
 
@@ -846,7 +864,13 @@ async def execute_project_incident(contract, req) -> dict:
             maintenance_request_status=inputs.get("maintenance_request_status"),
         )
     elif action == "cancel":
-        out = cancel_incident(fs, iid, actor=owner, reason=str(inputs.get("reason") or "cancelled"))
+        out = cancel_incident(
+            fs, iid,
+            actor=owner,
+            reason=str(inputs.get("reason") or "cancelled"),
+            owner_id=owner,
+            project_id=project_id,
+        )
     elif action == "reconcile":
         out = reconcile_incident(fs, iid)
     elif action == "status":

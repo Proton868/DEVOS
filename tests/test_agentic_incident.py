@@ -500,6 +500,22 @@ def test_reobservation_unhealthy_keeps_incident_open_after_op_success():
         )
 
 
+def test_cross_owner_cancel_denied():
+    """Adversarial: other owner cannot cancel incident when identity is enforced."""
+    from execution.project_incident import cancel_incident
+    fs = _fs()
+    _seed_incident_contract(fs)
+    inc = _detect(fs)
+    assess_incident(fs, inc["incident_id"])
+    with pytest.raises(ProjectIncidentError):
+        cancel_incident(
+            fs, inc["incident_id"],
+            actor="intruder",
+            owner_id="intruder",
+            project_id="proj1",
+        )
+
+
 def test_migration_exists():
     root = Path(__file__).resolve().parents[1]
     mig = root / "supabase" / "migrations" / "20260920050000_incidents.sql"
