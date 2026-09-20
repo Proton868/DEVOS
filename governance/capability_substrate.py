@@ -139,6 +139,8 @@ class InvocationContext:
     trust_level: Optional[str] = None
     # Explicitly forbid client-elevated authority markers
     client_supplied_grants: bool = False
+    # Trusted server-side metadata only (e.g. project_id). Never from planner authority.
+    metadata: dict = field(default_factory=dict)
 
     def effective_grants(self) -> set[str]:
         if self.client_supplied_grants:

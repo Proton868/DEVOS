@@ -456,6 +456,9 @@ async def request_capability(
 
     sub = get_capability_substrate()
     # Grant only the delegated capability set for this task
+    # project_id from task_input only (server-bound), never planner workspace_root
+    _ti = dict(task.task_input or {})
+    _project = str(_ti.get("project_id") or _ti.get("workspace_id") or "default")
     ctx = InvocationContext(
         tenant_id=str(task.tenant_id or ""),
         owner_id=task.owner_id,
@@ -465,6 +468,7 @@ async def request_capability(
         surface="automation",
         correlation_id=task.parent_run_id or task.task_id,
         client_supplied_grants=False,
+        metadata={"project_id": _project},
     )
     req = InvocationRequest(
         capability_id=cid,

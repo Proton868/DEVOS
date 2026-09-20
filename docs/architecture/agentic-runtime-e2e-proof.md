@@ -75,3 +75,23 @@ Invariants:
   UCIP authorizes. Operation/Job records. Isolation constrains. Evidence proves.
 
 See `governance/capability_catalog.py`.
+
+
+## Workspace & Artifact Capabilities
+
+Family: `workspace.list`, `artifact.stat`, `artifact.read`, `artifact.write`, `artifact.delete`
+
+| Concern | Policy |
+|---------|--------|
+| Workspace identity | From trusted task context (`owner_id` + `project_id` metadata) |
+| Paths | Relative only; no absolute, `..`, encoded traversal, null bytes |
+| Symlinks | Fail-closed (read/write/delete refused) |
+| Size limits | Hard ceilings on list/read/write |
+| Secrets | `.env` / key-like paths: content denied |
+| Digests | SHA-256 computed by trusted implementation |
+| Concurrency | `expected_digest` precondition → CONFLICT |
+| Consequential | write/delete remain UCIP + Operation/Job path |
+
+Invariant: Artifact capability ≠ filesystem access. Planner proposes; runtime validates; UCIP authorizes.
+
+See `execution/workspace_capabilities.py`.
