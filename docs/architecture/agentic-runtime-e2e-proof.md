@@ -262,3 +262,25 @@ Lifecycle: CREATE…VERIFY complete · **DEPLOY complete** · OBSERVE/MAINTAIN n
 AC-71 UNKNOWN: crash after deploy side effect / before terminal cannot become COMPLETED; auto_retry remains false.
 
 See `execution/project_deploy.py` and `tests/test_agentic_deploy.py` (AC-49..AC-80).
+
+
+## Governed Project Observe Proof
+
+Capability: `project.observe` (profile=`observe`, read-only)
+
+**Three domains (independent):**
+- Task status — agentic completion gate
+- Operation status — capability execution (SUCCEEDED may accompany UNHEALTHY observation)
+- Observation status — NOT_OBSERVED | OBSERVING | OBSERVED | UNHEALTHY | UNREADY | DEGRADED | UNAVAILABLE | FAILED
+
+Contract: `devos.observe.json` (version=1, declarative checks only)
+
+Allowed check kinds: runtime_state, readiness, health, artifact_identity, deployment_identity
+
+Session-mode honesty: no fabricated live HEALTHY/READY process health.
+
+Not provided: shell, network probes, log scraping, metrics, alerts, remediation, infrastructure.
+
+Lifecycle: CREATE…DEPLOY complete · **OBSERVE complete** · MAINTAIN next
+
+See `execution/project_observe.py` and `tests/test_agentic_observe.py` (AC-81..AC-120).

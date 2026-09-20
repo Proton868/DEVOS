@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "profile": "observe",
+  "checks": [
+    {
+      "id": "runtime",
+      "kind": "runtime_state",
+      "required": true
+    },
+    {
+      "id": "readiness",
+      "kind": "readiness",
+      "required": true
+    },
+    {
+      "id": "health",
+      "kind": "health",
+      "required": true
+    },
+    {
+      "id": "artifact",
+      "kind": "artifact_identity",
+      "required": true
+    },
+    {
+      "id": "deployment",
+      "kind": "deployment_identity",
+      "required": true
+    }
+  ]
+}
