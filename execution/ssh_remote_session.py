@@ -1,0 +1,129 @@
+"""Remote SSH interactive session attached to DevOS terminal WebSocket protocol.
+
+Protocol compatible with local PtySession clients:
+  client → {type: input|resize|...}
+  server → {type: data|status|error|host_identity}
+
+Sessions are labeled mode=remote_ssh so the UI can distinguish LOCAL vs REMOTE.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any, Optional
+
+from execution.ssh_transport import SshTransportService, MockSshBackend, TransportSession
+
+logger = logging.getLogger("devos.ssh_remote_session")
+
+# (user_id, connection_id) → RemoteSshSession
+_SESSIONS: dict[tuple[str, str], "RemoteSshSession"] = {}
+
+
+class RemoteSshSession:
+    def __init__(
+        self,
+        user_id: str,
+        connection_id: str,
+        transport_session: TransportSession,
+        host_evidence: dict,
+        transport: SshTransportService,
+    ):
+        self.user_id = user_id
+        self.connection_id = connection_id
+        self.transport_session = transport_session
+        self.host_evidence = host_evidence
+        self.transport = transport
+        self.mode = "remote_ssh"
+        self._clients: list = []
+        self._scrollback: bytearray = bytearray()
+        self._pty: Any = None
+
+    def attach(self, websocket) -> None:
+        self._clients.append(websocket)
+
+    def detach(self, websocket) -> None:
+        if websocket in self._clients:
+            self._clients.remove(websocket)
+
+    async def send_status(self, websocket) -> None:
+        await websocket.send_json({
+            "type": "status",
+            "mode": "remote_ssh",
+            "connection_id": self.connection_id,
+            "session_id": self.transport_session.session_id,
+            "connected": self.transport_session.connected,
+            "host_identity": self.host_evidence,
+        })
+
+    async def write(self, data: bytes) -> None:
+        # Mock/path: echo to clients for interactive tests without real PTY
+        if self._pty is None:
+            # Store and broadcast as if remote echoed (test backend)
+            text = data
+            self._scrollback.extend(text)
+            await self._broadcast(text)
+            return
+        # Real asyncssh process would write to stdin
+        try:
+            self._pty.stdin.write(data)
+        except Exception as e:
+            logger.warning("ssh_remote_write_failed: %s", type(e).__name__)
+
+    async def resize(self, cols: int, rows: int) -> None:
+        if self._pty is not None and hasattr(self._pty, "change_terminal_size"):
+            try:
+                self._pty.change_terminal_size(cols, rows)
+            except Exception:
+                pass
+
+    async def _broadcast(self, data: bytes) -> None:
+        msg = {"type": "data", "data": data.decode("utf-8", errors="replace"), "mode": "remote_ssh"}
+        dead = []
+        for ws in self._clients:
+            try:
+                await ws.send_json(msg)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.detach(ws)
+
+    async def close(self) -> None:
+        await self.transport.close(self.transport_session.session_id)
+        self.transport_session.connected = False
+
+
+async def get_or_create_remote_session(
+    user_id: str,
+    connection_id: str,
+    *,
+    actor: str = "user",
+    auto_approve_new: bool = False,
+    transport: Optional[SshTransportService] = None,
+) -> RemoteSshSession:
+    key = (user_id, connection_id)
+    if key in _SESSIONS and _SESSIONS[key].transport_session.connected:
+        return _SESSIONS[key]
+
+    from execution.ssh_capabilities import SSHConnectionCapability
+
+    transport = transport or SshTransportService(backend=MockSshBackend())
+    cap = SSHConnectionCapability(owner_id=user_id, transport=transport)
+    ts, verify = await cap.connect(
+        connection_id=connection_id,
+        actor=actor,
+        auto_approve_new=auto_approve_new,
+    )
+    sess = RemoteSshSession(
+        user_id=user_id,
+        connection_id=connection_id,
+        transport_session=ts,
+        host_evidence=verify.to_evidence(),
+        transport=transport,
+    )
+    _SESSIONS[key] = sess
+    return sess
+
+
+def clear_remote_sessions_for_tests() -> None:
+    _SESSIONS.clear()
