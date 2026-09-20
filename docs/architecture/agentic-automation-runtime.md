@@ -613,3 +613,25 @@ LLM Planner
 
 - **Local (CI-safe):** `run_local_planner_smoke()` uses `FakeLLMProvider` — no network.
 - **Optional live:** set `DEVOS_LLM_SMOKE=1` to exercise `BrainLLMProvider` schema validation only (no consequential execution in the smoke test).
+
+## Real LLM Consequential Execution Proof
+
+```text
+Real LLM
+  → StructuredPlan
+  → AgentRuntime
+  → UCIP / CapabilitySubstrate
+  → ExecutionOperation
+  → ExecutionJob (when queue available)
+  → Governed capability (devos.test.create_artifact)
+  → Evidence
+  → Observation
+  → Real LLM (next turn)
+  → CompletionContract
+```
+
+**Proven (when `DEVOS_LLM_CONSEQUENTIAL_E2E=1` and provider configured):** real provider reaches one governed consequential capability through the production planner/runtime path.
+
+**Deterministic regression:** FakeLLM / local smoke cover schema, denial, and scrubbing without network.
+
+**Optional:** live provider remains separately gated — normal CI never requires external LLM credentials.
