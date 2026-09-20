@@ -114,3 +114,40 @@ Agent → Catalog → Runtime → UCIP → Operation/Job → Runtime/Isolation �
 Planner cannot supply: command, shell, argv, workspace_root, env, isolation, success/evidence forgeries.
 
 See `execution/project_validate.py`.
+
+
+## Governed Agentic Build/Repair Proof
+
+Fixture: `tests/fixtures/agentic_repair_project/`
+
+Initial defect: `src/calculator.js` returns `a - b` while tests expect addition.
+Content contract: `devos.validate.json` requires `return a + b` and forbids `return a - b`.
+
+Loop:
+
+1. `artifact.read` — observe defect through governed path
+2. `project.validate` profile=`test` — trusted **failure**
+3. `artifact.write` — bounded repair (`return a + b`)
+4. `project.validate` profile=`test` — trusted **success**
+5. Completion gate — only after evidence
+
+### Acceptance matrix
+
+| ID | Acceptance | Required |
+|----|------------|----------|
+| AC-01 | Initial defect produces trusted failure | YES |
+| AC-02 | Agent reads through artifact capability | YES |
+| AC-03 | Repair uses bounded artifact.write | YES |
+| AC-04 | Artifact digest changes | YES |
+| AC-05 | Agent validates after repair | YES |
+| AC-06 | Result comes from trusted validator | YES |
+| AC-07 | Failure forces another turn | YES |
+| AC-08 | Second validation succeeds | YES |
+| AC-09 | Completion requires proof | YES |
+| AC-10 | Premature completion rejected | YES |
+| AC-11 | No shell bypass | YES |
+| AC-12 | Identity remains trusted | YES |
+| AC-13 | UNKNOWN remains unresolved | YES |
+| AC-14 | Idempotency remains governed | YES |
+
+See `tests/test_agentic_build_repair.py`.

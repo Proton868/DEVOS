@@ -137,10 +137,93 @@ def _verify_validate(fs: FileService) -> dict:
     }
 
 
+def _content_contract_validate(fs: FileService) -> Optional[dict]:
+    """Bounded content-contract validator (no process execution).
+
+    If the project contains ``devos.validate.json`` with explicit checks, apply them.
+    Schema (allowlisted only):
+      {"checks": [{"path": "rel/path", "must_contain": "...", "must_not_contain": "..."}]}
+    """
+    contract_path = "devos.validate.json"
+    try:
+        p = fs._resolve(contract_path)
+    except PathViolation:
+        return None
+    if not p.is_file():
+        return None
+    import json
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {
+            "success": False,
+            "status": "failed",
+            "profile": PROFILE_TEST,
+            "diagnostics": {"summary": f"invalid devos.validate.json: {e}", "mode": "content_contract"},
+            "isolation": {"required": False, "actual": "none_required", "policy": "content_contract"},
+            "exit_code": 1,
+        }
+    checks = data.get("checks") if isinstance(data, dict) else None
+    if not isinstance(checks, list) or not checks:
+        return {
+            "success": False,
+            "status": "failed",
+            "profile": PROFILE_TEST,
+            "diagnostics": {"summary": "devos.validate.json has no checks", "mode": "content_contract"},
+            "isolation": {"required": False, "actual": "none_required", "policy": "content_contract"},
+            "exit_code": 1,
+        }
+    failures = []
+    for i, chk in enumerate(checks[:20]):
+        if not isinstance(chk, dict):
+            failures.append(f"check[{i}]: invalid")
+            continue
+        rel = str(chk.get("path") or "").replace("\\", "/").lstrip("/")
+        if not rel or ".." in rel.split("/"):
+            failures.append(f"check[{i}]: bad path")
+            continue
+        try:
+            target = fs._resolve(rel)
+        except PathViolation:
+            failures.append(f"check[{i}]: path violation")
+            continue
+        if not target.is_file():
+            failures.append(f"check[{i}]: missing {rel}")
+            continue
+        try:
+            text = target.read_text(encoding="utf-8")
+        except Exception:
+            failures.append(f"check[{i}]: unreadable {rel}")
+            continue
+        must = chk.get("must_contain")
+        must_not = chk.get("must_not_contain")
+        if must is not None and str(must) not in text:
+            failures.append(f"check[{i}]: missing required content in {rel}")
+        if must_not is not None and str(must_not) in text:
+            failures.append(f"check[{i}]: forbidden content present in {rel}")
+    ok = not failures
+    return {
+        "success": ok,
+        "status": "passed" if ok else "failed",
+        "profile": PROFILE_TEST,
+        "diagnostics": {
+            "summary": "content contract passed" if ok else "; ".join(failures[:8]),
+            "mode": "content_contract",
+            "failures": failures[:12],
+        },
+        "isolation": {"required": False, "actual": "none_required", "policy": "content_contract"},
+        "exit_code": 0 if ok else 1,
+    }
+
+
 async def _test_validate(user_id: str, project_id: str) -> dict:
-    """Delegate to existing runtime lifecycle test action (isolated)."""
+    """Canonical test profile: content-contract when present, else isolated runtime tests."""
+    fs = FileService(user_id, project_id)
+    contract_result = _content_contract_validate(fs)
+    if contract_result is not None:
+        return contract_result
+
     from execution.runtime_service import run_lifecycle_action
-    from execution.app_runtime import AppRuntimeState
 
     t0 = time.perf_counter()
     try:
@@ -157,7 +240,6 @@ async def _test_validate(user_id: str, project_id: str) -> dict:
     if exit_code is None:
         exit_code = 0 if state in ("READY", "ready") else 1
     success = state in ("READY", "ready") and int(exit_code) == 0
-    # Isolation evidence from runtime when present
     isolation = evidence.get("isolation") or {
         "required": True,
         "actual": evidence.get("isolation_mode") or "runtime_managed",
@@ -173,6 +255,7 @@ async def _test_validate(user_id: str, project_id: str) -> dict:
             "health": snap.health,
             "log_tail": _bound(snap.logs_tail or "", 1500),
             "detection_kind": (snap.detection or {}).get("kind"),
+            "mode": "runtime_test",
         },
         "isolation": isolation if isinstance(isolation, dict) else {"actual": str(isolation)},
         "exit_code": int(exit_code),

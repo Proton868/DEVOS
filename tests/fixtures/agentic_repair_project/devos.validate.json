@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "path": "src/calculator.js",
+      "must_contain": "return a + b",
+      "must_not_contain": "return a - b"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "agentic-repair-project",
+  "private": true,
+  "scripts": {
+    "test": "node tests/test_calculator.js"
+  }
+}
