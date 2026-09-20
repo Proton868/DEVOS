@@ -234,3 +234,29 @@ build → preview → project.verify → application checks → evidence → VER
 - Durable `.devos/verify_result.json`
 
 See `execution/project_verify.py` and `tests/test_agentic_verify.py` (AC-25..AC-48).
+
+
+## Governed Project Deploy Proof
+
+Capability: `project.deploy` (profile=`deploy`)
+
+**SCOPE GATE:** Deploy manages a **bounded deployment target** only.
+Not responsible for cloud/DNS/TLS/K8s/Terraform/IAM/autoscaling/CDN/billing.
+
+Supported:
+- target_type: `managed_session`
+- environment: `preview`
+
+```
+build → preview → verify → project.deploy → deployment identity → evidence → DEPLOYED
+```
+
+- Verified artifact binding + immutability (ARTIFACT_MISMATCH)
+- Idempotent same artifact/target
+- No destructive auto-replace of active different-artifact deployment
+- Shared `governance/security_policy.py`
+- No fake external endpoints
+
+Lifecycle: CREATE…VERIFY complete · **DEPLOY complete** · OBSERVE/MAINTAIN not implemented
+
+See `execution/project_deploy.py` and `tests/test_agentic_deploy.py` (AC-49..AC-80).
