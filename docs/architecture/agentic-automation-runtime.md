@@ -691,6 +691,42 @@ pg = pytest.mark.skipif(
 
 **Remaining limitations:** Full JobWorker multi-process claim under AGENT is partial without live worker pool; PG tests skip when `DATABASE_URL` is not Postgres.
 
+
+## Planner Authority Boundary (invariant)
+
+> **The planner is untrusted reasoning input. The runtime, UCIP, authorization, execution ledger, isolation layer, and evidence substrate remain authoritative.**
+
+```
+Nuha/planner proposes
+  → Runtime validates
+  → UCIP authorizes
+  → Operation/Job executes
+  → Isolation constrains
+  → Evidence proves
+  → Runtime decides completion
+```
+
+### Adapters
+
+| Adapter | Role |
+|---------|------|
+| Deterministic `default_planner` | CI / no-network path |
+| `FakeLLMProvider` + `make_llm_planner` | Deterministic LLM-shaped output |
+| `BrainLLMProvider` + `make_llm_planner` | Conditional real-LLM (credentials required) |
+
+### Fallback
+
+Provider errors may optionally invoke a deterministic fallback **only** when
+`fallback_on_provider_error=True` and a fallback planner is supplied.
+Validation failures never auto-execute capabilities.
+
+### Security (required CI)
+
+See `tests/test_agentic_llm_planner_security.py` — planner cannot execute,
+bypass UCIP, forge operations/evidence/completion, alter owner/tenant/limits,
+or leak secrets.
+
+
 ## LLM Planner (bounded, untrusted)
 
 ```text

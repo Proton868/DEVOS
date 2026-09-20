@@ -36,7 +36,16 @@ FORBIDDEN_CAPABILITY_PREFIXES = (
     "python:", "exec:", "eval:", "grant:", "auth:", "secret:",
 )
 
+FORBIDDEN_PLAN_KEYS = frozenset({
+    "owner_id", "tenant_id", "user_id", "grants", "granted_capabilities",
+    "isolation", "isolation_strength", "retry", "retry_policy",
+    "max_turns", "max_capabilities", "timeout", "timeout_s",
+    "operation_id", "job_id", "evidence", "evidence_refs",
+    "authorization", "bypass_ucip", "bypass_isolation",
+})
+
 FORBIDDEN_INPUT_KEYS = frozenset({
+
     "grant", "grants", "authorization", "authority", "token", "api_key",
     "password", "secret", "credentials", "service_role", "jwt",
 })
@@ -145,6 +154,14 @@ def parse_structured_plan(raw: Any) -> StructuredPlan:
         raise PlannerValidationError("missing_action_type")
     if action_type not in ALLOWED_ACTION_TYPES:
         raise PlannerValidationError(f"unknown_action:{action_type}")
+
+    # Security-sensitive fields on the plan object are rejected (not ignored)
+    for src in (data, action):
+        if not isinstance(src, dict):
+            continue
+        for k in src.keys():
+            if str(k).lower() in FORBIDDEN_PLAN_KEYS:
+                raise PlannerValidationError(f"forbidden_plan_key:{k}")
 
     # Reject shell/code as action
     for bad in ("shell", "subprocess", "exec", "eval", "http", "fetch"):
@@ -338,33 +355,110 @@ Rules:
 """
 
 
+def classify_provider_error(exc: BaseException) -> str:
+    """Map provider failures to stable reason codes (no execution)."""
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    if "timeout" in name or "timeout" in msg:
+        return "planner_timeout"
+    if "rate" in msg or "429" in msg:
+        return "planner_rate_limited"
+    if "connection" in name or "connect" in msg or "network" in msg:
+        return "planner_connection_error"
+    if "context" in msg and ("large" in msg or "length" in msg or "token" in msg):
+        return "planner_context_too_large"
+    if "empty" in msg:
+        return "planner_empty_response"
+    return f"planner_provider_error:{type(exc).__name__}"
+
+
 def make_llm_planner(
     provider: LLMProvider,
     *,
     on_invalid: str = "block",
+    fallback: Optional[Callable[[dict], TurnDecision]] = None,
+    fallback_on_provider_error: bool = False,
+    planner_meta: Optional[dict] = None,
 ) -> Callable[[dict], TurnDecision]:
-    """Return a PlannerFn that uses the provider. Output is untrusted."""
+    """Return a PlannerFn that uses the provider. Output is untrusted.
+
+    Parameters
+    ----------
+    on_invalid:
+        "block" | "fail" when structured validation fails.
+    fallback:
+        Optional deterministic planner used only when fallback_on_provider_error
+        is True and the provider raises. Validation failures never execute
+        capabilities via fallback unless the fallback itself is invoked
+        explicitly by policy.
+    fallback_on_provider_error:
+        When True and provider.complete raises, call fallback(context) if set;
+        otherwise return block/fail. Never auto-executes capabilities.
+    planner_meta:
+        Non-secret metadata (planner_type, provider, model) attached to the
+        decision reason for durability — not authority.
+    """
+    meta = dict(planner_meta or {})
+    meta.setdefault("planner_type", "llm")
+
+    def _annotate(decision: TurnDecision) -> TurnDecision:
+        # Bound metadata into reason only — never authority fields
+        tag = meta.get("planner_type") or "llm"
+        if meta.get("provider"):
+            tag = f"{tag}:{meta.get('provider')}"
+        if meta.get("model"):
+            tag = f"{tag}:{meta.get('model')}"
+        if decision.reason:
+            decision.reason = _bound_str(f"{decision.reason}|planner={tag}", 500)
+        else:
+            decision.reason = _bound_str(f"planner={tag}", 500)
+        return decision
 
     def planner(context: dict) -> TurnDecision:
         ctx = build_planner_context(context)
-        user = json.dumps(ctx, default=str, sort_keys=True)
-        try:
-            raw = provider.complete(PLANNER_SYSTEM, user)
-        except Exception as e:
-            logger.warning("planner_provider_failed: %s", type(e).__name__)
-            return TurnDecision(
+        # Enforce context bound again at adapter boundary
+        raw_ctx = json.dumps(ctx, default=str, sort_keys=True)
+        if len(raw_ctx) > MAX_PLANNER_CONTEXT_CHARS:
+            return _annotate(TurnDecision(
                 kind="block",
-                reason=f"planner_provider_error:{type(e).__name__}",
-            )
+                reason="planner_context_too_large",
+            ))
+        try:
+            raw = provider.complete(PLANNER_SYSTEM, raw_ctx)
+        except Exception as e:
+            code = classify_provider_error(e)
+            logger.warning("planner_provider_failed: %s", code)
+            if fallback_on_provider_error and fallback is not None:
+                logger.info("planner_fallback_to_deterministic policy=provider_error")
+                try:
+                    return _annotate(fallback(context))
+                except Exception as fe:
+                    return _annotate(TurnDecision(
+                        kind="fail",
+                        reason=f"planner_fallback_error:{type(fe).__name__}",
+                    ))
+            kind = "fail" if on_invalid == "fail" else "block"
+            return _annotate(TurnDecision(kind=kind, reason=code))
+
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            return _annotate(TurnDecision(
+                kind="block",
+                reason="planner_empty_response",
+            ))
+        if isinstance(raw, str) and len(raw) > MAX_INPUT_JSON_CHARS * 4:
+            return _annotate(TurnDecision(
+                kind="block",
+                reason="planner_output_too_large",
+            ))
         try:
             plan = parse_structured_plan(raw)
             plan = validate_plan_against_context(plan, context)
-            return plan.to_turn_decision()
+            return _annotate(plan.to_turn_decision())
         except PlannerValidationError as e:
             logger.info("planner_validation_failed: %s", e)
             if on_invalid == "fail":
-                return TurnDecision(kind="fail", reason=f"planner_invalid:{e}")
-            return TurnDecision(kind="block", reason=f"planner_invalid:{e}")
+                return _annotate(TurnDecision(kind="fail", reason=f"planner_invalid:{e}"))
+            return _annotate(TurnDecision(kind="block", reason=f"planner_invalid:{e}"))
 
     return planner
 
