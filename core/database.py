@@ -1194,8 +1194,161 @@ class AutomationRunRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
 
+
+class SshHostIdentity(Base):
+    """Canonical remote host identity (hostname/IP), separate from user labels."""
+    __tablename__ = "ssh_host_identities"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    owner_id: Mapped[str] = mapped_column(String, index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    hostname: Mapped[str] = mapped_column(String(255))  # DNS name or IP literal
+    port: Mapped[int] = mapped_column(Integer, default=22)
+    # Normalized key for uniqueness: lower(hostname)|port
+    host_key: Mapped[str] = mapped_column(String(300), index=True)
+    metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class SshCredentialRef(Base):
+    """SSH credential handle — references secrets table; never stores key material.
+
+    public_metadata may include key type, fingerprint of *public* key, has_passphrase.
+    Private key / password / passphrase live only in secrets.encrypted_value.
+    """
+    __tablename__ = "ssh_credential_refs"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    owner_id: Mapped[str] = mapped_column(String, index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    name: Mapped[str] = mapped_column(String(128))
+    auth_method: Mapped[str] = mapped_column(String(32))  # private_key | password | agent_forwarding
+    # FK-style reference to secrets.id (encrypted material)
+    secret_id: Mapped[str] = mapped_column(String, index=True)
+    # Optional separate secret for key passphrase
+    passphrase_secret_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Non-sensitive metadata only (key_type, public_fingerprint, comment)
+    public_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class SshKnownHost(Base):
+    """Pinned host key fingerprints for TOFU / verify-strict policies."""
+    __tablename__ = "ssh_known_hosts"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    owner_id: Mapped[str] = mapped_column(String, index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    host_identity_id: Mapped[str] = mapped_column(String, index=True)
+    key_type: Mapped[str] = mapped_column(String(32))  # ssh-ed25519, ssh-rsa, ...
+    fingerprint_sha256: Mapped[str] = mapped_column(String(128))
+    public_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # public only
+    trust_state: Mapped[str] = mapped_column(String(32), default="pinned")  # pinned|tofu|revoked
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class SshConnection(Base):
+    """User-facing SSH connection profile. Owner-scoped; credentials by reference only."""
+    __tablename__ = "ssh_connections"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    owner_id: Mapped[str] = mapped_column(String, index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    workspace_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    label: Mapped[str] = mapped_column(String(256), default="")
+    host_identity_id: Mapped[str] = mapped_column(String, index=True)
+    username: Mapped[str] = mapped_column(String(128))
+    auth_method: Mapped[str] = mapped_column(String(32), default="private_key")
+    credential_ref_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    agent_forwarding: Mapped[bool] = mapped_column(Boolean, default=False)
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    health_status: Mapped[str] = mapped_column(String(32), default="unknown")  # unknown|healthy|degraded|unreachable
+    last_health_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # redacted messages only
+    metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class SshSession(Base):
+    """SSH session record. Never stores private key material."""
+    __tablename__ = "ssh_sessions"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    owner_id: Mapped[str] = mapped_column(String, index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    connection_id: Mapped[str] = mapped_column(String, index=True)
+    host_identity_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    # pending|connecting|active|idle|closed|failed|cancelled
+    mode: Mapped[str] = mapped_column(String(32), default="interactive")  # interactive|exec|sftp
+    actor_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    remote_username: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    client_info: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_activity_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    close_reason: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    evidence_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class SshExecutionRecord(Base):
+    """Remote command execution record (stdout/stderr by reference, not inline secrets)."""
+    __tablename__ = "ssh_execution_records"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    owner_id: Mapped[str] = mapped_column(String, index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    connection_id: Mapped[str] = mapped_column(String, index=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    operation_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    job_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    actor_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Command text as intended (may be redacted for display); never attach secrets
+    command: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    # queued|running|succeeded|failed|cancelled|unknown
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    exit_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    stdout_ref: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # artifact/evidence id
+    stderr_ref: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    evidence_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class SshFileTransferJob(Base):
+    """SFTP upload/download job metadata — paths only, no file contents or keys."""
+    __tablename__ = "ssh_file_transfer_jobs"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
+    owner_id: Mapped[str] = mapped_column(String, index=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    connection_id: Mapped[str] = mapped_column(String, index=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    direction: Mapped[str] = mapped_column(String(16))  # upload|download
+    local_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    remote_path: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    bytes_transferred: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    evidence_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
 class EvidenceRecord(Base):
     __tablename__ = "evidence_records"
+
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_id)
     owner_id: Mapped[str] = mapped_column(String, index=True)
