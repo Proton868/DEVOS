@@ -597,6 +597,19 @@ async def governed_transfer(req: TransferRequest) -> TransferResult:
             pass
 
         _CANCEL.discard(tid)
+        try:
+            from governance.structured_audit import audit_ssh_transfer
+            audit_ssh_transfer(
+                actor_id=req.owner_id or req.actor,
+                connection_id=req.connection_id,
+                op=req.op.value,
+                status="succeeded",
+                transfer_id=tid,
+                remote_path=remote,
+                bytes_transferred=nbytes,
+            )
+        except Exception:
+            pass
         return TransferResult(
             transfer_id=tid, op=req.op.value, status="succeeded",
             remote_path=remote, local_path=local_out,

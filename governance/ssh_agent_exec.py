@@ -293,6 +293,22 @@ async def governed_ssh_exec(
         )
     except Exception:
         pass
+
+    try:
+        from governance.structured_audit import audit_ssh_exec
+        audit_ssh_exec(
+            actor_id=req.owner_id or req.actor,
+            connection_id=req.host_id,
+            command=policy.sanitized_command,
+            status=status,
+            risk_class=policy.risk_class.value,
+            evidence_id=evidence_id,
+            host_identity=host_identity,
+            duration_ms=duration_ms,
+        )
+    except Exception:
+        pass
+
     return evidence
 
 

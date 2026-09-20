@@ -66,6 +66,15 @@ def request_cancel(job_id: str, *, reason: str = "user_cancelled") -> bool:
         job["at"] = datetime.now(timezone.utc).isoformat()
         job["phase"] = "cancelling"
         logger.info("ssh_cancel_requested job_id=%s reason=%s", job_id, reason)
+        try:
+            from governance.structured_audit import audit_ssh_cancel
+            audit_ssh_cancel(
+                actor_id=job.get("owner_id") or "",
+                job_id=job_id,
+                reason=reason,
+            )
+        except Exception:
+            pass
         return True
 
 

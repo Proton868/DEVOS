@@ -215,7 +215,7 @@ async def run_diagnostic(
 
     stdout = scrub_ssh_secrets_from_text(ev.stdout_sanitized or "")
     structured = _parse(capability, stdout) if status == "succeeded" else {}
-    return DiagnosticResult(
+    result = DiagnosticResult(
         capability=capability.value,
         status=status,
         structured=structured,
@@ -226,6 +226,19 @@ async def run_diagnostic(
         duration_ms=ev.duration_ms,
         stdout_preview=stdout[:2000],
     )
+    try:
+        from governance.structured_audit import audit_ssh_diagnostic
+        audit_ssh_diagnostic(
+            actor_id=owner_id or actor,
+            connection_id=connection_id,
+            capability=capability.value,
+            status=status,
+            evidence_id=ev.evidence_id,
+            duration_ms=ev.duration_ms,
+        )
+    except Exception:
+        pass
+    return result
 
 
 def list_diagnostic_capabilities() -> list[str]:

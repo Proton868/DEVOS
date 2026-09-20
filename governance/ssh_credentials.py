@@ -170,6 +170,16 @@ def _audit(event: str, **fields: Any) -> None:
         event,
         " ".join(f"{k}={v}" for k, v in safe.items() if v is not None),
     )
+    try:
+        from governance.structured_audit import audit_ssh_credential_access
+        audit_ssh_credential_access(
+            actor_id=str(fields.get("actor") or fields.get("actor_id") or ""),
+            credential_ref_id=str(fields.get("credential_ref_id") or fields.get("ref_id") or ""),
+            result=str(event),
+        )
+    except Exception:
+        pass
+
 
 
 def get_access_audit(limit: int = 50) -> list[dict]:
