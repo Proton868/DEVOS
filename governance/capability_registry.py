@@ -288,7 +288,23 @@ class CapabilityRegistry:
                 timeout_s=60, max_retries=1, is_reversible=True,
             ),
             CapabilityDescriptor(
-                slug="ucip:ssh.exec", name="SSH Exec",
+                
+            CapabilityDescriptor(
+                slug="ucip:ssh.inspect", name="SSH Inspect",
+                category=CapabilityCategory.EXECUTION,
+                description="Read-only remote host inspection (processes, services, logs, etc.)",
+                risk=CapabilityRisk.MEDIUM,
+                input_schema={"required": ["connection_id", "kind"], "properties": {
+                    "connection_id": {"type": "string"},
+                    "kind": {"type": "string"},
+                    "lines": {"type": "integer"},
+                    "unit": {"type": "string"}}},
+                output_schema={"required": ["status", "kind", "evidence_id"],
+                               "properties": {"status": {"type": "string"}, "kind": {"type": "string"},
+                                              "evidence_id": {"type": "string"}}},
+                timeout_s=60, max_retries=1, is_reversible=True,
+            ),
+slug="ucip:ssh.exec", name="SSH Exec",
                 category=CapabilityCategory.EXECUTION,
                 description="Execute a governed remote command over SSH",
                 risk=CapabilityRisk.HIGH,

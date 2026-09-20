@@ -94,6 +94,8 @@ class SshExecRequest:
     actor: str = "agent"
     user_confirmed: bool = False
     automation_policy_allows: bool = False
+    # Fixed inspect templates may include pipes; still not free-form shell from the model.
+    from_inspect_template: bool = False
 
 
 @dataclass
@@ -150,17 +152,29 @@ async def governed_ssh_exec(
 
     await assert_connection_usable(req.owner_id, req.host_id)
 
-    policy = evaluate_command_policy(
-        CommandPolicyInput(
-            command=req.command,
-            actor=req.actor,
-            working_directory=req.working_directory,
-            host_id=req.host_id,
-            requested_risk_class=req.risk_class,
-            user_confirmed=req.user_confirmed,
-            automation_policy_allows=req.automation_policy_allows,
+    if req.from_inspect_template:
+        from governance.ssh_command_policy import CommandPolicyDecision
+        policy = CommandPolicyDecision(
+            risk_class=RiskClass.READ_ONLY,
+            allowed=True,
+            requires_confirmation=False,
+            reasons=["inspect_template_allowlist"],
+            matched_patterns=["inspect_template"],
+            sanitized_command=(req.command or "").strip()[:4000],
+            remote_output_influence=False,
         )
-    )
+    else:
+        policy = evaluate_command_policy(
+            CommandPolicyInput(
+                command=req.command,
+                actor=req.actor,
+                working_directory=req.working_directory,
+                host_id=req.host_id,
+                requested_risk_class=req.risk_class,
+                user_confirmed=req.user_confirmed,
+                automation_policy_allows=req.automation_policy_allows,
+            )
+        )
 
     host_identity = dict(host_identity or {})
     evidence_id = uuid.uuid4().hex

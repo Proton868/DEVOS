@@ -908,3 +908,23 @@ register_agent_tool(AgentTool(
     durable=False,
 ))
 
+
+
+register_agent_tool(AgentTool(
+    name="ssh_inspect",
+    description=(
+        "Read-only remote host inspection (processes, services, logs, resources, "
+        "containers, network, system). Uses fixed commands only."
+    ),
+    input_schema=_s({
+        "connection_id": {"type": "string"},
+        "kind": {"type": "string", "description": "processes|services|logs|resources|containers|network|system"},
+        "lines": {"type": "integer"},
+        "unit": {"type": "string", "description": "Optional systemd unit for logs/services"},
+    }, required=["connection_id", "kind"]),
+    capability="ucip:ssh.inspect",
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.MEDIUM,
+    timeout_s=60,
+    durable=True,
+))
