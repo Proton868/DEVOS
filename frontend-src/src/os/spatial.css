@@ -3304,3 +3304,12 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
 .remote-explorer__pocket.is-active { border-color: #f59e0b; color: #fde68a; }
 .remote-explorer__panel { flex: 1; overflow: auto; padding: 12px; }
 .remote-explorer__warn { color: #fbbf24; font-size: 12px; }
+
+.remote-explorer__state { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
+.remote-explorer__state.is-connected { background: #14532d; color: #bbf7d0; }
+.remote-explorer__state.is-reconnecting { background: #713f12; color: #fde68a; }
+.remote-explorer__state.is-disconnected { background: #1f2937; color: #9ca3af; }
+.remote-explorer__state.is-failed { background: #7f1d1d; color: #fecaca; }
+.remote-explorer__search { display: flex; gap: 8px; padding: 8px 12px; }
+.remote-explorer__search input { flex: 1; background: #111827; border: 1px solid #374151; color: #e5e7eb; border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+.remote-explorer__actions button { font-size: 12px; }

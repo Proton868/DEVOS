@@ -296,6 +296,12 @@ async def governed_ssh_exec(
         if isinstance(stderr, (bytes, bytearray))
         else clamp_output(str(stderr), limit=DEFAULT_MAX_STDERR_BYTES)
     )
+    try:
+        from governance.ssh_untrusted_content import sanitize_remote_output
+        out_s = sanitize_remote_output(out_s, source_label="ssh_stdout").text
+        err_s = sanitize_remote_output(err_s, source_label="ssh_stderr").text
+    except Exception:
+        pass
     flags = reject_remote_policy_injection(out_s + "\n" + err_s)
     if flags:
         # Remote output never upgrades policy; flag only
