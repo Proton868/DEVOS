@@ -55,3 +55,23 @@ See `docs/architecture/agentic-automation-runtime.md` for state machine, complet
 Skipped infrastructure must be reported as SKIPPED, never as PASS.
 
 See `tests/test_real_provider_postgres_e2e.py`.
+
+
+## Capability Catalog vs Authorization
+
+| Layer | Role |
+|-------|------|
+| **Capability Catalog** | What exists (metadata, schemas, risk, isolation, evidence requirements) |
+| **Task Projection** | What this task may *consider* (policy + allowed list) |
+| **UCIP Authorization** | What this task may *actually execute* |
+| **ExecutionOperation/Job** | What actually happened |
+| **Evidence** | What proves it happened |
+
+Invariants:
+
+- Discovery is not authorization.
+- Planner-supplied capability metadata is never authoritative.
+- Catalog describes. Projection constrains. Planner proposes. Runtime validates.
+  UCIP authorizes. Operation/Job records. Isolation constrains. Evidence proves.
+
+See `governance/capability_catalog.py`.

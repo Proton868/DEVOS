@@ -858,6 +858,25 @@ async def run_agent_turn(
         persist_checkpoint(task, cp)
         return task
 
+    # Catalog validation: projection + schema + reject planner metadata overrides
+    # Discovery is not authorization — UCIP still gates execution below.
+    try:
+        from governance.capability_catalog import get_capability_catalog
+
+        ok, reasons = get_capability_catalog().validate_request(
+            cid,
+            dict(decision.inputs or {}),
+            allowed_capability_ids=list(cp.allowed_capabilities or []),
+            planner_metadata=dict(decision.inputs or {}),
+        )
+        if not ok:
+            apply_transition(cp, AgentRuntimeState.BLOCKED)
+            cp.failure = "catalog_validation:" + ";".join(reasons[:5])
+            persist_checkpoint(task, cp)
+            return task
+    except Exception:
+        pass
+
     # request_capability enforces UCIP; dry_run first then execute
     try:
         rec = await request_capability(

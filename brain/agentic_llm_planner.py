@@ -213,11 +213,48 @@ def parse_structured_plan(raw: Any) -> StructuredPlan:
 
 
 def validate_plan_against_context(plan: StructuredPlan, context: dict) -> StructuredPlan:
-    """Reject unknown capabilities relative to allowed list when provided."""
+    """Reject unknown capabilities relative to task projection / allowed list."""
     allowed = list(context.get("allowed_capabilities") or [])
-    if plan.action_type == "capability_request" and allowed:
-        if plan.capability not in allowed:
-            raise PlannerValidationError(f"unknown_capability:{plan.capability}")
+    # Prefer explicit projection ids when present
+    projection = context.get("available_capabilities") or []
+    if isinstance(projection, list) and projection:
+        proj_ids = {
+            str(item.get("id") or item.get("capability_id") or "")
+            for item in projection
+            if isinstance(item, dict)
+        }
+        proj_ids.discard("")
+        if proj_ids:
+            allowed = list(proj_ids)
+    if plan.action_type == "capability_request":
+        if allowed:
+            # Resolve aliases on both sides so ucip:filesystem.read matches filesystem.read
+            try:
+                from governance.capability_substrate import get_capability_substrate
+                sub = get_capability_substrate()
+                allowed_resolved = {sub.resolve_id(a) for a in allowed}
+                cap_resolved = sub.resolve_id(plan.capability or "")
+            except Exception:
+                allowed_resolved = set(allowed)
+                cap_resolved = plan.capability or ""
+            if cap_resolved not in allowed_resolved and (plan.capability or "") not in allowed:
+                raise PlannerValidationError(f"unknown_capability:{plan.capability}")
+        # Catalog-level validation (metadata integrity + schema); not authorization
+        try:
+            from governance.capability_catalog import get_capability_catalog
+
+            ok, reasons = get_capability_catalog().validate_request(
+                plan.capability or "",
+                plan.input,
+                allowed_capability_ids=allowed,
+                planner_metadata=plan.input if isinstance(plan.input, dict) else None,
+            )
+            if not ok:
+                raise PlannerValidationError(";".join(reasons[:5]))
+        except PlannerValidationError:
+            raise
+        except Exception:
+            pass
     # Planner cannot raise bounds
     if plan.input.get("max_turns") or plan.input.get("max_caps"):
         raise PlannerValidationError("cannot_override_bounds")
@@ -225,11 +262,16 @@ def validate_plan_against_context(plan: StructuredPlan, context: dict) -> Struct
 
 
 def build_planner_context(context: dict) -> dict:
-    """Bounded, scrubbed context for the LLM. Deterministic key order."""
+    """Bounded, scrubbed context for the LLM. Deterministic key order.
+
+    Includes task-scoped capability projection (available_capabilities) when
+    allowed_capabilities is present. Discovery is not authorization.
+    """
     scrubbed = _scrub_context(dict(context or {}))
     allowed_keys = (
         "task_id", "objective", "state", "turn", "max_turns",
-        "allowed_capabilities", "last_observation", "evidence_refs",
+        "allowed_capabilities", "available_capabilities",
+        "last_observation", "evidence_refs",
         "pending_request", "operation_id", "job_id", "plan",
         "completion_contract", "failure", "cancel_requested",
         "capability_request_count",
@@ -238,6 +280,25 @@ def build_planner_context(context: dict) -> dict:
     # Never pass grants/secrets
     for banned in ("grants", "secrets", "credentials", "env", "authorization"):
         out.pop(banned, None)
+
+    # Task-scoped projection from catalog (metadata only)
+    if "available_capabilities" not in out:
+        allowed = list(out.get("allowed_capabilities") or context.get("allowed_capabilities") or [])
+        if allowed:
+            try:
+                from governance.capability_catalog import get_capability_catalog
+
+                proj = get_capability_catalog().project_for_task(
+                    allowed_capability_ids=allowed,
+                    owner_id=context.get("owner_id"),
+                    tenant_id=context.get("tenant_id"),
+                )
+                out["available_capabilities"] = proj[:40]
+            except Exception:
+                out["available_capabilities"] = [
+                    {"id": a, "requires_authorization": True} for a in allowed[:40]
+                ]
+
     s = json.dumps(out, default=str, sort_keys=True)
     if len(s) > MAX_PLANNER_CONTEXT_CHARS:
         out = {
@@ -246,6 +307,7 @@ def build_planner_context(context: dict) -> dict:
             "state": out.get("state"),
             "turn": out.get("turn"),
             "allowed_capabilities": (out.get("allowed_capabilities") or [])[:20],
+            "available_capabilities": (out.get("available_capabilities") or [])[:10],
             "last_observation": out.get("last_observation"),
             "truncated": True,
         }
