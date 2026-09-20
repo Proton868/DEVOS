@@ -1,0 +1,8 @@
+{
+  "name": "agentic-build-project",
+  "private": true,
+  "scripts": {
+    "test": "node tests/test_calculator.js",
+    "build": "node -e \"require('fs').mkdirSync('dist',{recursive:true}); require('fs').writeFileSync('dist/app.js', require('fs').readFileSync('src/calculator.js'))\""
+  }
+}

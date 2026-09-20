@@ -1,0 +1,7 @@
+{
+  "profile": "build",
+  "sources": ["src/calculator.js"],
+  "artifact": "dist/app.js",
+  "require_contains": "return a + b",
+  "forbid_contains": "return a - b"
+}

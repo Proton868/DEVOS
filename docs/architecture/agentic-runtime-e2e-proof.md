@@ -153,3 +153,39 @@ Loop:
 | AC-16 | Concurrent repair converges safely | YES |
 
 See `tests/test_agentic_build_repair.py`.
+
+
+## Governed Project Build Proof
+
+Capability: `project.build` (profile=`build` only)
+
+Fixture: `tests/fixtures/agentic_build_project/`
+Contract: `devos.build.json` → artifact `dist/app.js`
+
+```
+Agent → Catalog → project.build → Runtime → UCIP → Operation/Job
+  → Runtime/Isolation or content-build → Real Artifact → Evidence → Observation → Completion
+```
+
+| ID | Acceptance | Required |
+|----|------------|----------|
+| AC-01 | Capability discovery | YES |
+| AC-02 | Bounded profile | YES |
+| AC-03 | Trusted project identity | YES |
+| AC-04 | Isolated / no host bypass | YES |
+| AC-05 | Valid build succeeds | YES |
+| AC-06 | Real artifact exists | YES |
+| AC-07 | Artifact project-scoped | YES |
+| AC-08 | Trusted digest | YES |
+| AC-09 | Trusted build evidence | YES |
+| AC-10 | Structured observation | YES |
+| AC-11 | Build failure is real | YES |
+| AC-12 | Failure cannot complete | YES |
+| AC-13 | Successful build can complete | YES |
+| AC-14 | Replay/idempotency | YES |
+| AC-15 | Concurrent build convergence | YES |
+| AC-16 | UNKNOWN cannot complete | YES |
+| AC-17 | Artifact integrity after replay | YES |
+| AC-18 | No arbitrary execution surface | YES |
+
+See `tests/test_agentic_build.py` and `execution/project_build.py`.
