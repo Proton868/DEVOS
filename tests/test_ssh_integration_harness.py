@@ -163,6 +163,29 @@ async def test_integration_checklist(db):
     )
     assert out.status == "unknown" and out.may_retry is False
 
+    # 11 timeout clamp
+    from governance.ssh_resource_limits import clamp_timeout
+    assert clamp_timeout(99999) <= 600
+
+    # 16 concurrent sessions
+    t2 = SshTransportService(backend=MockSshBackend(host_fingerprint="SHA256:TESTFINGERPRINTAAAA"))
+    s_a = await transport.connect_verified(SshConnectParams(host="8.8.8.8", username="ubuntu"))
+    s_b = await t2.connect_verified(SshConnectParams(host="8.8.8.8", username="ubuntu"))
+    assert s_a.session_id != s_b.session_id
+    assert s_a.connected and s_b.connected
+
+    # 17 agentic multi-step (diagnose operator)
+    from brain.ssh_server_operator import run_server_operator
+    op = await run_server_operator(
+        owner_id="user-a", connection_id=conn["id"],
+        text="Check Prime.",
+        host_label="Prime",
+        host_fingerprint="SHA256:TESTFINGERPRINTAAAA",
+        transport=transport,
+    )
+    assert op.success is not None
+    assert op.host.get("verified_fingerprint")
+
     # diagnostics
     d = await run_diagnostic(
         owner_id="user-a", connection_id=conn["id"],

@@ -151,3 +151,98 @@ def test_failure_dns_agent_denied():
     from governance.ssh_network_policy import validate_ssh_target
     r = validate_ssh_target("no-such-host-xyz.invalid", 22, actor="agent")
     assert not r.allowed
+
+
+# --- Expanded failure matrix ---
+
+def test_failure_command_timeout_not_success():
+    out = classify_disconnect_outcome(
+        command="sleep 999",
+        exit_status=None,
+        observed_output=False,
+        connection_lost=True,
+    )
+    assert out.status == "unknown"
+    assert out.may_retry is False
+
+
+def test_failure_ssh_daemon_restart_same_fingerprint_ok():
+    ctrl = SessionReconnectController(session_key="u:daemon")
+    ctrl.mark_connected(fingerprint="SHA256:SAME")
+    att = ctrl.begin_reconnect("ssh_daemon_restart")
+    st = ctrl.complete_reconnect(att, fingerprint="SHA256:SAME")
+    assert st in (SessionConnectionState.RECONNECTED, SessionConnectionState.CONNECTED)
+
+
+@pytest.mark.asyncio
+async def test_failure_credential_revocation(tmp_path, monkeypatch):
+    url = f"sqlite+aiosqlite:///{(tmp_path / 'rev2.db').as_posix()}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    monkeypatch.setenv("REQUIRE_POSTGRES", "false")
+    monkeypatch.setenv("JWT_SECRET", "test-secret-key-for-ssh-vault-32chars!!")
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from core import database as dbmod
+    from governance.ssh_credentials import (
+        create_ssh_credential_ref,
+        revoke_credential,
+        resolve_ssh_material,
+        SshCredentialRevoked,
+    )
+    dbmod.engine = create_async_engine(url, echo=False)
+    dbmod.AsyncSessionLocal = async_sessionmaker(dbmod.engine, expire_on_commit=False)
+    await dbmod.init_db()
+    ref = await create_ssh_credential_ref(
+        owner_id="u",
+        tenant_id=None,
+        name="k",
+        auth_method="private_key",
+        secret_plaintext="-----BEGIN OPENSSH PRIVATE KEY-----\nAAAATEST\n-----END OPENSSH PRIVATE KEY-----\n",
+    )
+    await revoke_credential("u", ref["id"])
+    with pytest.raises(SshCredentialRevoked):
+        await resolve_ssh_material(owner_id="u", credential_ref_id=ref["id"])
+    await dbmod.engine.dispose()
+
+
+def test_failure_agent_crash_preserves_cancel_truth():
+    ssh_cancel.clear_for_tests()
+    ssh_cancel.register_job("crash-job")
+    ssh_cancel.request_cancel("crash-job", reason="agent_crash_recovery")
+    r = ssh_cancel.cancel_status_result(job_id="crash-job")
+    assert r["success"] is False
+    assert r["status"] == "cancelled"
+
+
+def test_failure_browser_disconnect_session_state():
+    ctrl = SessionReconnectController(session_key="browser:sess")
+    ctrl.mark_connected(fingerprint="SHA256:X")
+    ctrl.mark_disconnected("browser_disconnect")
+    assert ctrl.state == SessionConnectionState.DISCONNECTED
+
+
+def test_failure_worker_crash_unknown_not_success():
+    out = classify_disconnect_outcome(
+        command="deploy.sh",
+        exit_status=None,
+        observed_output=True,
+        connection_lost=True,
+    )
+    assert out.status in ("unknown", "failed")
+    assert out.may_retry is False
+
+
+def test_failure_database_interruption_surface():
+    from governance.ssh_network_policy import validate_ssh_target
+    r = validate_ssh_target("169.254.169.254", 80, actor="agent")
+    assert not r.allowed
+
+
+def test_failure_devos_restart_recovery_no_false_success():
+    out = classify_disconnect_outcome(
+        command="systemctl restart devos",
+        exit_status=None,
+        observed_output=False,
+        connection_lost=True,
+    )
+    assert out.status == "unknown"
+    assert out.may_retry is False

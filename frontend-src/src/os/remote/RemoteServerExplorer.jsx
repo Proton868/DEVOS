@@ -39,7 +39,10 @@ export default function RemoteServerExplorer({
   connections = [],
   favorites = [],
   recent = [],
+  connectionGroups = [],
   connectionState = "DISCONNECTED",
+  terminalTabs = [],
+
   onOpenTerminal,
   onSelectConnection,
   onReconnect,
@@ -169,6 +172,26 @@ export default function RemoteServerExplorer({
                 {!recent.length && <li className="muted">No recent connections</li>}
               </ul>
             </details>
+            <details open={!collapsed.groups}>
+              <summary onClick={() => toggle("groups")}>Groups</summary>
+              <ul>
+                {(connectionGroups.length ? connectionGroups : []).map((g) => (
+                  <li key={g.id || g.name}>
+                    <strong>{g.name}</strong>
+                    <ul>
+                      {(g.hosts || []).map((c) => (
+                        <li key={c.id}>
+                          <button type="button" onClick={() => onSelectConnection?.(c)}>
+                            {c.label || c.hostname}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+                {!connectionGroups.length && <li className="muted">No groups</li>}
+              </ul>
+            </details>
             <details open>
               <summary>All hosts</summary>
               <ul>
@@ -188,12 +211,20 @@ export default function RemoteServerExplorer({
         {active === "terminal" && (
           <div className="remote-explorer__pane">
             <p>Interactive remote shell — tabs/splits use spatial layout.</p>
+            <div className="remote-explorer__tabs" role="tablist">
+              {(terminalTabs.length ? terminalTabs : [{ id: "main", title: sessionName || "Session" }]).map((tab) => (
+                <button key={tab.id} type="button" role="tab">{tab.title || tab.id}</button>
+              ))}
+            </div>
             <button
               type="button"
               onClick={() => connection && onOpenTerminal?.(connection.id)}
               disabled={!connection}
             >
               Open remote terminal
+            </button>
+            <button type="button" disabled={!connection} title="Split uses spatial pocket layout">
+              Split terminal
             </button>
           </div>
         )}

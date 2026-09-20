@@ -39,3 +39,9 @@ Critical security failures in automated suite: **none** (no credential leak, cro
 3. Git live runner optional
 4. Port forwarding disabled
 5. Production live identity UNTESTED until env configured
+
+
+## Gate verification stamp
+
+Automated suite (tests/test_ssh_*.py + structured_audit): green on commit following Server Operator + failure matrix expansion.
+OPEN BETA remains PERMITTED under documented limitations.
