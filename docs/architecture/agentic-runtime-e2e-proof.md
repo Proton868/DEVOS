@@ -149,5 +149,6 @@ Loop:
 | AC-12 | Identity remains trusted | YES |
 | AC-13 | UNKNOWN remains unresolved | YES |
 | AC-14 | Idempotency remains governed | YES |
+| AC-15 | Idempotent repair replay is stable | YES |
 
 See `tests/test_agentic_build_repair.py`.

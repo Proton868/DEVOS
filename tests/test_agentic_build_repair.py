@@ -1,4 +1,4 @@
-"""Governed Agentic Build/Repair Loop — acceptance matrix AC-01..AC-14."""
+"""Governed Agentic Build/Repair Loop — acceptance matrix AC-01..AC-15."""
 from __future__ import annotations
 
 import asyncio
@@ -376,6 +376,7 @@ def test_ac13_unknown_cannot_complete():
 # ── AC-14 ────────────────────────────────────────────────────────────────────
 
 def test_ac14_idempotent_logical_write_key_stable():
+    """AC-14: Same logical capability request yields a stable idempotency key."""
     from brain.agentic_runtime import capability_request_idempotency_key
     a = capability_request_idempotency_key(
         task_id="t1", turn=3, capability_id=CAP_ARTIFACT_WRITE, occurrence=1,
@@ -384,6 +385,74 @@ def test_ac14_idempotent_logical_write_key_stable():
         task_id="t1", turn=3, capability_id=CAP_ARTIFACT_WRITE, occurrence=1,
     )
     assert a == b
+
+
+def test_ac15_idempotent_repair_replay_is_stable():
+    """AC-15: Idempotency proof on the repair path.
+
+    - Same logical request → same idempotency key
+    - Different turn/occurrence → different key
+    - Replaying the same governed artifact.write leaves a single correct final artifact
+    - Trusted validation remains successful after replay (no divergent state)
+    """
+    from brain.agentic_runtime import capability_request_idempotency_key
+
+    fs = _seed_project()
+    fixed = (FIXTURE / SOURCE_PATH).read_text().replace(BROKEN_SNIPPET, FIXED_SNIPPET)
+    before = content_hash((fs.root / SOURCE_PATH).read_bytes())
+
+    # Key identity contract
+    k1 = capability_request_idempotency_key(
+        task_id="repair-task", turn=3, capability_id=CAP_ARTIFACT_WRITE, occurrence=1,
+    )
+    k1b = capability_request_idempotency_key(
+        task_id="repair-task", turn=3, capability_id=CAP_ARTIFACT_WRITE, occurrence=1,
+    )
+    k2 = capability_request_idempotency_key(
+        task_id="repair-task", turn=4, capability_id=CAP_ARTIFACT_WRITE, occurrence=1,
+    )
+    k3 = capability_request_idempotency_key(
+        task_id="repair-task", turn=3, capability_id=CAP_ARTIFACT_WRITE, occurrence=2,
+    )
+    assert k1 == k1b
+    assert k1 != k2
+    assert k1 != k3
+
+    t = delegate_agent_task(
+        owner_id="owner1",
+        requested_capabilities=CAPS,
+        task_input={"project_id": "proj1"},
+    )
+
+    # First logical repair
+    rec1 = _run(request_capability(
+        t,
+        capability_id=CAP_ARTIFACT_WRITE,
+        inputs={"path": SOURCE_PATH, "content": fixed},
+        execute=True,
+    ))
+    assert rec1.status == "executed"
+    mid = content_hash((fs.root / SOURCE_PATH).read_bytes())
+    assert mid != before
+    assert FIXED_SNIPPET in (fs.root / SOURCE_PATH).read_text()
+
+    # Replay same content (provider/retry style) — must remain correct, not corrupt
+    rec2 = _run(request_capability(
+        t,
+        capability_id=CAP_ARTIFACT_WRITE,
+        inputs={"path": SOURCE_PATH, "content": fixed},
+        execute=True,
+    ))
+    assert rec2.status == "executed"
+    after = content_hash((fs.root / SOURCE_PATH).read_bytes())
+    assert after == mid  # identical content → identical digest
+    assert (rec2.result or {}).get("digest") == after
+
+    # Validation still trusted-success after idempotent replay
+    out = _run(execute_project_validate(_contract(), _validate_req()))
+    assert out["success"] is True
+    assert out["status"] == "passed"
+    assert out["evidence"]["success"] is True
 
 
 def test_forged_validation_fields_rejected():
