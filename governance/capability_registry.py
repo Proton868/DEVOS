@@ -274,7 +274,39 @@ class CapabilityRegistry:
                 timeout_s=60, max_retries=1, is_reversible=False,
             ),
             CapabilityDescriptor(
-                slug="ucip:vcs.write", name="VCS Write",
+                
+            CapabilityDescriptor(
+                slug="ucip:ssh.connect", name="SSH Connect",
+                category=CapabilityCategory.EXECUTION,
+                description="Establish verified SSH connection to an owned host",
+                risk=CapabilityRisk.HIGH,
+                input_schema={"required": ["connection_id"], "properties": {
+                    "connection_id": {"type": "string"}}},
+                output_schema={"required": ["session_id", "host_identity"],
+                               "properties": {"session_id": {"type": "string"},
+                                              "host_identity": {"type": "object"}}},
+                timeout_s=60, max_retries=1, is_reversible=True,
+            ),
+            CapabilityDescriptor(
+                slug="ucip:ssh.exec", name="SSH Exec",
+                category=CapabilityCategory.EXECUTION,
+                description="Execute a governed remote command over SSH",
+                risk=CapabilityRisk.HIGH,
+                input_schema={"required": ["host_id", "command"], "properties": {
+                    "host_id": {"type": "string"},
+                    "command": {"type": "string"},
+                    "timeout_s": {"type": "number"},
+                    "risk_class": {"type": "string"},
+                    "user_confirmed": {"type": "boolean"}}},
+                output_schema={"required": ["status", "exit_status", "evidence_id"],
+                               "properties": {
+                                   "status": {"type": "string"},
+                                   "exit_status": {"type": "integer"},
+                                   "evidence_id": {"type": "string"},
+                                   "stdout": {"type": "string"}}},
+                timeout_s=120, max_retries=0, is_reversible=False,
+            ),
+slug="ucip:vcs.write", name="VCS Write",
                 category=CapabilityCategory.VCS,
                 description="Stage and commit changes in git",
                 risk=CapabilityRisk.MEDIUM,

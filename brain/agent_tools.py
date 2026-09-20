@@ -868,3 +868,43 @@ register_agent_tool(AgentTool(
     timeout_s=600,
     durable=True,
 ))
+
+
+register_agent_tool(AgentTool(
+    name="ssh_exec",
+    description=(
+        "Execute a governed remote SSH command on an owned connection. "
+        "Does not expose credentials. High-risk commands require user_confirmed=true."
+    ),
+    input_schema=_s({
+        "connection_id": {"type": "string", "description": "SSH connection id"},
+        "command": {"type": "string", "maxLength": 4000},
+        "timeout_s": {"type": "integer"},
+        "user_confirmed": {"type": "boolean", "description": "Required for modifying/privileged/destructive"},
+        "working_directory": {"type": "string", "maxLength": 512},
+    }, required=["connection_id", "command"]),
+    capability="ucip:ssh.exec",
+    side_effect=SideEffect.UNKNOWN,
+    risk=ToolRisk.HIGH,
+    timeout_s=120,
+    supports_cancellation=True,
+    durable=True,
+))
+
+register_agent_tool(AgentTool(
+    name="ssh_plan",
+    description=(
+        "Build a structured multi-step remote execution plan for a server-management intent. "
+        "Does not execute. Use ssh_exec for individual authorized steps."
+    ),
+    input_schema=_s({
+        "connection_id": {"type": "string"},
+        "objective": {"type": "string", "maxLength": 2000},
+    }, required=["connection_id", "objective"]),
+    capability="ucip:ssh.exec",
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.LOW,
+    timeout_s=15,
+    durable=False,
+))
+
