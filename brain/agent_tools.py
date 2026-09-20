@@ -977,3 +977,22 @@ register_agent_tool(AgentTool(
     timeout_s=30,
     durable=True,
 ))
+
+
+register_agent_tool(AgentTool(
+    name="ssh_server_operator",
+    description="Nuha Server Operator: natural language server ops via governed SSH (UNDERSTAND→REPORT). Requires verified host fingerprint.",
+    input_schema=_s({
+        "connection_id": {"type": "string"},
+        "text": {"type": "string"},
+        "host_label": {"type": "string"},
+        "host_fingerprint": {"type": "string"},
+        "user_confirmed": {"type": "boolean"},
+        "job_id": {"type": "string"},
+    }, required=["connection_id", "text", "host_fingerprint"]),
+    capability="ucip:ssh.exec",
+    side_effect=SideEffect.POSSIBLE,
+    risk=ToolRisk.HIGH,
+    timeout_s=300,
+    durable=True,
+))
