@@ -15,6 +15,8 @@ and mark tests with @pytest.mark.postgres (or skip when unreachable).
 """
 from __future__ import annotations
 
+import pytest
+
 import os
 from pathlib import Path
 
@@ -89,3 +91,24 @@ def pytest_runtest_setup(item) -> None:
         dispose_sync_engine()
     except Exception:
         pass
+
+
+# ── Minimal asyncio support (pytest-asyncio may be unavailable) ──────────────
+import asyncio
+import inspect
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_pyfunc_call(pyfuncitem):
+    """Run async def tests via asyncio.run when pytest-asyncio is absent."""
+    testfunction = pyfuncitem.obj
+    if not inspect.iscoroutinefunction(testfunction):
+        return None
+    # Collect fixture values already resolved by pytest
+    funcargs = {name: pyfuncitem.funcargs[name] for name in pyfuncitem._fixtureinfo.argnames}
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    asyncio.run(testfunction(**funcargs))
+    return True

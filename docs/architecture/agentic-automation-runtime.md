@@ -47,6 +47,108 @@ After substrate execution, observation is checkpointed and becomes next-turn con
 
 **Decision:** **READY_FOR_NEXT_AGENTIC_MILESTONE**
 
+
+## Exact Persisted State Transition Table
+
+| From | To | Required condition |
+|------|-----|-------------------|
+| CREATED | PLANNING | task exists and is runnable |
+| CREATED | CANCELLED | cancellation already requested |
+| PLANNING | AWAITING_CAPABILITY | planner emits valid capability request |
+| PLANNING | COMPLETED | explicit completion contract satisfied |
+| PLANNING | BLOCKED | task cannot safely continue |
+| PLANNING | FAILED | unrecoverable planning/runtime error |
+| PLANNING | CANCELLED | cancellation observed |
+| AWAITING_CAPABILITY | AUTHORIZING | capability request persisted |
+| AWAITING_CAPABILITY | BLOCKED | request cannot proceed |
+| AWAITING_CAPABILITY | CANCELLED | cancellation observed |
+| AUTHORIZING | AUTHORIZED | UCIP authorization succeeds |
+| AUTHORIZING | BLOCKED | authorization denies request |
+| AUTHORIZING | FAILED | authorization infrastructure fails irrecoverably |
+| AUTHORIZING | CANCELLED | cancellation observed |
+| AUTHORIZED | EXECUTING | consequential operation/job successfully scheduled |
+| AUTHORIZED | CANCELLED | cancellation before execution |
+| EXECUTING | OBSERVING | authoritative terminal result available |
+| EXECUTING | UNKNOWN | outcome cannot safely be established |
+| EXECUTING | FAILED | authoritative failure |
+| EXECUTING | CANCELLED | authoritative cancellation |
+| OBSERVING | CHECKPOINTING | result processed |
+| OBSERVING | FAILED | observation processing fails irrecoverably |
+| OBSERVING | BLOCKED | required continuation cannot safely proceed |
+| CHECKPOINTING | PLANNING | checkpoint committed successfully |
+| CHECKPOINTING | COMPLETED | checkpoint records authoritative completion |
+| CHECKPOINTING | BLOCKED | continuation requires intervention |
+| CHECKPOINTING | FAILED | checkpoint cannot be durably committed |
+| UNKNOWN | OBSERVING | reconciliation proves authoritative result |
+| UNKNOWN | BLOCKED | reconciliation requires intervention |
+
+### Forbidden transitions (tested)
+
+- PLANNING → EXECUTING
+- PLANNING → AUTHORIZED
+- AWAITING_CAPABILITY → EXECUTING
+- UNKNOWN → EXECUTING
+- UNKNOWN → COMPLETED
+- FAILED → EXECUTING
+- CANCELLED → EXECUTING
+- COMPLETED → any non-terminal state
+
+Terminal states (COMPLETED, FAILED, CANCELLED) are sticky and cannot be reopened.
+
+## Synchronous / Asynchronous Handoff
+
+**Synchronous (agent runtime turn):** context construction, planning, parsing, validation, state transition decisions, checkpoint preparation.
+
+**Asynchronous boundary:** when a capability is consequential:
+
+```
+AUTHORIZED
+  → create/reserve ExecutionOperation
+  → enqueue ExecutionJob
+  → commit durable checkpoint
+  → return control (do not hold agent worker indefinitely)
+```
+
+Worker performs the operation. Later: job terminal → runtime resume/reconciliation → OBSERVING.
+
+## Failure Scenarios (required CI)
+
+| Scenario | Expected |
+|----------|----------|
+| Planner raises | PLANNING → FAILED; no operation |
+| Undelegated capability | AUTHORIZING → BLOCKED |
+| Authoritative execution failure | EXECUTING → OBSERVING/FAILED (not UNKNOWN) |
+| Observation incomplete | completion rejected |
+| Checkpoint/completion contract fail | no COMPLETED claim |
+
+## Cancellation Scenarios (required CI)
+
+| Point | Expected |
+|-------|----------|
+| Before planning | CREATED → CANCELLED |
+| During planning | no capability after cancel wins |
+| After restart | cancel_requested / CANCELLED survives |
+
+## Recovery Coverage Matrix
+
+| Recovery property | Canonical test |
+|-------------------|----------------|
+| restart during planning | test_agentic_multiturn_e2e / proof matrix |
+| successful operation recovery | test_agentic_multiturn_e2e |
+| UNKNOWN recovery | test_agentic_runtime / multiturn |
+| duplicate operation prevention | test_agentic_e2e_gaps (Postgres when available) |
+| cancellation recovery | proof matrix + runtime |
+| automation DAG recovery | test_agentic_automation parallel |
+
+## Required vs Conditional Proofs
+
+**Required CI (deterministic planner):** state transitions, completion contract, sync/async handoff, multi-turn path, failure, cancellation, isolation, security bounds.
+
+**Required Postgres:** concurrent duplicate scheduling, durable uniqueness, tenant isolation (when `DEVOS_TEST_DATABASE_URL` postgres).
+
+**Conditional:** real-LLM planner integration (`tests/test_agentic_llm_planner*.py`) — never the sole proof of runtime correctness.
+
+
 ## Architecture
 
 ```

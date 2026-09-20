@@ -535,6 +535,14 @@ def validate_completion(
             reasons.append("pending_capability_request")
     if cp.state == AgentRuntimeState.EXECUTING:
         reasons.append("operation_still_active")
+    if cp.state in (
+        AgentRuntimeState.OBSERVING,
+        AgentRuntimeState.AWAITING_CAPABILITY,
+        AgentRuntimeState.AUTHORIZING,
+        AgentRuntimeState.AUTHORIZED,
+        AgentRuntimeState.CREATED,
+    ):
+        reasons.append(f"state_not_completable:{cp.state.value}")
 
     # Structured decision required
     if contract.require_structured_complete_decision:
@@ -777,7 +785,14 @@ async def run_agent_turn(
         return task
 
     context = build_agent_context(task, cp)
-    decision = planner(context)
+    try:
+        decision = planner(context)
+    except Exception as e:
+        apply_transition(cp, AgentRuntimeState.FAILED)
+        cp.failure = f"planner_error:{type(e).__name__}:{str(e)[:200]}"
+        persist_checkpoint(task, cp)
+        mark_failed(task, cp.failure)
+        return task
     # Untrusted planner output — re-validate structured contract
     try:
         from brain.agentic_llm_planner import parse_structured_plan, validate_plan_against_context, PlannerValidationError

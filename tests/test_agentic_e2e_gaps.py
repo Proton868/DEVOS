@@ -210,6 +210,7 @@ async def test_authoritative_agent_completion_releases_join():
 
 @pytest.mark.asyncio
 async def test_agent_script_capability_operation_isolation_observation(monkeypatch):
+    pytest.importorskip("sqlalchemy")
     """AGENT requests capability → reserve_operation → run_isolated → observation."""
     ns = _ns()
     from governance.capability_substrate import (
