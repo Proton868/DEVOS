@@ -326,15 +326,35 @@ Not provided:
 See `execution/project_maintain.py` and `tests/test_agentic_maintain.py` (AC-121..AC-182).
 
 
-## Governed Incident Domain Foundation
+## Governed Incident Domain
 
-Capability: `project.incident` (governance/read-oriented)
+Capability: `project.incident` (governance/read-oriented; not an executor)
 
-Sixth independent domain: Incident lifecycle (DETECTED … RESOLVED).
+Lifecycle: CREATE → DEPLOY → OBSERVE → MAINTAIN → **INCIDENT**
 
-Observation may *detect* an incident under `devos.incident.json` policy.
-Incident may *link* to a Maintenance Request.
-Mitigation still flows only through Maintain + existing capabilities.
-No auto-remediate, pager, or shell path.
+**Four independent concerns (plus Maintain request/action):**
+
+> Observation describes the system.
+> Task describes the agent.
+> Operation describes capability execution.
+> Incident describes an actionable/persistent condition requiring governed lifecycle handling.
+
+Also:
+
+> Operation success does not imply observation health, and observation health does not by itself describe task success.
+> Maintenance resolved does not automatically resolve an incident.
+> A HEALTHY re-observation does not mutate incident status by itself — resolution requires explicit verify/resolve criteria.
+
+Incident lifecycle: DETECTED → OPEN → ASSESSING → ACKNOWLEDGED → MITIGATING → VERIFYING → RESOLVED  
+(also REJECTED / CANCELLED / DUPLICATE / BLOCKED / FAILED / UNKNOWN)
+
+Contract: `devos.incident.json` (version=1, declarative policies only)
+
+- Trigger source: `observation` only
+- Severity is priority, not authorization
+- Deterministic correlation: owner|project|deployment|policy
+- Link to Maintain is optional and does not duplicate maintenance state
+
+Not provided: second runtime/engine/evidence store, monitoring/alerting platform, auto-remediation, shell/network/infra control, planner-defined criteria.
 
 See `execution/project_incident.py` and `tests/test_agentic_incident.py` (AC-183..AC-220).

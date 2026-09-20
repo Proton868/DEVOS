@@ -438,6 +438,68 @@ def test_ac219_e2e_incident_maintain_verify_resolve():
     assert inc.get("trigger", {}).get("status") == "UNHEALTHY"
 
 
+def test_domain_combo_op_succeeded_obs_unhealthy_incident_open():
+    """Task/operation success must coexist with UNHEALTHY + OPEN incident."""
+    fs = _fs()
+    _seed_incident_contract(fs)
+    inc = _detect(fs, obs_id="OBS-UNH")
+    assess_incident(fs, inc["incident_id"])
+    # Domain snapshot (independent axes — not derived from each other)
+    domains = {
+        "task": "COMPLETED",
+        "operation": "SUCCEEDED",
+        "observation": "UNHEALTHY",
+        "incident": load_incident(fs, inc["incident_id"])["status"],
+    }
+    assert domains["operation"] == "SUCCEEDED"
+    assert domains["observation"] == "UNHEALTHY"
+    assert domains["incident"] in (INC_OPEN, INC_ASSESSING, INC_DETECTED)
+    assert domains["incident"] != INC_RESOLVED
+
+
+def test_reobservation_unhealthy_keeps_incident_open_after_op_success():
+    """Maintenance op SUCCEEDED + re-obs UNHEALTHY → incident not auto-resolved."""
+    fs = _fs()
+    _seed_incident_contract(fs)
+    _seed_maintain_contract(fs)
+    inc = _detect(fs)
+    iid = inc["incident_id"]
+    assess_incident(fs, iid)
+    acknowledge_incident(fs, iid, actor="owner1", owner_id="owner1", project_id="proj1")
+    mr = create_maintenance_request(
+        fs, owner_id="owner1", project_id="proj1",
+        deployment_id="DEP-001", source_observation_id="OBS-001",
+        observation_kind="health", observation_status="UNHEALTHY",
+    )
+    mid = mr["maintenance_request_id"]
+    link_maintenance_request(
+        fs, iid, maintenance_request_id=mid, owner_id="owner1", project_id="proj1",
+    )
+    evaluate_maintenance_request(fs, mid)
+    plan_maintenance_request(fs, mid)
+    authorize_maintenance_request(
+        fs, mid, owner_id="owner1", project_id="proj1",
+        granted_capabilities={"project.build", "project.verify", CAP_PROJECT_MAINTAIN},
+    )
+    from execution.project_maintain import load_request
+    for act in load_request(fs, mid)["actions"]:
+        execute_maintenance_action(fs, mid, act["action_id"], operation_result="SUCCEEDED")
+        cur = next(a for a in load_request(fs, mid)["actions"] if a["action_id"] == act["action_id"])
+        if cur["status"] == "VERIFYING":
+            verify_maintenance_action(fs, mid, act["action_id"], verification_result="SUCCEEDED")
+    assert reconcile_maintenance_request(fs, mid)["status"] == REQ_RESOLVED
+    # Re-observation still UNHEALTHY — incident must not silently resolve
+    inc = load_incident(fs, iid)
+    assert inc["status"] != INC_RESOLVED
+    with pytest.raises(ProjectIncidentError):
+        resolve_incident(
+            fs, iid,
+            resolution_observation_id="OBS-STILL-BAD",
+            observation_status="UNHEALTHY",
+            maintenance_request_status=REQ_RESOLVED,
+        )
+
+
 def test_migration_exists():
     root = Path(__file__).resolve().parents[1]
     mig = root / "supabase" / "migrations" / "20260920050000_incidents.sql"
