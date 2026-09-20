@@ -136,7 +136,17 @@ def authorize_git_ssh(req: GitSshRequest) -> tuple[str, int, str, dict]:
         if req.git_credential_ref_id == req.server_connection_id:
             raise GitSshDenied("credential_scope_collision")
 
-    return host, port, path, net.to_dict()
+    # Host verification required for Git SSH hosts (same policy as server SSH)
+    host_verification = {
+        "required": True,
+        "hostname": host,
+        "port": port,
+        "note": "Git SSH hosts must pass host-key verification before use",
+    }
+
+    net_dict = net.to_dict()
+    net_dict["host_verification"] = host_verification
+    return host, port, path, net_dict
 
 
 async def governed_git_ssh(req: GitSshRequest, *, runner: Any = None) -> GitSshResult:

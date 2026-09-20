@@ -928,3 +928,52 @@ register_agent_tool(AgentTool(
     timeout_s=60,
     durable=True,
 ))
+
+
+register_agent_tool(AgentTool(
+    name="ssh_diagnostic",
+    description="Structured remote diagnostic (GetSystemInfo, GetDiskUsage, ListProcesses, etc.). Read-only.",
+    input_schema=_s({
+        "connection_id": {"type": "string"},
+        "capability": {"type": "string"},
+        "unit": {"type": "string"},
+        "container": {"type": "string"},
+        "lines": {"type": "integer"},
+    }, required=["connection_id", "capability"]),
+    capability="ucip:ssh.inspect",
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.MEDIUM,
+    timeout_s=60,
+    durable=True,
+))
+
+register_agent_tool(AgentTool(
+    name="ssh_remote_workflow",
+    description="Run OBSERVE→PLAN→AUTHORIZE→EXECUTE→VERIFY→REPORT diagnostic workflow. No blind execute.",
+    input_schema=_s({
+        "connection_id": {"type": "string"},
+        "objective": {"type": "string"},
+        "user_confirmed": {"type": "boolean"},
+        "approved_remediation_commands": {"type": "array", "items": {"type": "string"}},
+        "job_id": {"type": "string"},
+    }, required=["connection_id", "objective"]),
+    capability="ucip:ssh.exec",
+    side_effect=SideEffect.POSSIBLE,
+    risk=ToolRisk.HIGH,
+    timeout_s=300,
+    durable=True,
+))
+
+register_agent_tool(AgentTool(
+    name="ssh_cancel_job",
+    description="Cancel an SSH agent job. Never reports success.",
+    input_schema=_s({
+        "job_id": {"type": "string"},
+        "reason": {"type": "string"},
+    }, required=["job_id"]),
+    capability="ucip:ssh.exec",
+    side_effect=SideEffect.NONE,
+    risk=ToolRisk.LOW,
+    timeout_s=30,
+    durable=True,
+))
