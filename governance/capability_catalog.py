@@ -116,6 +116,8 @@ class CapabilityCatalogEntry:
     status: str = STATUS_ACTIVE
     category: str = "general"
     source: str = "registry"
+    # Maintenance eligibility (descriptive only; never authorizes)
+    maintenance: dict = field(default_factory=dict)
 
     def planner_view(self) -> dict:
         """Safe structured metadata for planner context only."""
@@ -134,6 +136,7 @@ class CapabilityCatalogEntry:
             "evidence_requirements": _scrub(self.evidence_requirements) or {},
             "status": self.status,
             "category": self.category,
+            "maintenance": _scrub(self.maintenance) or {},
         }
 
     def to_dict(self) -> dict:
