@@ -124,6 +124,11 @@ class TransferRequest:
     max_bytes: int = DEFAULT_MAX_FILE_BYTES
     timeout_s: float = DEFAULT_TIMEOUT_S
     actor: str = "user"
+    # Resume support
+    resume: bool = False
+    offset: int = 0  # explicit start byte; if resume and offset=0, auto-detect
+    transfer_id: Optional[str] = None  # continue an existing transfer id
+    chunk_size: int = 64 * 1024
 
 
 @dataclass
@@ -145,6 +150,9 @@ class TransferResult:
     metadata: dict = field(default_factory=dict)
     error: Optional[str] = None
     duration_ms: int = 0
+    resume_offset: int = 0  # next offset if partial
+    total_bytes: Optional[int] = None
+    resumable: bool = False
 
     def to_public(self) -> dict:
         return {
@@ -157,6 +165,9 @@ class TransferResult:
             "metadata": dict(self.metadata),
             "error": self.error,
             "duration_ms": self.duration_ms,
+            "resume_offset": self.resume_offset,
+            "total_bytes": self.total_bytes,
+            "resumable": self.resumable,
             "mode": "remote_ssh",
         }
 
@@ -229,6 +240,28 @@ class MockSftpBackend:
         self.files[path] = data
         return len(data)
 
+    async def write_file_range(
+        self, path: str, data: bytes, *, offset: int, truncate: bool = False
+    ) -> int:
+        """Append/overwrite at offset (SFTP resume-style)."""
+        path = normalize_remote_path(path)
+        if path in self.symlinks:
+            raise TransferDenied("symlink_write_refused")
+        if offset < 0:
+            raise TransferDenied("invalid_offset")
+        parent = posixpath.dirname(path) or "/"
+        self.dirs.add(parent)
+        existing = self.files.get(path, b"")
+        if truncate and offset == 0:
+            existing = b""
+        if offset > len(existing):
+            # sparse fill
+            existing = existing + (b"\x00" * (offset - len(existing)))
+        end = offset + len(data)
+        new = existing[:offset] + data + existing[end:]
+        self.files[path] = new
+        return len(data)
+
     async def read_file(self, path: str, *, max_bytes: int) -> bytes:
         path = normalize_remote_path(path)
         if path in self.symlinks:
@@ -239,6 +272,21 @@ class MockSftpBackend:
         if len(data) > max_bytes:
             raise TransferDenied("file_too_large")
         return data
+
+    async def read_file_range(
+        self, path: str, *, offset: int, length: int, max_bytes: int
+    ) -> bytes:
+        path = normalize_remote_path(path)
+        if path in self.symlinks:
+            raise TransferDenied("symlink_read_refused")
+        if path not in self.files:
+            raise TransferError("remote_not_found")
+        if offset < 0 or length < 0:
+            raise TransferDenied("invalid_offset")
+        data = self.files[path]
+        if len(data) > max_bytes:
+            raise TransferDenied("file_too_large")
+        return data[offset : offset + length]
 
     async def delete(self, path: str) -> None:
         path = normalize_remote_path(path)
@@ -263,6 +311,9 @@ class MockSftpBackend:
 # Global mock for unit tests; production would use asyncssh SFTP
 _BACKENDS: dict[str, MockSftpBackend] = {}
 _CANCEL: set[str] = set()
+# transfer_id → {op, connection_id, owner_id, remote, local_relpath, project_id, offset, total}
+_TRANSFER_CHECKPOINTS: dict[str, dict] = {}
+
 
 
 def get_mock_backend(connection_id: str) -> MockSftpBackend:
@@ -274,6 +325,18 @@ def get_mock_backend(connection_id: str) -> MockSftpBackend:
 def clear_transfer_state_for_tests() -> None:
     _BACKENDS.clear()
     _CANCEL.clear()
+    _TRANSFER_CHECKPOINTS.clear()
+
+
+def get_transfer_checkpoint(transfer_id: str) -> Optional[dict]:
+    return dict(_TRANSFER_CHECKPOINTS[transfer_id]) if transfer_id in _TRANSFER_CHECKPOINTS else None
+
+
+def _save_checkpoint(transfer_id: str, **fields: Any) -> None:
+    cur = dict(_TRANSFER_CHECKPOINTS.get(transfer_id) or {})
+    cur.update(fields)
+    cur["transfer_id"] = transfer_id
+    _TRANSFER_CHECKPOINTS[transfer_id] = cur
 
 
 def request_cancel(transfer_id: str) -> None:
@@ -284,8 +347,9 @@ async def governed_transfer(req: TransferRequest) -> TransferResult:
     """Authorize + execute one transfer op against owned connection."""
     from governance.ssh_domain import assert_connection_usable, SshAccessDenied, SshConnectionRevoked
 
-    tid = uuid.uuid4().hex
+    tid = (req.transfer_id or "").strip() or uuid.uuid4().hex
     t0 = time.monotonic()
+
 
     try:
         await assert_connection_usable(req.owner_id, req.connection_id)
@@ -320,9 +384,6 @@ async def governed_transfer(req: TransferRequest) -> TransferResult:
     progress = TransferProgress(status="running")
 
     try:
-        if tid in _CANCEL:
-            raise TransferError("cancelled")
-
         meta: dict[str, Any] = {}
         nbytes = 0
         local_out = None
@@ -350,34 +411,152 @@ async def governed_transfer(req: TransferRequest) -> TransferResult:
                 req.owner_id, req.project_id, req.local_relpath, must_exist=True
             )
             data = local.read_bytes()
-            if len(data) > req.max_bytes:
+            total = len(data)
+            if total > req.max_bytes:
                 raise TransferDenied("file_too_large")
-            # remote overwrite protection
-            try:
-                existing = await backend.stat(remote)
-                if existing and not req.overwrite:
-                    raise TransferDenied("remote_exists")
-            except TransferError:
-                pass
-            if tid in _CANCEL:
-                raise TransferError("cancelled")
-            nbytes = await backend.write_file(remote, data, overwrite=req.overwrite)
             local_out = str(local)
+            offset = int(req.offset or 0)
+            if req.resume:
+                # Auto-detect remote size when offset not set
+                if offset <= 0:
+                    try:
+                        st = await backend.stat(remote)
+                        offset = int(st.get("size") or 0)
+                    except TransferError:
+                        offset = 0
+                    cp = get_transfer_checkpoint(tid)
+                    if cp and int(cp.get("offset") or 0) > offset:
+                        offset = int(cp["offset"])
+                if offset > total:
+                    raise TransferDenied("resume_offset_past_eof")
+            else:
+                try:
+                    existing = await backend.stat(remote)
+                    if existing and not req.overwrite and not req.resume:
+                        raise TransferDenied("remote_exists")
+                except TransferError:
+                    pass
+                if not req.overwrite and offset == 0:
+                    pass
+                offset = 0
+
+            chunk = max(1024, int(req.chunk_size or 65536))
+            nbytes = 0
+            # First byte of non-resume full write replaces file
+            if offset == 0 and not req.resume:
+                if tid in _CANCEL:
+                    raise TransferError("cancelled")
+                nbytes = await backend.write_file(
+                    remote, data, overwrite=True if req.overwrite or not req.resume else req.overwrite
+                )
+                offset = total
+            else:
+                while offset < total:
+                    if tid in _CANCEL:
+                        _save_checkpoint(
+                            tid, op="upload", connection_id=req.connection_id,
+                            owner_id=req.owner_id, remote_path=remote,
+                            local_relpath=req.local_relpath, project_id=req.project_id,
+                            offset=offset, total=total, status="cancelled",
+                        )
+                        return TransferResult(
+                            transfer_id=tid, op=req.op.value, status="cancelled",
+                            remote_path=remote, local_path=local_out,
+                            bytes_transferred=nbytes, resume_offset=offset,
+                            total_bytes=total, resumable=True,
+                            metadata={"resume": True},
+                            duration_ms=int((time.monotonic() - t0) * 1000),
+                        )
+                    piece = data[offset : offset + chunk]
+                    written = await backend.write_file_range(
+                        remote, piece, offset=offset, truncate=(offset == 0)
+                    )
+                    offset += written
+                    nbytes += written
+                    _save_checkpoint(
+                        tid, op="upload", connection_id=req.connection_id,
+                        owner_id=req.owner_id, remote_path=remote,
+                        local_relpath=req.local_relpath, project_id=req.project_id,
+                        offset=offset, total=total, status="running",
+                    )
+            meta["resume"] = bool(req.resume)
+            meta["final_offset"] = offset
+            meta["total"] = total
+            _save_checkpoint(
+                tid, op="upload", offset=offset, total=total, status="succeeded",
+            )
+
         elif req.op == TransferOp.DOWNLOAD:
             if not req.project_id or not req.local_relpath:
                 raise TransferDenied("local_path_required")
-            data = await backend.read_file(remote, max_bytes=req.max_bytes)
             local = resolve_local_workspace_path(
                 req.owner_id, req.project_id, req.local_relpath, must_exist=False
             )
-            if local.exists() and not req.overwrite:
-                raise TransferDenied("local_exists")
-            if tid in _CANCEL:
-                raise TransferError("cancelled")
-            local.parent.mkdir(parents=True, exist_ok=True)
-            local.write_bytes(data)
-            nbytes = len(data)
             local_out = str(local)
+            st = await backend.stat(remote)
+            if st.get("type") == "symlink":
+                raise TransferDenied("symlink_escape_refused")
+            total = int(st.get("size") or 0)
+            if total > req.max_bytes:
+                raise TransferDenied("file_too_large")
+
+            offset = int(req.offset or 0)
+            if req.resume:
+                if offset <= 0 and local.exists():
+                    offset = local.stat().st_size
+                cp = get_transfer_checkpoint(tid)
+                if cp and int(cp.get("offset") or 0) > offset:
+                    offset = int(cp["offset"])
+                if offset > total:
+                    raise TransferDenied("resume_offset_past_eof")
+            else:
+                if local.exists() and not req.overwrite:
+                    raise TransferDenied("local_exists")
+                offset = 0
+
+            local.parent.mkdir(parents=True, exist_ok=True)
+            mode = "ab" if (req.resume and offset > 0) else "wb"
+            if mode == "wb" and local.exists() and req.overwrite:
+                local.write_bytes(b"")
+            chunk = max(1024, int(req.chunk_size or 65536))
+            nbytes = 0
+            with local.open(mode) as fh:
+                while offset < total:
+                    if tid in _CANCEL:
+                        _save_checkpoint(
+                            tid, op="download", connection_id=req.connection_id,
+                            owner_id=req.owner_id, remote_path=remote,
+                            local_relpath=req.local_relpath, project_id=req.project_id,
+                            offset=offset, total=total, status="cancelled",
+                        )
+                        return TransferResult(
+                            transfer_id=tid, op=req.op.value, status="cancelled",
+                            remote_path=remote, local_path=local_out,
+                            bytes_transferred=nbytes, resume_offset=offset,
+                            total_bytes=total, resumable=True,
+                            metadata={"resume": True},
+                            duration_ms=int((time.monotonic() - t0) * 1000),
+                        )
+                    piece = await backend.read_file_range(
+                        remote, offset=offset, length=chunk, max_bytes=req.max_bytes,
+                    )
+                    if not piece:
+                        break
+                    fh.write(piece)
+                    offset += len(piece)
+                    nbytes += len(piece)
+                    _save_checkpoint(
+                        tid, op="download", connection_id=req.connection_id,
+                        owner_id=req.owner_id, remote_path=remote,
+                        local_relpath=req.local_relpath, project_id=req.project_id,
+                        offset=offset, total=total, status="running",
+                    )
+            meta["resume"] = bool(req.resume)
+            meta["final_offset"] = offset
+            meta["total"] = total
+            _save_checkpoint(
+                tid, op="download", offset=offset, total=total, status="succeeded",
+            )
         else:
             raise TransferDenied("unsupported_op")
 
@@ -386,6 +565,8 @@ async def governed_transfer(req: TransferRequest) -> TransferResult:
                 transfer_id=tid, op=req.op.value, status="cancelled",
                 remote_path=remote, local_path=local_out, bytes_transferred=nbytes,
                 duration_ms=int((time.monotonic() - t0) * 1000),
+                resumable=req.op in (TransferOp.UPLOAD, TransferOp.DOWNLOAD),
+                resume_offset=int((meta or {}).get("final_offset") or 0),
             )
 
         # Persist job metadata
@@ -415,11 +596,15 @@ async def governed_transfer(req: TransferRequest) -> TransferResult:
         except Exception:
             pass
 
+        _CANCEL.discard(tid)
         return TransferResult(
             transfer_id=tid, op=req.op.value, status="succeeded",
             remote_path=remote, local_path=local_out,
             bytes_transferred=nbytes, metadata=meta,
             duration_ms=int((time.monotonic() - t0) * 1000),
+            resume_offset=int(meta.get("final_offset") or nbytes or 0),
+            total_bytes=meta.get("total") if isinstance(meta.get("total"), int) else meta.get("total"),
+            resumable=False,
         )
     except TransferDenied as e:
         return TransferResult(
@@ -433,4 +618,5 @@ async def governed_transfer(req: TransferRequest) -> TransferResult:
             transfer_id=tid, op=req.op.value, status=status,
             remote_path=remote, error=e.code,
             duration_ms=int((time.monotonic() - t0) * 1000),
+            resumable=(status == "cancelled" and req.op in (TransferOp.UPLOAD, TransferOp.DOWNLOAD)),
         )
