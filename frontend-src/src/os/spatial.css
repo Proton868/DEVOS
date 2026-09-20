@@ -3293,3 +3293,14 @@ html[data-sp-glow="full"] .sp-canvas-mission-node.st-EXECUTING {
 .sp-pv-rt-badge--healthy { color: #00ffb3; border: 1px solid rgba(0,255,179,0.3); }
 .sp-pv-rt-badge--unhealthy { color: #ff7b7b; border: 1px solid rgba(255,100,100,0.3); }
 .sp-pv-rt-badge--na { opacity: 0.7; }
+
+/* Remote dimension — distinct from local IDE */
+.remote-explorer { display: flex; flex-direction: column; height: 100%; background: #0f1419; color: #e7ecf1; }
+.remote-explorer__badge { background: #b45309; color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; padding: 2px 8px; border-radius: 4px; }
+.remote-explorer__header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid #1f2a33; }
+.remote-explorer__fp { font-size: 11px; opacity: 0.85; word-break: break-all; }
+.remote-explorer__pockets { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px; border-bottom: 1px solid #1f2a33; }
+.remote-explorer__pocket { background: #1a2330; border: 1px solid #2a3a4a; color: #c5d0da; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.remote-explorer__pocket.is-active { border-color: #f59e0b; color: #fde68a; }
+.remote-explorer__panel { flex: 1; overflow: auto; padding: 12px; }
+.remote-explorer__warn { color: #fbbf24; font-size: 12px; }

@@ -115,9 +115,26 @@ class SSHSessionCapability:
 
 @dataclass
 class SSHFileTransferCapability:
-    """Placeholder interface — SFTP implementation in a later milestone."""
+    """Governed SFTP-shaped transfer via governance.ssh_file_transfer."""
 
     owner_id: str
 
     async def transfer(self, **kwargs):
-        raise NotImplementedError("sftp_not_implemented")
+        from governance.ssh_file_transfer import governed_transfer, TransferRequest, TransferOp
+        op = kwargs.get("op")
+        if isinstance(op, str):
+            op = TransferOp(op)
+        req = TransferRequest(
+            owner_id=self.owner_id,
+            connection_id=kwargs["connection_id"],
+            op=op,
+            remote_path=kwargs.get("remote_path") or "/",
+            local_relpath=kwargs.get("local_relpath"),
+            project_id=kwargs.get("project_id"),
+            remote_dest=kwargs.get("remote_dest"),
+            overwrite=bool(kwargs.get("overwrite", False)),
+            user_confirmed=bool(kwargs.get("user_confirmed", False)),
+            max_bytes=int(kwargs.get("max_bytes", 50 * 1024 * 1024)),
+            actor=kwargs.get("actor") or "user",
+        )
+        return await governed_transfer(req)
