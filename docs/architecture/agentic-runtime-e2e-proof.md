@@ -212,3 +212,25 @@ trusted build → project.preview → authorize → session/runtime_service
 - Stop is project-scoped (no arbitrary PID kill)
 
 See `execution/project_preview.py` and `tests/test_agentic_preview.py`.
+
+
+## Governed Project Verify Proof
+
+Capability: `project.verify` (profile=`verify` only)
+
+**Lifecycle: CREATE…PREVIEW complete · VERIFY this milestone · DEPLOY not implemented**
+
+Central rule: **READY ≠ VERIFIED**
+
+```
+build → preview → project.verify → application checks → evidence → VERIFIED|FAILED
+```
+
+- Prerequisites: trusted build artifact + READY preview session (owner/project scoped)
+- Application checks from `devos.verify.json` (must_contain, forbid_contains, exports)
+- Session READY alone never yields VERIFIED
+- Session mode does not claim live network/runtime
+- No planner command/port/ready/verified/evidence fields
+- Durable `.devos/verify_result.json`
+
+See `execution/project_verify.py` and `tests/test_agentic_verify.py` (AC-25..AC-48).

@@ -1,0 +1,7 @@
+{
+  "profile": "verify",
+  "mode": "session",
+  "must_contain": "return a + b",
+  "forbid_contains": "return a - b",
+  "expected_exports": ["add"]
+}
