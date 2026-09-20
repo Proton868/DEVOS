@@ -317,15 +317,62 @@ def test_ac70_concurrent():
 
 # AC-71
 def test_ac71_unknown_cannot_complete():
-    t = delegate_agent_task(owner_id="owner1", requested_capabilities=CAPS, task_input={"project_id": "proj1"})
+    """Crash window: deployment side effect may exist, but UNKNOWN cannot become success.
+
+    Sequence simulated:
+      deploy executes (durable deployment record)
+          ↓
+      worker crash before terminal/evidence checkpoint
+          ↓
+      agent state = UNKNOWN (auto_retry=False)
+          ↓
+      completion gate rejects "deployed" claims
+    """
+    fs, ctx = _pipeline()
+    # Side effect: durable deployment exists
+    out = _run(execute_project_deploy(
+        _c(CAP_PROJECT_DEPLOY),
+        _req(CAP_PROJECT_DEPLOY, PROFILE_DEPLOY, ctx),
+    ))
+    assert out["success"] is True
+    assert (fs.root / ".devos" / "deployment.json").is_file()
+
+    t = delegate_agent_task(
+        owner_id="owner1",
+        requested_capabilities=CAPS,
+        task_input={"project_id": "proj1"},
+    )
+    set_completion_contract(
+        t,
+        CompletionContract(
+            require_structured_complete_decision=True,
+            required_evidence=True,
+            required_successful_capabilities=1,
+        ),
+    )
     cp = checkpoint_from_task(t)
+    # Simulate crash after side effect, before authoritative completion
     cp.state = AgentRuntimeState.UNKNOWN
-    cp.unknown_info = {"reason": "deploy_interrupted", "auto_retry": False}
+    cp.unknown_info = {
+        "reason": "deploy_interrupted",
+        "auto_retry": False,
+        "deployment_id": out["deployment"]["deployment_id"],
+        "phase": "post_side_effect_pre_terminal",
+    }
     persist_checkpoint(t, cp)
+
+    # Planner/agent claim must not promote UNKNOWN → COMPLETED
     v = validate_completion(
-        t, decision=TurnDecision(kind="complete", complete=True, reason="deployed"), cp=cp,
+        t,
+        decision=TurnDecision(kind="complete", complete=True, reason="deployed"),
+        cp=cp,
     )
     assert not v.ok
+    assert checkpoint_from_task(t).state == AgentRuntimeState.UNKNOWN
+    assert (checkpoint_from_task(t).unknown_info or {}).get("auto_retry") is False
+
+    # UNKNOWN is not a successful deployment completion
+    assert checkpoint_from_task(t).state != AgentRuntimeState.COMPLETED
 
 
 # AC-73 / AC-74

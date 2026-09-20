@@ -259,4 +259,6 @@ build → preview → verify → project.deploy → deployment identity → evid
 
 Lifecycle: CREATE…VERIFY complete · **DEPLOY complete** · OBSERVE/MAINTAIN not implemented
 
+AC-71 UNKNOWN: crash after deploy side effect / before terminal cannot become COMPLETED; auto_retry remains false.
+
 See `execution/project_deploy.py` and `tests/test_agentic_deploy.py` (AC-49..AC-80).
