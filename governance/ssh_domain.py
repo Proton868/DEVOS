@@ -140,6 +140,10 @@ async def create_connection(
     created_by: Optional[str] = None,
     metadata: Optional[dict] = None,
 ) -> dict:
+    from governance.ssh_network_policy import assert_ssh_target_allowed
+    assert_ssh_target_allowed(
+        hostname, port, actor=(created_by or "user"),
+    )
     from core.database import AsyncSessionLocal, SshConnection, SshCredentialRef, gen_id
 
     auth_method = (auth_method or "private_key").lower()

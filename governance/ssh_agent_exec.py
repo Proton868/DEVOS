@@ -216,6 +216,35 @@ async def governed_ssh_exec(
             actor=req.actor,
         )
 
+    # Resource governance
+    from governance.ssh_resource_limits import (
+        acquire_command_slot,
+        release_command_slot,
+        clamp_timeout,
+        clamp_output,
+        DEFAULT_MAX_STDOUT_BYTES,
+        DEFAULT_MAX_STDERR_BYTES,
+        ResourceLimitExceeded,
+    )
+    try:
+        acquire_command_slot(req.owner_id or req.actor)
+    except ResourceLimitExceeded as e:
+        return SshExecEvidence(
+            evidence_id=evidence_id,
+            command=policy.sanitized_command,
+            exit_status=None,
+            stdout_sanitized="",
+            stderr_sanitized="",
+            duration_ms=0,
+            host_identity=host_identity,
+            risk_class=policy.risk_class.value,
+            policy=policy.to_dict(),
+            status="denied",
+            actor=req.actor,
+        )
+
+    effective_timeout = clamp_timeout(req.timeout_s)
+
     # Execute via existing transport (caller may supply live session)
     transport = transport or SshTransportService(backend=MockSshBackend())
     t0 = time.monotonic()
@@ -227,7 +256,7 @@ async def governed_ssh_exec(
     try:
         if transport_session_id:
             result = await transport.exec(
-                transport_session_id, policy.sanitized_command, timeout_s=req.timeout_s
+                transport_session_id, policy.sanitized_command, timeout_s=effective_timeout
             )
         else:
             # Ephemeral connect path is host-verify gated by capability layer
@@ -239,7 +268,7 @@ async def governed_ssh_exec(
             )
             host_identity = verify.to_evidence()
             result = await transport.exec(
-                session.session_id, policy.sanitized_command, timeout_s=req.timeout_s
+                session.session_id, policy.sanitized_command, timeout_s=effective_timeout
             )
             await transport.close(session.session_id)
         exit_status = result.exit_status
@@ -253,8 +282,20 @@ async def governed_ssh_exec(
         logger.info("ssh_exec_failed owner=%s err=%s", req.owner_id, type(e).__name__)
 
     duration_ms = int((time.monotonic() - t0) * 1000)
-    out_s = scrub_ssh_secrets_from_text(stdout.decode("utf-8", errors="replace"))
-    err_s = scrub_ssh_secrets_from_text(stderr.decode("utf-8", errors="replace"))
+    try:
+        release_command_slot(req.owner_id or req.actor)
+    except Exception:
+        pass
+    out_s = scrub_ssh_secrets_from_text(
+        clamp_output(stdout.decode("utf-8", errors="replace"), limit=DEFAULT_MAX_STDOUT_BYTES)
+        if isinstance(stdout, (bytes, bytearray))
+        else clamp_output(str(stdout), limit=DEFAULT_MAX_STDOUT_BYTES)
+    )
+    err_s = scrub_ssh_secrets_from_text(
+        clamp_output(stderr.decode("utf-8", errors="replace"), limit=DEFAULT_MAX_STDERR_BYTES)
+        if isinstance(stderr, (bytes, bytearray))
+        else clamp_output(str(stderr), limit=DEFAULT_MAX_STDERR_BYTES)
+    )
     flags = reject_remote_policy_injection(out_s + "\n" + err_s)
     if flags:
         # Remote output never upgrades policy; flag only
