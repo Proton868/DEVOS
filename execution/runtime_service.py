@@ -194,10 +194,23 @@ def get_or_create_runtime(user_id: str, project_id: str) -> ApplicationRuntime:
     return ApplicationRuntime(AppRuntimeSpec(user_id=user_id, project_id=project_id))
 
 
-def snapshot(user_id: str, project_id: str, *, probe: bool = True) -> ProjectRuntimeSnapshot:
+def snapshot(
+    user_id: str,
+    project_id: str,
+    *,
+    probe: bool = True,
+    runtime: Optional[ApplicationRuntime] = None,
+) -> ProjectRuntimeSnapshot:
+    """
+    Build a project runtime snapshot.
+
+    Prefer an explicit ``runtime`` when a lifecycle action just ran on an
+    unregistered object (e.g. STATIC_SITE build → BUILT). Active process
+    registry lookup remains the default for status/health probes.
+    """
     fs = FileService(user_id, project_id)
     detection = detect_application(fs)
-    rt = get_runtime(user_id, project_id)
+    rt = runtime or get_runtime(user_id, project_id)
     status = rt.status if rt else AppRuntimeStatus(state=AppRuntimeState.STOPPED, detail="no active runtime")
     health = "unknown"
     if probe and status.port and status.state == AppRuntimeState.READY:
@@ -302,4 +315,6 @@ async def run_lifecycle_action(
                 evidence={"exit_code": code},
             )
 
-    return snapshot(user_id, project_id, probe=True)
+    # Pass the runtime that performed the action so unregistered objects
+    # (e.g. static-site BUILT) are not collapsed to STOPPED / no active runtime.
+    return snapshot(user_id, project_id, probe=True, runtime=rt)
