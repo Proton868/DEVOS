@@ -189,3 +189,26 @@ Agent → Catalog → project.build → Runtime → UCIP → Operation/Job
 | AC-18 | No arbitrary execution surface | YES |
 
 See `tests/test_agentic_build.py` and `execution/project_build.py`.
+
+
+## Governed Project Preview / Runtime Proof
+
+Capability: `project.preview` (profile=`preview` only)
+
+**BUILD: complete · PREVIEW/RUNTIME: this milestone · VERIFY: next · DEPLOY: not implemented**
+
+```
+trusted build → project.preview → authorize → session/runtime_service
+  → durable runtime identity → readiness evidence → observation → completion
+```
+
+- Identity from trusted task context only
+- Build artifact prerequisite (not planner claims)
+- Session mode: durable `.devos/preview_session.json` (deterministic)
+- Runtime mode: `runtime_service` start (isolation required; fail-closed)
+- No planner command/port/path/ready/evidence fields
+- Idempotent same-build session reuse
+- Cross-owner/project isolation
+- Stop is project-scoped (no arbitrary PID kill)
+
+See `execution/project_preview.py` and `tests/test_agentic_preview.py`.
