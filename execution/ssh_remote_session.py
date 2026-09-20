@@ -13,6 +13,11 @@ import logging
 from typing import Any, Optional
 
 from execution.ssh_transport import SshTransportService, MockSshBackend, TransportSession
+from governance.ssh_reconnect import (
+    get_controller,
+    SessionConnectionState,
+    DisconnectReason,
+)
 
 logger = logging.getLogger("devos.ssh_remote_session")
 
@@ -46,6 +51,24 @@ class RemoteSshSession:
         if websocket in self._clients:
             self._clients.remove(websocket)
 
+    def _session_key(self) -> str:
+        return f"{self.user_id}:{self.connection_id}"
+
+    def connection_state(self) -> str:
+        ctrl = get_controller(self._session_key())
+        if self.transport_session.connected and ctrl.state in (
+            SessionConnectionState.CONNECTED,
+            SessionConnectionState.RECONNECTED,
+        ):
+            return ctrl.state.value if ctrl.state == SessionConnectionState.RECONNECTED else SessionConnectionState.CONNECTED.value
+        if ctrl.state == SessionConnectionState.RECONNECTING:
+            return SessionConnectionState.RECONNECTING.value
+        if ctrl.state == SessionConnectionState.FAILED:
+            return SessionConnectionState.FAILED.value
+        if self.transport_session.connected:
+            return SessionConnectionState.CONNECTED.value
+        return SessionConnectionState.DISCONNECTED.value
+
     async def send_status(self, websocket) -> None:
         await websocket.send_json({
             "type": "status",
@@ -53,8 +76,23 @@ class RemoteSshSession:
             "connection_id": self.connection_id,
             "session_id": self.transport_session.session_id,
             "connected": self.transport_session.connected,
+            "connection_state": self.connection_state(),
             "host_identity": self.host_evidence,
         })
+
+    async def notify_state(self, state: str, **extra) -> None:
+        payload = {
+            "type": "connection_state",
+            "mode": "remote_ssh",
+            "connection_id": self.connection_id,
+            "connection_state": state,
+            **extra,
+        }
+        for ws in list(self._clients):
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                pass
 
     async def write(self, data: bytes) -> None:
         # Mock/path: echo to clients for interactive tests without real PTY

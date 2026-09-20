@@ -309,6 +309,35 @@ async def governed_ssh_exec(
     except Exception:
         pass
 
+    try:
+        from governance.ssh_evidence import record_ssh_operation_evidence
+        fp = ""
+        if isinstance(host_identity, dict):
+            fp = str(host_identity.get("fingerprint_sha256") or host_identity.get("fingerprint") or "")
+        chain_summary = record_ssh_operation_evidence(
+            actor_id=req.owner_id or req.actor,
+            user_id=req.owner_id,
+            agent=req.actor,
+            connection_id=req.host_id,
+            verified_fingerprint=fp,
+            capability="ssh.exec",
+            command=policy.sanitized_command,
+            duration_ms=duration_ms,
+            exit_status=exit_status,
+            stdout=out_s,
+            stderr=err_s,
+            policy_decision="allowed" if policy.allowed else "denied",
+            status=status,
+        )
+        evidence.policy = dict(evidence.policy or {})
+        evidence.policy["evidence_chain"] = {
+            "chain_id": chain_summary.get("chain_id"),
+            "node_id": chain_summary.get("node_id"),
+            "grounded_claim": chain_summary.get("grounded_claim"),
+        }
+    except Exception:
+        pass
+
     return evidence
 
 
