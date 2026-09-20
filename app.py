@@ -624,6 +624,7 @@ app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 from api.routes import auth, chat, loop, scripts, memory, search, models, health, governance, extras, files, vcs, terminal, comms, workers, secrets as secrets_routes, user_settings, nodes, artifacts, delivery, github as github_routes
 from api.routes import ssh_terminal
 from api.routes import ssh_inspect
+from api.routes import ssh_diagnostics
 from api.routes import capabilities, evidence, research, ponytail, workflow, enterprise, mcp as mcp_routes, marketplace, composer, agent as agent_routes, lsp as lsp_routes, personas as personas_routes, orchestration as orchestration_routes, toolchain as toolchain_routes, notes as notes_routes
 app.include_router(auth.router,       prefix="/api/auth",       tags=["auth"])
 app.include_router(chat.router,       prefix="/api/chat",       tags=["chat"])
@@ -642,6 +643,7 @@ app.include_router(vcs.router,        prefix="/api/vcs",        tags=["vcs"])
 app.include_router(terminal.router,   prefix="/api/terminal",   tags=["terminal"])
 app.include_router(ssh_terminal.router, prefix="/api/ssh/terminal", tags=["ssh-terminal"])
 app.include_router(ssh_inspect.router, prefix="/api/ssh", tags=["ssh-inspect"])
+app.include_router(ssh_diagnostics.router, prefix="/api/ssh", tags=["ssh-diagnostics"])
 app.include_router(comms.router,      prefix="/api/comms",      tags=["comms"])
 app.include_router(workers.router,    prefix="/api/workers",    tags=["workers"])
 app.include_router(secrets_routes.router, prefix="/api/secrets", tags=["secrets"])

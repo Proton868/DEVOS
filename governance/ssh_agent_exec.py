@@ -96,6 +96,7 @@ class SshExecRequest:
     automation_policy_allows: bool = False
     # Fixed inspect templates may include pipes; still not free-form shell from the model.
     from_inspect_template: bool = False
+    cancel_job_id: Optional[str] = None
 
 
 @dataclass
@@ -198,6 +199,23 @@ async def governed_ssh_exec(
             actor=req.actor,
         )
 
+    from governance import ssh_cancel
+    if req.cancel_job_id and ssh_cancel.is_cancelled(req.cancel_job_id):
+        ssh_cancel.mark_cancelled(req.cancel_job_id)
+        return SshExecEvidence(
+            evidence_id=evidence_id,
+            command=policy.sanitized_command,
+            exit_status=None,
+            stdout_sanitized="",
+            stderr_sanitized="",
+            duration_ms=0,
+            host_identity=host_identity,
+            risk_class=policy.risk_class.value,
+            policy=policy.to_dict(),
+            status="cancelled",
+            actor=req.actor,
+        )
+
     # Execute via existing transport (caller may supply live session)
     transport = transport or SshTransportService(backend=MockSshBackend())
     t0 = time.monotonic()
@@ -241,6 +259,11 @@ async def governed_ssh_exec(
     if flags:
         # Remote output never upgrades policy; flag only
         logger.warning("ssh_exec_injection_phrases owner=%s flags=%s", req.owner_id, flags)
+
+    if req.cancel_job_id and ssh_cancel.is_cancelled(req.cancel_job_id):
+        status = "cancelled"
+        ssh_cancel.mark_cancelled(req.cancel_job_id)
+        ssh_cancel.mark_signal_sent(req.cancel_job_id, "post_exec_check")
 
     evidence = SshExecEvidence(
         evidence_id=evidence_id,
