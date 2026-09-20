@@ -203,3 +203,64 @@ async def governed_git_ssh(req: GitSshRequest, *, runner: Any = None) -> GitSshR
             status="failed", op=req.op.value, remote_url=req.remote_url,
             host=host, network_policy=net, message=type(e).__name__,
         )
+
+
+class MockGitSshRunner:
+    """Test double for git push/fetch/clone over SSH.
+
+    Never accepts or returns private key material. Simulates success/failure
+    after authorization has already passed.
+    """
+
+    def __init__(
+        self,
+        *,
+        fail: bool = False,
+        delay_cancel_job_id: str | None = None,
+        record: list | None = None,
+    ):
+        self.fail = fail
+        self.delay_cancel_job_id = delay_cancel_job_id
+        self.calls: list[dict] = record if record is not None else []
+
+    async def __call__(self, req: GitSshRequest, *, host: str, path: str, timeout_s: float) -> dict:
+        call = {
+            "op": req.op.value if isinstance(req.op, GitSshOp) else str(req.op),
+            "host": host,
+            "path": path,
+            "remote_url": req.remote_url,
+            "git_credential_ref_id": req.git_credential_ref_id,
+            "server_connection_id": req.server_connection_id,
+            "user_confirmed": req.user_confirmed,
+            "timeout_s": timeout_s,
+            # Explicitly never include key material
+        }
+        self.calls.append(call)
+
+        if self.delay_cancel_job_id:
+            from governance import ssh_cancel
+            if ssh_cancel.is_cancelled(self.delay_cancel_job_id):
+                return {
+                    "status": "cancelled",
+                    "message": "cancelled_before_push",
+                    "evidence_id": "",
+                }
+
+        if self.fail:
+            return {
+                "status": "failed",
+                "message": "remote_rejected",
+                "evidence_id": "ev-fail",
+            }
+
+        if req.op == GitSshOp.PUSH:
+            return {
+                "status": "succeeded",
+                "message": f"pushed_to_{host}/{path}",
+                "evidence_id": "ev-push-ok",
+            }
+        return {
+            "status": "succeeded",
+            "message": f"{req.op.value}_ok",
+            "evidence_id": f"ev-{req.op.value}",
+        }
