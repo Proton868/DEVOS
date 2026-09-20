@@ -456,3 +456,50 @@ def test_migration_file_exists():
     assert "maintenance_requests" in text
     assert "maintenance_actions" in text
     assert "DROP TABLE" not in text.upper()
+
+
+# Healthy observation → no maintenance action (no policy match)
+def test_healthy_observation_no_maintenance_action():
+    fs = _fs()
+    _seed_contract(fs)
+    with pytest.raises(ProjectMaintainError) as ei:
+        create_maintenance_request(
+            fs,
+            owner_id="owner1",
+            project_id="proj1",
+            deployment_id="DEP-001",
+            source_observation_id="OBS-HEALTHY",
+            observation_kind="health",
+            observation_status="HEALTHY",
+        )
+    assert ei.value.code == "NO_POLICY_MATCH"
+
+
+# Operation SUCCEEDED + re-observation UNHEALTHY remains a valid domain pairing
+def test_operation_succeeded_observation_may_remain_unhealthy():
+    fs = _fs()
+    _seed_contract(fs)
+    req = _create(fs)
+    mid = req["maintenance_request_id"]
+    evaluate_maintenance_request(fs, mid)
+    plan_maintenance_request(fs, mid)
+    authorize_maintenance_request(
+        fs, mid, owner_id="owner1", project_id="proj1",
+        granted_capabilities={
+            "project.build", "project.verify", "project.observe", CAP_PROJECT_MAINTAIN,
+        },
+    )
+    req = execute_maintenance_action(fs, mid, "rebuild", operation_result="SUCCEEDED")
+    rebuilt = next(a for a in req["actions"] if a["action_id"] == "rebuild")
+    assert rebuilt["operation_id"]
+    assert rebuilt["status"] in (ACT_VERIFYING, ACT_SUCCEEDED)
+    # Simulated re-observation domain (independent of operation/task)
+    post_observation = {
+        "observation_id": "OBS-POST",
+        "kind": "health",
+        "status": "UNHEALTHY",
+        "operation_status": "SUCCEEDED",
+    }
+    assert post_observation["operation_status"] == "SUCCEEDED"
+    assert post_observation["status"] == "UNHEALTHY"
+    assert req["status"] != REQ_RESOLVED

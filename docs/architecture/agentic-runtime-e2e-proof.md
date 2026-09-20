@@ -257,7 +257,7 @@ build → preview → verify → project.deploy → deployment identity → evid
 - Shared `governance/security_policy.py`
 - No fake external endpoints
 
-Lifecycle: CREATE…VERIFY complete · **DEPLOY complete** · OBSERVE/MAINTAIN not implemented
+Lifecycle: CREATE…VERIFY complete · **DEPLOY complete** · OBSERVE/MAINTAIN implemented later
 
 AC-71 UNKNOWN: crash after deploy side effect / before terminal cannot become COMPLETED; auto_retry remains false.
 
@@ -281,6 +281,60 @@ Session-mode honesty: no fabricated live HEALTHY/READY process health.
 
 Not provided: shell, network probes, log scraping, metrics, alerts, remediation, infrastructure.
 
-Lifecycle: CREATE…DEPLOY complete · **OBSERVE complete** · MAINTAIN next
+Lifecycle: CREATE…DEPLOY complete · **OBSERVE complete** · MAINTAIN complete · INCIDENT foundation complete
 
 See `execution/project_observe.py` and `tests/test_agentic_observe.py` (AC-81..AC-120).
+
+
+## Governed Project Maintain Proof
+
+Capability: `project.maintain` (profile=`maintain`)
+
+**Additional domains (independent of Task / Operation / Observation):**
+- Maintenance Request — DETECTED … RESOLVED / FAILED / CANCELLED / UNKNOWN / …
+- Maintenance Action — PENDING … SUCCEEDED / FAILED / SKIPPED / UNKNOWN / …
+
+**Invariant:**
+
+> Observation describes the system.
+> Task status describes the agent.
+> Operation status describes capability execution.
+> Maintenance request/action describe governed repair intent and bounded work.
+
+Intended loop:
+
+```text
+OBSERVE → observed state → governed maintenance decision
+  → existing capability → operation → OBSERVE again → evidence
+```
+
+Contract: `devos.maintain.json` (version=1, declarative policies only)
+
+- Trigger source: `observation` only
+- Actions: catalogued capabilities only (`project.build`, `project.verify`, `project.observe`, …)
+- Verification ordering: `after` primary action
+- Required vs optional actions are durable
+- Authorization is separate from observation (observation is evidence, not authority)
+
+Not provided:
+- second runtime / execution engine / evidence store
+- monitoring platform or alerting
+- autonomous remediation loops
+- arbitrary shell/URL/port/code in the contract
+- incident paging (see Incident domain foundation)
+
+See `execution/project_maintain.py` and `tests/test_agentic_maintain.py` (AC-121..AC-182).
+
+
+## Governed Incident Domain Foundation
+
+Capability: `project.incident` (governance/read-oriented)
+
+Sixth independent domain: Incident lifecycle (DETECTED … RESOLVED).
+
+Observation may *detect* an incident under `devos.incident.json` policy.
+Incident may *link* to a Maintenance Request.
+Mitigation still flows only through Maintain + existing capabilities.
+No auto-remediate, pager, or shell path.
+
+See `execution/project_incident.py` and `tests/test_agentic_incident.py` (AC-183..AC-220).
