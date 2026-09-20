@@ -608,3 +608,8 @@ LLM Planner
 - Capability requests enter the existing `request_capability` path; the planner never invokes capabilities.
 - Provider failures and malformed output become governed `block`/`fail` decisions — no side effects.
 - Deterministic `default_planner` / `FakeLLMProvider` remain available for tests; CI does not call external models.
+
+### Smoke
+
+- **Local (CI-safe):** `run_local_planner_smoke()` uses `FakeLLMProvider` — no network.
+- **Optional live:** set `DEVOS_LLM_SMOKE=1` to exercise `BrainLLMProvider` schema validation only (no consequential execution in the smoke test).

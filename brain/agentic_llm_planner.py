@@ -109,10 +109,22 @@ def parse_structured_plan(raw: Any) -> StructuredPlan:
         low = s.lower().strip()
         if low in ("done", "finished", "success", "completed", "complete"):
             raise PlannerValidationError("free_form_complete_rejected")
+        data = None
         try:
             data = json.loads(s)
-        except json.JSONDecodeError as e:
-            raise PlannerValidationError(f"malformed_json:{e}") from e
+        except json.JSONDecodeError:
+            # Extract first JSON object from noisy model prose
+            start = s.find("{")
+            end = s.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    data = json.loads(s[start : end + 1])
+                except json.JSONDecodeError as e:
+                    raise PlannerValidationError(f"malformed_json:{e}") from e
+            else:
+                raise PlannerValidationError("malformed_json:no_object")
+        if data is None:
+            raise PlannerValidationError("malformed_json:empty")
     else:
         raise PlannerValidationError(f"unsupported_plan_type:{type(raw).__name__}")
 
@@ -245,6 +257,40 @@ class FakeLLMProvider:
         idx = min(self._i, len(self.script) - 1)
         self._i += 1
         return self.script[idx]
+
+
+
+def run_local_planner_smoke() -> dict:
+    """Always-on smoke: FakeLLM → structured plan → validation → TurnDecision.
+
+    No network. Safe for CI. Proves planner path without external models.
+    """
+    prov = FakeLLMProvider(script=[
+        json.dumps({
+            "action": {
+                "type": "capability_request",
+                "capability": "devos.capability.list",
+                "input": {},
+                "rationale": "local_smoke",
+            }
+        }),
+        json.dumps({"action": {"type": "complete", "rationale": "local_smoke_done"}}),
+    ])
+    planner = make_llm_planner(prov)
+    ctx = {
+        "task_id": "smoke",
+        "objective": "list capabilities",
+        "allowed_capabilities": ["devos.capability.list"],
+        "turn": 0,
+    }
+    d1 = planner(ctx)
+    d2 = planner({**ctx, "turn": 1, "last_observation": {"status": "executed"}})
+    return {
+        "ok": d1.kind == "capability_request" and d2.kind == "complete",
+        "first": d1.to_dict(),
+        "second": d2.to_dict(),
+        "network": False,
+    }
 
 
 @dataclass
