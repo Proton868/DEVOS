@@ -634,7 +634,7 @@ export default function DevOSIde({ onClose, onCollapse }) {
                 <X size={13} />
               </button>
             </div>
-            <div className="sp-ide-side-body">{renderSideBody()}</div>
+            <div className="sp-ide-side-body sp-ide-files">{renderSideBody()}</div>
           </div>
         )}
         {plan.sidebarMode === "docked" && sideVisible && (

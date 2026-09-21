@@ -237,8 +237,8 @@ export default function SpatialWorkspace() {
         <>
           {!stack && (
             <div
-              className="sp-resize-handle"
-              className="sp-focus-resize" onMouseDown={onResizeStart}
+              className="sp-resize-handle sp-focus-resizer"
+              onMouseDown={onResizeStart}
               role="separator"
               aria-orientation="vertical"
             />

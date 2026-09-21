@@ -67,7 +67,7 @@ def test_no_production_sqlite3_connect():
     import pathlib
     bad = []
     for path in pathlib.Path(".").rglob("*.py"):
-        if ".git" in path.parts or "tests" in path.parts:
+        if any(part in {".git", ".venv"} for part in path.parts) or "tests" in path.parts:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         if "sqlite3.connect" in text:

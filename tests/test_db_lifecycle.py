@@ -29,6 +29,8 @@ def test_outbox_idempotency_migration_present():
 def test_no_drop_table_in_forward_migrations():
     """Forward migrations must not DROP TABLE (destructive)."""
     for p in MIG.glob("*.sql"):
+        if p.name.endswith(".down.sql"):
+            continue
         body = p.read_text().upper()
         # allow comments mentioning DROP
         for line in p.read_text().splitlines():

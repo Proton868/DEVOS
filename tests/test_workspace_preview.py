@@ -34,8 +34,18 @@ def _seed_workspace():
     )
     fs.write("style.css", "h1{color:navy}")
     fs.write("nested/app.js", "console.log(1)")
-    fs.write(".env", "OPENROUTER_API_KEY=secret-value")
-    fs.write("id_rsa", "PRIVATE KEY MATERIAL")
+
+    # Seed intentionally secret-looking files directly for preview security tests.
+    # FileService.write() correctly refuses these paths in normal operation.
+    (fs.root / ".env").write_text(
+        "OPENROUTER_API_KEY=secret-value",
+        encoding="utf-8",
+    )
+    (fs.root / "id_rsa").write_text(
+        "PRIVATE KEY MATERIAL",
+        encoding="utf-8",
+    )
+
     FileService(OTHER, OTHER_WS).write("index.html", "<html><body>other</body></html>")
     yield
 
