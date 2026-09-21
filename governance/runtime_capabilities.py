@@ -76,7 +76,7 @@ def ensure_runtime_capabilities_registered() -> None:
                 category=CapabilityCategory.SYSTEM,
                 description="install/build/start/stop/restart/rebuild/test application runtime",
                 risk=CapabilityRisk.MEDIUM,
-                trust_required="standard",
+                trust_required="operator",
                 timeout_s=600,
                 max_retries=0,
                 input_schema={
@@ -187,7 +187,7 @@ def _register_lifecycle_capability() -> None:
             category=CapabilityCategory.SYSTEM,
             description="CREATE→DEVELOP→TEST→BUILD→PREVIEW→VERIFY→DEPLOY→OBSERVE→MAINTAIN",
             risk=CapabilityRisk.HIGH,
-            trust_required="standard",
+            trust_required="operator",
             timeout_s=900,
             max_retries=0,
             input_schema={

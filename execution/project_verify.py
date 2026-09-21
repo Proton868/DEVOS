@@ -410,7 +410,7 @@ def ensure_project_verify_registered() -> None:
                     category=CapabilityCategory.SYSTEM,
                     description="Governed project verification",
                     risk=CapabilityRisk.LOW,
-                    trust_required="standard",
+                    trust_required="operator",
                     input_schema=schema,
                     output_schema={"type": "object"},
                     metadata={

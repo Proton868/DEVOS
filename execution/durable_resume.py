@@ -37,9 +37,9 @@ def _pid_alive(pid: Optional[int]) -> bool:
 
 def reconcile_runtime_records(project_id: str) -> list[dict]:
     """Mark durable runtimes STALE/STOPPED if PID is gone."""
-    from execution.durable_store import list_runtimes, upsert_runtime
+    from execution.durable_store import list_runtimes_for_project, upsert_runtime
     out = []
-    for row in list_runtimes(project_id):
+    for row in list_runtimes_for_project(project_id):
         st = (row.get("status") or "").upper()
         pid = row.get("pid")
         if st in ("READY", "STARTING", "RUNNING", "BUILDING") and not _pid_alive(pid):

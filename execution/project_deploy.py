@@ -425,7 +425,7 @@ def ensure_project_deploy_registered() -> None:
                     category=CapabilityCategory.SYSTEM,
                     description="Governed project deployment (scoped)",
                     risk=CapabilityRisk.HIGH,
-                    trust_required="standard",
+                    trust_required="operator",
                     input_schema=schema,
                     output_schema={"type": "object"},
                     metadata={

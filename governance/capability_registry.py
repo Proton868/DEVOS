@@ -274,8 +274,6 @@ class CapabilityRegistry:
                 timeout_s=60, max_retries=1, is_reversible=False,
             ),
             CapabilityDescriptor(
-                
-            CapabilityDescriptor(
                 slug="ucip:ssh.connect", name="SSH Connect",
                 category=CapabilityCategory.EXECUTION,
                 description="Establish verified SSH connection to an owned host",
@@ -287,8 +285,6 @@ class CapabilityRegistry:
                                               "host_identity": {"type": "object"}}},
                 timeout_s=60, max_retries=1, is_reversible=True,
             ),
-            CapabilityDescriptor(
-                
             CapabilityDescriptor(
                 slug="ucip:ssh.inspect", name="SSH Inspect",
                 category=CapabilityCategory.EXECUTION,
@@ -304,7 +300,8 @@ class CapabilityRegistry:
                                               "evidence_id": {"type": "string"}}},
                 timeout_s=60, max_retries=1, is_reversible=True,
             ),
-slug="ucip:ssh.exec", name="SSH Exec",
+            CapabilityDescriptor(
+                slug="ucip:ssh.exec", name="SSH Exec",
                 category=CapabilityCategory.EXECUTION,
                 description="Execute a governed remote command over SSH",
                 risk=CapabilityRisk.HIGH,
@@ -322,7 +319,8 @@ slug="ucip:ssh.exec", name="SSH Exec",
                                    "stdout": {"type": "string"}}},
                 timeout_s=120, max_retries=0, is_reversible=False,
             ),
-slug="ucip:vcs.write", name="VCS Write",
+            CapabilityDescriptor(
+                slug="ucip:vcs.write", name="VCS Write",
                 category=CapabilityCategory.VCS,
                 description="Stage and commit changes in git",
                 risk=CapabilityRisk.MEDIUM,

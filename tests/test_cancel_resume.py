@@ -63,9 +63,9 @@ def test_reconcile_runtime_stale_pid():
     assert any(r.get("status") == "STALE" for r in report)
 
 
-def test_reconcile_plan_nodes_protects_external():
+async def test_reconcile_plan_nodes_protects_external():
     plan = FakePlan()
-    report = reconcile_plan_nodes(plan)
+    report = await reconcile_plan_nodes(plan)
     assert any(x["id"] == "b" for x in report["reset"])
     assert any(x["id"] == "d" for x in report["external_protected"])
     assert plan.nodes[3].status == "pending_review"

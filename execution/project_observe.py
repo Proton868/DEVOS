@@ -547,7 +547,7 @@ def ensure_project_observe_registered() -> None:
                     category=CapabilityCategory.SYSTEM,
                     description="Governed project observation (read-only)",
                     risk=CapabilityRisk.LOW,
-                    trust_required="standard",
+                    trust_required="read_only",
                     input_schema=schema,
                     output_schema={"type": "object"},
                     metadata={

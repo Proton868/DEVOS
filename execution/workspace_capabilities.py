@@ -470,7 +470,7 @@ def ensure_workspace_capabilities_registered() -> None:
                         category=CapabilityCategory.SYSTEM,
                         description=f"Governed {name}",
                         risk=risk_map.get(risk, CapabilityRisk.MEDIUM),
-                        trust_required="read_only" if risk == "read" else "standard",
+                        trust_required="read_only" if risk == "read" else "operator",
                         input_schema=schema,
                         output_schema={"type": "object"},
                         metadata={

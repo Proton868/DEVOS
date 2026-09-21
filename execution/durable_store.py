@@ -100,6 +100,29 @@ def list_runtimes(user_id: str, project_id: Optional[str] = None) -> list[dict]:
         ]
 
 
+def list_runtimes_for_project(project_id: str) -> list[dict]:
+    """List durable runtimes belonging to one project."""
+    from core.sync_session import get_sync_session
+    from core.database import DeliveryRuntime
+    from sqlalchemy import select
+
+    with get_sync_session() as s:
+        stmt = select(DeliveryRuntime).where(
+            DeliveryRuntime.project_id == project_id
+        )
+        rows = s.execute(stmt).scalars().all()
+        return [
+            {
+                "runtime_id": r.runtime_id,
+                "user_id": r.user_id,
+                "status": r.status,
+                "project_id": r.project_id,
+                "pid": r.pid,
+            }
+            for r in rows
+        ]
+
+
 def append_log(runtime_id: str, line: str) -> None:
     # logs stay filesystem/ephemeral — not domain authority
     return
