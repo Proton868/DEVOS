@@ -54,7 +54,37 @@ BEGIN
     DROP POLICY IF EXISTS script_chains_owner ON public.script_chains;
     CREATE POLICY script_chains_owner ON public.script_chains
       FOR ALL
-      USING (owner_id IN (SELECT id FROM public.users WHERE supabase_id = auth.uid()::text))
-      WITH CHECK (owner_id IN (SELECT id FROM public.users WHERE supabase_id = auth.uid()::text));
+      USING (
+        parent_script_id IN (
+          SELECT id FROM public.scripts
+          WHERE owner_id IN (
+            SELECT id FROM public.users
+            WHERE supabase_id = auth.uid()::text
+          )
+        )
+        AND child_script_id IN (
+          SELECT id FROM public.scripts
+          WHERE owner_id IN (
+            SELECT id FROM public.users
+            WHERE supabase_id = auth.uid()::text
+          )
+        )
+      )
+      WITH CHECK (
+        parent_script_id IN (
+          SELECT id FROM public.scripts
+          WHERE owner_id IN (
+            SELECT id FROM public.users
+            WHERE supabase_id = auth.uid()::text
+          )
+        )
+        AND child_script_id IN (
+          SELECT id FROM public.scripts
+          WHERE owner_id IN (
+            SELECT id FROM public.users
+            WHERE supabase_id = auth.uid()::text
+          )
+        )
+      );
   END IF;
 END $$;
