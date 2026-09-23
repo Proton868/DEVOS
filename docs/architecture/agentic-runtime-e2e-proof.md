@@ -409,3 +409,21 @@ RECRUIT · OUTER_SECT · INNER_SECT · CORE · CONCLAVE (+ beta_override on RECR
 **Not yet in this foundation commit:** full Conclave org admin UI, durable Postgres tables for reservations (in-process gateway is authoritative for unit/integration), OmniRoute policy hooks, Nuha wiring of reserve-before-execute on every path.
 
 Invariant: «NO WORLD CAN ESCAPE ITSELF THROUGH DEVOS.»
+
+## PASS 3 — World context propagation (boundary enforcement)
+
+**Entry boundary:** `get_tenant_context` / `world_ctx` builds authoritative `WorldContext`
+from membership; client `X-World-Id` / `X-Tenant-Id` only accepted if member.
+
+**Substrate:** `InvocationContext.require_world_bound()` runs before authorize/execute.
+Missing world/principal → DENIED / WORLD_REQUIRED.
+
+**Helpers:** `governance/world_binding.py` — resource/stream/job payload binding.
+
+**Agent:** `assert_owner` requires world match; agent task GET/events check tenant_id vs world.
+
+**Tests:** `tests/test_world_propagation.py` + prior world/economic suites.
+
+**Remaining (not claimed complete):** full Nuha/MCP/terminal/runtime route-by-route wiring,
+durable job worker extract_job_world on every queue consumer, SSE for all streams,
+OmniRoute economic routing.

@@ -396,10 +396,19 @@ def delegate_agent_task(
 
 
 def assert_owner(task: GovernedAgentTask, owner_id: str, tenant_id: Optional[str] = None) -> None:
-    if task.owner_id != owner_id:
+    """Fail closed on cross-owner / cross-world access (world_id ≡ tenant_id)."""
+    if not owner_id or task.owner_id != owner_id:
         raise DelegationError("OWNER_ISOLATION", "cross-owner agent task access denied")
-    if tenant_id is not None and task.tenant_id and task.tenant_id != tenant_id:
-        raise DelegationError("TENANT_ISOLATION", "cross-tenant agent task access denied")
+    # World binding: when either side has a tenant/world, they must match.
+    task_world = str(getattr(task, "tenant_id", None) or getattr(task, "world_id", None) or "").strip()
+    req_world = str(tenant_id or "").strip()
+    if task_world and req_world and task_world != req_world:
+        raise DelegationError("TENANT_ISOLATION", "cross-world agent task access denied")
+    if task_world and not req_world:
+        # Caller omitted world while task is world-bound — deny
+        raise DelegationError("WORLD_REQUIRED", "world context required for agent task access")
+    if req_world and not task_world:
+        raise DelegationError("WORLD_REQUIRED", "agent task missing world binding")
 
 
 def record_plan(task: GovernedAgentTask, plan: dict) -> GovernedAgentTask:

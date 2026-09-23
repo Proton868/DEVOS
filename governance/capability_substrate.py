@@ -142,6 +142,21 @@ class InvocationContext:
     # Trusted server-side metadata only (e.g. project_id). Never from planner authority.
     metadata: dict = field(default_factory=dict)
 
+    @property
+    def world_id(self) -> str:
+        """Canonical world identity (world_id ≡ tenant_id)."""
+        return str(self.tenant_id or "").strip()
+
+    def require_world_bound(self) -> None:
+        """Fail closed if world/principal missing. Call before execution."""
+        if not str(self.tenant_id or "").strip():
+            raise ValueError("WORLD_REQUIRED: InvocationContext.tenant_id/world_id missing")
+        if not str(self.owner_id or "").strip():
+            raise ValueError("PRINCIPAL_REQUIRED: InvocationContext.owner_id missing")
+        wid = str(self.tenant_id).strip()
+        if ".." in wid or "/" in wid or chr(92) in wid or chr(0) in wid:
+            raise ValueError(f"INVALID_WORLD: {wid!r}")
+
     def effective_grants(self) -> set[str]:
         if self.client_supplied_grants:
             # Fail closed: never treat client-provided grant lists as authoritative
@@ -461,6 +476,22 @@ class CapabilitySubstrate:
         cid = self.resolve_id(request.capability_id)
         corr = request.context.correlation_id or str(uuid.uuid4())
         surface = request.context.surface
+
+        # --- World binding (fail closed) ---
+        try:
+            request.context.require_world_bound()
+        except ValueError as ve:
+            return InvocationResult(
+                status=InvocationStatus.DENIED,
+                capability_id=cid,
+                authorized=False,
+                auth_reason=str(ve),
+                error=str(ve),
+                error_class="WORLD_REQUIRED",
+                duration_ms=0.0,
+                correlation_id=corr,
+                surface=surface,
+            )
 
         def _finish(
             status: InvocationStatus,

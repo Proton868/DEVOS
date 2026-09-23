@@ -19,7 +19,21 @@ from pydantic import BaseModel, Field
 
 from core.database import get_db
 from api.routes.auth import get_current_user
+from api.deps import world_ctx, tenant_ctx
+from governance.world_context import WorldContext
+from governance.world_binding import assert_resource_in_world, assert_stream_subscription
 from governance.tenant_store import ensure_personal_tenant
+
+
+def _task_world_guard(world: WorldContext, task_or_row) -> None:
+    """Ensure task belongs to authenticated world + principal. 404 on mismatch."""
+    from fastapi import HTTPException
+    from governance.world_context import WorldBoundaryError
+    try:
+        assert_stream_subscription(world, task_or_row, resource_name="agent_task")
+    except WorldBoundaryError:
+        raise HTTPException(404, "task not found")
+
 
 router = APIRouter()
 
@@ -166,16 +180,26 @@ async def list_tasks(request: Request, db=Depends(get_db)):
 @router.get("/{task_id}")
 async def get_task(task_id: str, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
+    from api.deps import world_ctx as _world_dep
+    from governance.request_identity import get_tenant_context
+    from governance.ucip import TrustLevel
+    tctx = await get_tenant_context(request, db, user, trust=TrustLevel.OPERATOR)
+    world = tctx.world
     from brain.agent_runtime import get_task as get_live
     task = get_live(task_id)
     if task:
         if task.user_id != user.id:
             raise HTTPException(404, "task not found")
+        # Cross-world deny when task carries tenant/world
+        tw = getattr(task, "tenant_id", None)
+        if tw and str(tw) != world.world_id:
+            raise HTTPException(404, "task not found")
         return task.to_dict()
     from brain.agent_task_store import load_task
     row = await load_task(task_id)
     if not row or row.get("user_id") != user.id:
+        raise HTTPException(404, "task not found")
+    if row.get("tenant_id") and str(row.get("tenant_id")) != world.world_id:
         raise HTTPException(404, "task not found")
     return row
 
@@ -189,19 +213,27 @@ async def get_task_events(
 ):
     """Reconnect helper: return buffered agent events after a sequence number.
 
-    Events are scoped to the authenticated user. Never leaks cross-tenant streams.
+    Events are scoped to the authenticated world + principal. Never leaks cross-world streams.
     """
     user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
+    from governance.request_identity import get_tenant_context
+    from governance.ucip import TrustLevel
+    tctx = await get_tenant_context(request, db, user, trust=TrustLevel.OPERATOR)
+    world = tctx.world
     from brain.agent_runtime import get_task as get_live, get_task_events as live_events
     task = get_live(task_id)
     if task:
         if task.user_id != user.id:
             raise HTTPException(404, "task not found")
+        tw = getattr(task, "tenant_id", None)
+        if tw and str(tw) != world.world_id:
+            raise HTTPException(404, "task not found")
         return {"task_id": task_id, "events": live_events(task_id, after_seq)}
     from brain.agent_task_store import load_task, load_task_events
     row = await load_task(task_id)
     if not row or row.get("user_id") != user.id:
+        raise HTTPException(404, "task not found")
+    if row.get("tenant_id") and str(row.get("tenant_id")) != world.world_id:
         raise HTTPException(404, "task not found")
     events = await load_task_events(task_id, after_seq)
     return {"task_id": task_id, "events": events, "status": row.get("status")}
