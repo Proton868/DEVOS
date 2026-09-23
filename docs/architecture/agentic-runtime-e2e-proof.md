@@ -386,3 +386,26 @@ Also: `cleanup.json` (teardown), `failure.json` (on injected failure).
 Rules: Operation SUCCEEDED ≠ Observation HEALTHY; Observation HEALTHY ≠ Incident RESOLVED without criteria; Maintenance RESOLVED ≠ Incident RESOLVED without criteria.
 
 Failure injection covers CREATE→blocked DEPLOY, MAINTAIN FAILED (no false repair), HEALTHY→no maintain/incident, cross-owner isolation. Cleanup is fixture teardown (success and failure).
+
+## Governed Economics + World Isolation (foundation)
+
+**World axiom:** `world_id ≡ tenant_id`. Every operation has exactly one world.
+Client-supplied world IDs are never authoritative without membership proof.
+
+**Modules:**
+- `governance/world_context.py` — WorldContext, resolve_world_from_request, fail-closed
+- `governance/economics.py` — Jev: entitlement, estimate, reserve, reconcile, usage
+- `governance/economic_ucip.py` — UCIP insert: authorize_and_reserve → execute → reconcile
+
+**Plans (entitlement profiles, not code branches):**
+RECRUIT · OUTER_SECT · INNER_SECT · CORE · CONCLAVE (+ beta_override on RECRUIT)
+
+**Economic lifecycle:** ESTIMATE → RESERVE → EXECUTE → RECONCILE
+
+**Tests:**
+- `tests/test_world_boundary.py`
+- `tests/test_economics_lifecycle.py`
+
+**Not yet in this foundation commit:** full Conclave org admin UI, durable Postgres tables for reservations (in-process gateway is authoritative for unit/integration), OmniRoute policy hooks, Nuha wiring of reserve-before-execute on every path.
+
+Invariant: «NO WORLD CAN ESCAPE ITSELF THROUGH DEVOS.»
