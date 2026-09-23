@@ -191,3 +191,40 @@ __all__ = [
     "WorldBoundaryError",
     "WorldContext",
 ]
+
+
+def filter_sse_event_for_subscriber(
+    subscriber_world: WorldContext,
+    event: Mapping[str, Any] | None,
+) -> bool:
+    """
+    Delivery-time isolation for long-lived SSE.
+
+    Returns True if the event may be delivered to the subscriber.
+    Events without world/tenant metadata are allowed only when they carry
+    no owner/user fields (global operational events). Otherwise DENY.
+    """
+    subscriber_world = require_world_context(subscriber_world)
+    if not event or not isinstance(event, Mapping):
+        return False
+    eworld = str(
+        event.get("world_id")
+        or event.get("tenant_id")
+        or (event.get("data") or {}).get("world_id")
+        or (event.get("data") or {}).get("tenant_id")
+        or ""
+    ).strip()
+    eowner = str(
+        event.get("owner_id")
+        or event.get("user_id")
+        or (event.get("data") or {}).get("owner_id")
+        or (event.get("data") or {}).get("user_id")
+        or ""
+    ).strip()
+    if eworld:
+        if eworld != subscriber_world.world_id:
+            return False
+    if eowner and eowner != subscriber_world.principal_id:
+        return False
+    # If event claims a different plan/user owner, deny when present
+    return True

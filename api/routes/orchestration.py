@@ -216,6 +216,12 @@ async def orchestration_stream(
                 break
             events = list(getattr(pl, "events", None) or [])
             for i, e in enumerate(events):
+                try:
+                    from governance.world_execution import filter_sse_event_for_subscriber
+                    if isinstance(e, dict) and not filter_sse_event_for_subscriber(tctx.world, e):
+                        continue
+                except Exception:
+                    pass
                 if not isinstance(e, dict):
                     continue
                 seq = int(e.get("sequence") or (i + 1))

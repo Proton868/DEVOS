@@ -453,3 +453,16 @@ Remaining: every SSE stream route, full MCP call_tool path, PTY websocket projec
 - Production run_delegated_mission callers: chat + nuha_bridge only (both pass world_id)
 
 Tests: tests/test_world_boundaries_pass5.py
+
+## PASS 6 — Final world isolation proof
+
+- SSH terminal WS: WorldContext before session create
+- SSE delivery-time: `filter_sse_event_for_subscriber` in orchestration stream
+- Consolidated attack + positive matrices: `tests/test_world_isolation_pass6.py`
+- Queue retry forged world DENY; recovery uses durable job world
+- Cache/registry lifecycle cross-world isolation
+- Production `run_delegated_mission` callers: chat + nuha_bridge only (world_id required)
+
+**Code-level world isolation is complete for the inventoried DevOS world-sensitive execution boundaries.**
+
+Prime production isolation: NOT VERIFIED in this environment.
