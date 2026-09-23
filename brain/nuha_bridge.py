@@ -183,6 +183,8 @@ async def run_chat_orchestration(
     workspace_id: str = "default",
     persona_id: str = "nuha",
     execute: bool = True,
+    world_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     """Authoritative Nuha orchestration entry for non-SSE callers.
 
@@ -223,6 +225,24 @@ async def run_chat_orchestration(
             "execution_path": "PLAN_ONLY",
         }
 
+    # Resolve world before specialist delegation (fail closed if missing)
+    from governance.world_execution import nuha_world_from_fields, WorldBoundaryError
+    try:
+        _w = nuha_world_from_fields(
+            user_id=user_id,
+            world_id=world_id,
+            tenant_id=tenant_id or world_id,
+        )
+    except WorldBoundaryError as wbe:
+        return {
+            "ok": False,
+            "orchestrated": True,
+            "status": "denied",
+            "synthesis_mode": "failure",
+            "error": f"{wbe.code}: {wbe.message}",
+            "execution_path": "WORLD_DENIED",
+        }
+
     dres = await run_delegated_mission(
         user_id=user_id,
         goal=goal,
@@ -230,6 +250,8 @@ async def run_chat_orchestration(
         persona_key=select_persona_for_goal(goal),
         plan_id=getattr(plan, "id", None),
         idempotency_key=f"bridge:{user_id}:{getattr(plan, 'id', goal)[:64]}",
+        world_id=_w.world_id,
+        tenant_id=_w.world_id,
     )
     status = dres.status or ("succeeded" if dres.ok else "failed")
     from brain.mission_acceptance import evaluate_mission_acceptance

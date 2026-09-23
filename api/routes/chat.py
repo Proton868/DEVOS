@@ -392,6 +392,14 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
 
                     async def _run_mission():
                         try:
+                            # Trusted world from request boundary (never client-forged alone)
+                            from governance.request_identity import get_tenant_context as _gtc
+                            from governance.ucip import TrustLevel as _TL
+                            try:
+                                _tctx = await _gtc(request, db, user, trust=_TL.OPERATOR)
+                                _wid = _tctx.world.world_id
+                            except Exception:
+                                _wid = None
                             result = await run_delegated_mission(
                                 user_id=user.id,
                                 goal=req.message,
@@ -400,6 +408,8 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                                 plan_id=plan.id,
                                 idempotency_key=f"chat:{_idem}",
                                 on_progress=_on_mission_progress,
+                                world_id=_wid,
+                                tenant_id=_wid,
                             )
                             await progress_q.put({"_mission_done": True, "result": result})
                             return result

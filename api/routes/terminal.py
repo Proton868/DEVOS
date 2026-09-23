@@ -110,7 +110,14 @@ class RunReq(BaseModel):
 @router.post("/{project_id}/run")
 async def run_command(project_id: str, req: RunReq, request: Request, db=Depends(get_db)):
     user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
+    from governance.request_identity import get_tenant_context
+    from governance.ucip import TrustLevel
+    from governance.world_execution import assert_terminal_world, WorldBoundaryError
+    tctx = await get_tenant_context(request, db, user, trust=TrustLevel.OPERATOR)
+    try:
+        assert_terminal_world(tctx.world, user_id=str(user.id), project_id=project_id)
+    except WorldBoundaryError as wbe:
+        raise HTTPException(403, wbe.message)
     try:
         return await TerminalService(user.id, project_id).run(req.command, req.timeout)
     except DeniedCommand as e:

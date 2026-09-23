@@ -534,6 +534,36 @@ class JobWorker:
         job = await claim_next(self.worker_id)
         if not job:
             return False
+        # World binding — fail closed before any handler side effect
+        try:
+            from governance.world_execution import assert_worker_job_world, WorldBoundaryError
+            payload = job.payload if isinstance(job.payload, dict) else {}
+            # Prefer durable job columns; payload must not expand authority
+            assert_worker_job_world(payload, job)
+        except WorldBoundaryError as wbe:
+            logger.warning(
+                "job %s world denied: %s %s", job.id, wbe.code, wbe.message
+            )
+            await complete(
+                job.id,
+                status="failed",
+                error=f"{wbe.code}: {wbe.message}",
+                worker_id=self.worker_id,
+            )
+            return True
+        except Exception as e:
+            # Missing binding on legacy jobs — fail closed for consequential types
+            jtid = str(getattr(job, "tenant_id", None) or "").strip()
+            joid = str(getattr(job, "owner_id", None) or "").strip()
+            if not jtid or not joid:
+                logger.warning("job %s missing world binding: %s", job.id, type(e).__name__)
+                await complete(
+                    job.id,
+                    status="failed",
+                    error="WORLD_REQUIRED: job missing world binding",
+                    worker_id=self.worker_id,
+                )
+                return True
         handler = self.handlers.get(job.job_type)
         if not handler:
             await complete(job.id, status="failed", error=f"no handler for {job.job_type}", worker_id=self.worker_id)

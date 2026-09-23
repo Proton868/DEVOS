@@ -15,9 +15,16 @@ from governance.evidence import EvidenceChainManager
 router = APIRouter(prefix="/api/evidence", tags=["evidence"])
 
 
-def _require_chain_owner(chain, user_id: str):
+def _require_chain_owner(chain, user_id: str, world_id: str | None = None):
     if not chain or not EvidenceChainManager.owned_by(chain, user_id):
         raise HTTPException(404, "Evidence chain not found")
+    # World binding when chain carries tenant/world metadata
+    if world_id:
+        meta = getattr(chain, "identity_context", None) or getattr(chain, "metadata", None) or {}
+        if isinstance(meta, dict):
+            cw = str(meta.get("world_id") or meta.get("tenant_id") or "").strip()
+            if cw and cw != str(world_id).strip():
+                raise HTTPException(404, "Evidence chain not found")
     return chain
 
 
@@ -36,11 +43,13 @@ async def list_chains(
 
 @router.get("/chains/{chain_id}")
 async def get_chain(chain_id: str, request: Request, db=Depends(get_db)):
-    """Get a single evidence chain by ID (owner only)."""
+    """Get a single evidence chain by ID (owner + world only)."""
     user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
+    from governance.request_identity import get_tenant_context
+    from governance.ucip import TrustLevel
+    tctx = await get_tenant_context(request, db, user, trust=TrustLevel.OPERATOR)
     chain = EvidenceChainManager.load(chain_id)
-    _require_chain_owner(chain, str(user.id))
+    _require_chain_owner(chain, str(user.id), world_id=tctx.world.world_id)
     return {"chain": chain.to_dict()}
 
 

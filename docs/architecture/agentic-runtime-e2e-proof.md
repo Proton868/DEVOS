@@ -427,3 +427,18 @@ Missing world/principal → DENIED / WORLD_REQUIRED.
 **Remaining (not claimed complete):** full Nuha/MCP/terminal/runtime route-by-route wiring,
 durable job worker extract_job_world on every queue consumer, SSE for all streams,
 OmniRoute economic routing.
+
+## PASS 4 — World execution boundaries
+
+**Module:** `governance/world_execution.py`
+
+Enforces world on:
+- Nuha / `run_delegated_mission` / `run_chat_orchestration`
+- Terminal HTTP run
+- JobWorker.run_once (queue consumer)
+- Evidence chain GET (owner + world)
+- Chat → mission path passes trusted world_id
+
+Attack matrix: `tests/test_world_execution_boundaries.py`
+
+Remaining: every SSE stream route, full MCP call_tool path, PTY websocket project ownership parity, RLS audit of all tables.

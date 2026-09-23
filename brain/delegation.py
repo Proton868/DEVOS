@@ -176,6 +176,8 @@ async def run_delegated_mission(
     plan_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
     on_progress=None,
+    world_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
 ) -> DelegationResult:
     """
     Authoritative specialist execution spine:
@@ -186,6 +188,29 @@ async def run_delegated_mission(
     a future substrate invokes the DAG engine under this mission.
     """
     max_rounds = max_rounds if max_rounds is not None else MAX_CORRECTION_ROUNDS
+    # --- World binding (fail closed) ---
+    from governance.world_execution import nuha_world_from_fields, assert_delegation_world, WorldBoundaryError
+    try:
+        _world = nuha_world_from_fields(
+            user_id=user_id,
+            world_id=world_id,
+            tenant_id=tenant_id or world_id,
+        )
+        assert_delegation_world(_world)
+    except WorldBoundaryError as wbe:
+        return DelegationResult(
+            ok=False,
+            status="denied",
+            error=f"{wbe.code}: {wbe.message}",
+            mission_id=None,
+            files_changed=[],
+            evidence_refs=[],
+            ponytail=None,
+        )
+    # Prefer resolved world for downstream correlation
+    world_id = _world.world_id
+    tenant_id = _world.world_id
+
     persona_key = persona_key or select_persona_for_goal(goal)
     _plan_id = plan_id
     agent = await _ensure_persona_agent(persona_key, user_id=user_id)
