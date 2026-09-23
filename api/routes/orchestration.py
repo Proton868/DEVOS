@@ -178,11 +178,24 @@ async def orchestration_stream(
 ):
     """SSE stream of durable plan events with ownership + replay from sequence."""
     user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
+    from governance.request_identity import get_tenant_context
+    from governance.ucip import TrustLevel
+    from governance.world_execution import assert_sse_world, WorldBoundaryError
+    tctx = await get_tenant_context(request, db, user, trust=TrustLevel.OPERATOR)
     plan = get_plan(plan_id)
     if plan is None:
         plan = await get_plan_durable(plan_id)
     if not plan or plan.user_id != user.id:
+        raise HTTPException(404, "plan not found")
+    # World-scope SSE: plan must not belong to another world
+    plan_resource = {
+        "tenant_id": getattr(plan, "tenant_id", None) or tctx.world.world_id,
+        "user_id": plan.user_id,
+        "owner_id": plan.user_id,
+    }
+    try:
+        assert_sse_world(tctx.world, plan_resource, resource_name="orchestration_stream")
+    except WorldBoundaryError:
         raise HTTPException(404, "plan not found")
 
     async def event_gen():

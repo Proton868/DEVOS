@@ -442,3 +442,14 @@ Enforces world on:
 Attack matrix: `tests/test_world_execution_boundaries.py`
 
 Remaining: every SSE stream route, full MCP call_tool path, PTY websocket project ownership parity, RLS audit of all tables.
+
+## PASS 5 — Remaining world boundaries
+
+- Terminal WebSocket: world resolve + assert_terminal_world before PTY
+- MCP call_tool: assert_mcp_world; results attributed to originating world
+- Orchestration SSE: assert_sse_world on plan resource
+- Delivery runtime logs SSE: assert_terminal_world on project
+- world_cache: world-qualified keys + WorldScopedRegistry
+- Production run_delegated_mission callers: chat + nuha_bridge only (both pass world_id)
+
+Tests: tests/test_world_boundaries_pass5.py

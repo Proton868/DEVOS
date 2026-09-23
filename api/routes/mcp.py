@@ -147,7 +147,17 @@ async def call_tool(req: CallToolReq, request: Request, db=Depends(get_db)):
     """Invoke a tool exposed by any connected MCP server. Tool names are
     prefixed as `mcp:<server>:<tool>`."""
     user = await get_current_user(request, db)
-    await ensure_personal_tenant(db, user)
+    from governance.request_identity import get_tenant_context
+    from governance.ucip import TrustLevel
+    from governance.world_execution import assert_mcp_world, WorldBoundaryError
+    tctx = await get_tenant_context(request, db, user, trust=TrustLevel.OPERATOR)
+    # Arguments must not smuggle a foreign world/tenant target
+    args = req.arguments if isinstance(req.arguments, dict) else {}
+    target = args.get("world_id") or args.get("tenant_id") or args.get("target_world_id")
+    try:
+        assert_mcp_world(tctx.world, target_world_id=target)
+    except WorldBoundaryError as wbe:
+        raise HTTPException(403, wbe.message)
     disc = _discovery()
     try:
         result = await disc.call_tool(req.name, req.arguments)
@@ -156,4 +166,9 @@ async def call_tool(req: CallToolReq, request: Request, db=Depends(get_db)):
     except Exception as e:
         logger.exception("MCP tool call failed: %s", req.name)
         raise HTTPException(502, f"Tool call failed: {e}")
-    return {"result": result}
+    # Attribute result to originating world only
+    return {
+        "result": result,
+        "world_id": tctx.world.world_id,
+        "principal_id": tctx.world.principal_id,
+    }

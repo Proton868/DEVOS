@@ -57,7 +57,36 @@ async def terminal_ws(websocket: WebSocket, project_id: str):
             await websocket.close(code=4401)
             return
 
-        # Get or create a persistent PTY session for this project
+        # Trusted world binding before any PTY create/attach
+        from governance.world_execution import assert_terminal_world, WorldBoundaryError
+        from governance.tenant_store import ensure_personal_tenant, user_tenant_ids
+        from governance.world_context import resolve_world_from_request, WorldBoundaryError as _WBE
+        try:
+            async with AsyncSessionLocal() as db2:
+                personal = await ensure_personal_tenant(db2, user)
+                membership = await user_tenant_ids(db2, user.id)
+                if personal and personal.id:
+                    membership = set(membership) | {personal.id}
+                # Optional client world selection from auth message
+                client_world = (auth_msg or {}).get("world_id") or (auth_msg or {}).get("tenant_id")
+                world = resolve_world_from_request(
+                    authenticated_user_id=str(user.id),
+                    membership_tenant_ids=set(membership or set()),
+                    preferred_tenant_id=personal.id if personal else None,
+                    client_supplied_world_id=client_world,
+                )
+                assert_terminal_world(world, user_id=str(user.id), project_id=project_id)
+        except (_WBE, WorldBoundaryError) as wbe:
+            await websocket.send_json({"type": "error", "message": getattr(wbe, "message", str(wbe))})
+            await websocket.close(code=4403)
+            return
+        except Exception as e:
+            logger.warning("[terminal] world resolve failed: %s", type(e).__name__)
+            await websocket.send_json({"type": "error", "message": "world_required"})
+            await websocket.close(code=4403)
+            return
+
+        # Get or create a persistent PTY session for this project (principal-scoped)
         session = await get_or_create_session(user.id, project_id)
         session.attach(websocket)
 
