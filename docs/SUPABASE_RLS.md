@@ -35,5 +35,19 @@ python3 scripts/apply_supabase_schema.py
 Only enable client-direct access to those tables after writing RLS policies tied to `auth.uid()` and membership mapping. Until then, keep access backend-only.
 
 
-## RLS completion (2026-09-17)
-See migrations `20260917110000_*` and `20260917120000_*`. Memories policies fixed to use users.supabase_id linkage. Secrets/scripts/settings gain RLS when present.
+## RLS world-isolation completion (2026-10-06)
+
+Migration `20261006220000_rls_world_isolation_completion.sql` adds owner-scoped
+`FOR ALL` / `WITH CHECK` policies (no `USING (true)`) for tables created after
+the 2026-09-17 completion pass:
+
+- `automation_run_records` (was RLS-enabled in production with **zero** policies)
+- `agentic_runtime_checkpoints`
+- `maintenance_requests` / `maintenance_actions`
+- `incidents`
+- `saga_steps` (via parent `sagas`)
+- `web_crawl_pages` / `web_crawl_events` (via parent `web_crawls`)
+- `trace_spans` (SELECT via `observability_traces`)
+
+Backend `DATABASE_URL` still bypasses RLS. Route handlers must continue to
+filter by authenticated identity / `WorldContext`.

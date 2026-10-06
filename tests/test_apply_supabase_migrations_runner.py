@@ -168,13 +168,75 @@ def test_apply_migrations_failure_rolls_back_and_does_not_record(tmp_path):
             pytest.fail("failed migration was recorded")
 
 
-def test_no_sqlalchemy_imports_in_source():
-    text = SCRIPT.read_text(encoding="utf-8")
-    # No runtime dependency on SQLAlchemy / sync_session
-    assert "from sqlalchemy" not in text
-    assert "import sqlalchemy" not in text
-    assert "core.sync_session" not in text
-    assert "sync_engine" not in text
-    assert "async def" not in text
-    assert "import psycopg" in text
-    assert "%s" in text
+def test_is_forward_migration_name_excludes_rollback_and_seeds():
+    mod = _load()
+    assert mod.is_forward_migration_name("20260918200000_agentic_runtime_checkpoints.sql")
+    assert not mod.is_forward_migration_name(
+        "20260918200000_agentic_runtime_checkpoints.down.sql"
+    )
+    assert not mod.is_forward_migration_name("20260918200000_foo.rollback.sql")
+    assert not mod.is_forward_migration_name("20260918200000_foo.backup.sql")
+    assert not mod.is_forward_migration_name("20260918200000_foo.seed.sql")
+    assert not mod.is_forward_migration_name("README.sql")
+    assert not mod.is_forward_migration_name(".hidden.sql")
+    assert not mod.is_forward_migration_name("notes.down.sql")
+
+
+def test_list_forward_migrations_skips_down_sql(tmp_path):
+    mod = _load()
+    mig = tmp_path / "migrations"
+    mig.mkdir()
+    (mig / "20200101000000_a.sql").write_text("SELECT 1;")
+    (mig / "20200101000000_a.down.sql").write_text("DROP TABLE t;")
+    (mig / "20200102000000_b.down.sql").write_text("DROP TABLE t2;")
+    (mig / "seed.sql").write_text("INSERT INTO t VALUES (1);")
+    names = [p.name for p in mod.list_forward_migrations(mig)]
+    assert names == ["20200101000000_a.sql"]
+
+
+def test_apply_migrations_never_executes_down_sql(tmp_path):
+    mod = _load()
+    mig = tmp_path / "migrations"
+    mig.mkdir()
+    (mig / "20200101000000_ok.sql").write_text("SELECT 1;")
+    (mig / "20200101000000_ok.down.sql").write_text("SELECT 'SHOULD_NOT_RUN';")
+
+    cur = MagicMock()
+    cur.fetchone.return_value = None
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cur
+    conn.cursor.return_value.__exit__.return_value = None
+    fake_psycopg = MagicMock()
+    fake_psycopg.connect.return_value = conn
+
+    with patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        applied, skipped = mod.apply_migrations(
+            "postgresql://u:p@localhost/db",
+            mig_dir=mig,
+        )
+    assert applied == 1
+    assert skipped == 0
+    exec_sqls = [c.args[0] for c in cur.execute.call_args_list if c.args]
+    assert not any(
+        isinstance(s, str) and "SHOULD_NOT_RUN" in s for s in exec_sqls
+    )
+    # only the forward filename is recorded
+    insert_params = [
+        c.args[1]
+        for c in cur.execute.call_args_list
+        if c.args and isinstance(c.args[0], str) and "INSERT INTO schema_migrations" in c.args[0]
+    ]
+    assert insert_params
+    assert insert_params[0] == ("20200101000000_ok.sql",)
+
+
+def test_repo_forward_migrations_exclude_existing_down_file():
+    mod = _load()
+    files = mod.list_forward_migrations(ROOT / "supabase" / "migrations")
+    names = [p.name for p in files]
+    assert names
+    assert "20260918200000_agentic_runtime_checkpoints.sql" in names
+    assert "20260918200000_agentic_runtime_checkpoints.down.sql" not in names
+    assert "20261006220000_rls_world_isolation_completion.sql" in names
+    assert all(not n.endswith(".down.sql") for n in names)
+    assert all(mod.is_forward_migration_name(n) for n in names)

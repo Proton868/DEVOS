@@ -11,13 +11,25 @@ MIG = ROOT / "supabase" / "migrations"
 
 
 def test_migrations_are_ordered_and_unique():
-    files = sorted(p.name for p in MIG.glob("*.sql"))
-    assert files, "expected supabase/migrations/*.sql"
-    assert files == sorted(files)
-    assert len(files) == len(set(files))
-    # timestamps prefix
-    for name in files:
+    from scripts.apply_supabase_migrations import list_forward_migrations, is_forward_migration_name
+
+    all_sql = sorted(p.name for p in MIG.glob("*.sql"))
+    assert all_sql, "expected supabase/migrations/*.sql"
+    assert all_sql == sorted(all_sql)
+    assert len(all_sql) == len(set(all_sql))
+    for name in all_sql:
         assert name[:8].isdigit(), name
+
+    forward = [p.name for p in list_forward_migrations(MIG)]
+    assert forward, "expected at least one forward migration"
+    assert forward == sorted(forward)
+    assert all(is_forward_migration_name(n) for n in forward)
+    assert not any(n.endswith(".down.sql") for n in forward)
+    # rollback companions may exist beside forward files
+    downs = [n for n in all_sql if n.endswith(".down.sql")]
+    for d in downs:
+        assert not is_forward_migration_name(d)
+        assert d not in forward
 
 
 def test_outbox_idempotency_migration_present():

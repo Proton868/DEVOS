@@ -56,7 +56,21 @@ Confirm fail-closed expectations:
 
 ---
 
-## C. Run production verification
+## C0. Migration history (do not auto-delete)
+
+Confirm `schema_migrations` still contains the historical extra row
+`20260918200000_agentic_runtime_checkpoints.down.sql` **and** the forward
+`20260918200000_agentic_runtime_checkpoints.sql`.
+
+- Do **not** delete the `.down.sql` row.
+- After pulling this release, `ops/apply_migrations.sh` must apply only
+  forward files (including `20261006220000_rls_world_isolation_completion.sql`
+  if pending).
+- The apply log must **not** mention `*.down.sql`.
+
+See `docs/ops/MIGRATION_HISTORY_RECONCILIATION.md`.
+
+---
 
 ```bash
 bash ops/verify.sh --production

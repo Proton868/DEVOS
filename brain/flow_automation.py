@@ -610,6 +610,12 @@ async def persist_run_durable(run: AutomationRun) -> bool:
                 row.updated_at = payload["updated_at"]
                 db.add(row)
             else:
+                if str(row.owner_id or "") != str(run.owner_id or ""):
+                    logger.warning(
+                        "persist_run_durable refused cross-owner overwrite run_id=%s",
+                        run.run_id,
+                    )
+                    return False
                 for k, v in payload.items():
                     setattr(row, k, v)
             await db.commit()

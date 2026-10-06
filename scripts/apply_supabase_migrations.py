@@ -7,10 +7,12 @@ Uses direct synchronous psycopg (no SQLAlchemy engine / greenlet).
 - Does not print credentials.
 - Does not run destructive rollbacks.
 - Records applied filenames in schema_migrations only after successful apply.
+- Forward discovery NEVER includes rollback/seed/backup files (*.down.sql, etc.).
 """
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -18,12 +20,61 @@ from typing import Optional
 ROOT = Path(__file__).resolve().parents[1]
 MIG_DIR = ROOT / "supabase" / "migrations"
 
+# Rollback / non-forward suffixes. Matched against the full filename (lowercased).
+_NON_FORWARD_SUFFIXES = (
+    ".down.sql",
+    ".rollback.sql",
+    ".revert.sql",
+    ".bak.sql",
+    ".backup.sql",
+    ".seed.sql",
+)
+
+# Forward files: timestamp prefix + descriptive slug + .sql
+_FORWARD_NAME_RE = re.compile(
+    r"^\d{8,14}_[A-Za-z0-9][A-Za-z0-9_-]*\.sql$"
+)
+
 _TRACKING_DDL = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
     filename text PRIMARY KEY,
     applied_at timestamptz NOT NULL DEFAULT now()
 )
 """
+
+
+def is_forward_migration_name(name: str) -> bool:
+    """True only for forward schema migrations.
+
+    Excludes rollback companions (*.down.sql), backups, seeds, hidden files,
+    and anything that does not follow the timestamped migration naming rule.
+    """
+    base = Path(name).name
+    if not base or base.startswith("."):
+        return False
+    lower = base.lower()
+    if any(lower.endswith(sfx) for sfx in _NON_FORWARD_SUFFIXES):
+        return False
+    if ".down." in lower:
+        return False
+    return bool(_FORWARD_NAME_RE.match(base))
+
+
+def list_forward_migrations(directory: Path) -> list[Path]:
+    """Return forward migration files in lexical apply order.
+
+    Never includes *.down.sql or other non-forward SQL, even if they sit
+    next to a valid forward file in supabase/migrations/.
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        return []
+    files = [
+        p
+        for p in directory.iterdir()
+        if p.is_file() and is_forward_migration_name(p.name)
+    ]
+    return sorted(files, key=lambda p: p.name)
 
 
 def normalize_database_url(url: str) -> str:
@@ -99,10 +150,13 @@ def apply_migrations(
     url: str,
     mig_dir: Optional[Path] = None,
 ) -> tuple[int, int]:
-    """Apply pending *.sql files. Returns (applied, skipped).
+    """Apply pending *forward* migration files. Returns (applied, skipped).
 
     A failed migration is not recorded in schema_migrations; the transaction
     for that file is rolled back.
+
+    Rollback files (*.down.sql) are never selected, even if already present
+    in schema_migrations from a historical accidental apply.
     """
     import psycopg
 
@@ -111,7 +165,7 @@ def apply_migrations(
     if not directory.is_dir():
         raise FileNotFoundError(f"missing migration directory: {directory}")
 
-    files = sorted(directory.glob("*.sql"))
+    files = list_forward_migrations(directory)
     if not files:
         return 0, 0
 

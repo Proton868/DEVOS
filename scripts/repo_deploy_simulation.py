@@ -114,7 +114,16 @@ def check_architecture_invariants() -> None:
 
 
 def check_migrations() -> None:
-    files = sorted((ROOT / "supabase" / "migrations").glob("*.sql"))
+    files = []
+    try:
+        from scripts.apply_supabase_migrations import list_forward_migrations
+        files = list_forward_migrations(ROOT / "supabase" / "migrations")
+    except Exception:
+        files = sorted(
+            p for p in (ROOT / "supabase" / "migrations").glob("*.sql")
+            if not p.name.endswith(".down.sql")
+        )
+
     if not files:
         fail("no supabase migrations")
     ok("%d migration files" % len(files))

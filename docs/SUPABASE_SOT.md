@@ -13,7 +13,12 @@ DevOS **application domain state** is stored in **Supabase (Postgres)** only.
 
 - Owned by `supabase/migrations/*.sql`
 - Applied via `ops/apply_migrations.sh` → `scripts/apply_supabase_migrations.py`
+- **Forward discovery excludes rollback companions** (`*.down.sql`, `*.rollback.sql`,
+  backups, seeds). Rollback files may remain in the repo for documented undo;
+  they must never be recorded as new forward `schema_migrations` rows.
 - Production Postgres must **not** run SQLAlchemy `Base.metadata.create_all()` (sync engine is SQLite-only for create_all)
+- Historical extra row for `20260918200000_agentic_runtime_checkpoints.down.sql`:
+  leave it in place. See `docs/ops/MIGRATION_HISTORY_RECONCILIATION.md`.
 
 ## App config
 
