@@ -114,6 +114,11 @@ export async function syncSupabaseSession() {
   const { ensureSupabase, getSession } = await import("./supabase");
   await ensureSupabase();
   // Prefer the live Supabase access token — not a stale local DevOS JWT.
+  // Drop any previous local JWT so dual-mode resolveAuthToken cannot prefer
+  // a dead HS256 token over the fresh Supabase session on the next request.
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch (_) {}
   const session = await getSession();
   const token = session?.access_token;
   if (!token) throw new Error("No active Supabase session");
@@ -123,7 +128,14 @@ export async function syncSupabaseSession() {
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
-    throw new Error(err.detail || `Supabase sync failed: HTTP ${r.status}`);
+    const detail = err.detail || `Supabase sync failed: HTTP ${r.status}`;
+    // Guide operators when backend cannot verify (JWKS/legacy secret / Auth 403).
+    if (r.status === 401) {
+      throw new Error(
+        `${detail} Clear site data for this origin and sign in again so a fresh Supabase access token is issued.`
+      );
+    }
+    throw new Error(detail);
   }
   const data = await r.json();
   // Backend issues a DevOS JWT after validating Supabase identity.

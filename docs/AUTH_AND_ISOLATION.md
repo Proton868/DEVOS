@@ -72,6 +72,19 @@ Aliases resolved into `SUPABASE_ANON_KEY` when empty: `SUPABASE_PUBLISHABLE_KEY`
 - `core/config.py` — `AUTH_MODE`, Supabase settings
 - `tests/test_auth_mode.py`, `tests/test_supabase_auth_login.py`
 
+## Troubleshooting: login 401 / InvalidSignatureError / Auth 403
+
+After Supabase **JWT Signing Keys** migration the project JWKS typically
+publishes **ES256 only**. Symptoms and fixes:
+
+| Symptom | Likely cause | Action |
+|---------|--------------|--------|
+| Logs: `InvalidSignatureError` on HS256 then `Auth-server … status=403` | Stale HS256 session, wrong/legacy `SUPABASE_JWT_SECRET`, or non-Supabase token | Clear browser site data (`devos-auth`, `devos_token`); leave `SUPABASE_JWT_SECRET` unset unless still on legacy HS256 with a matching secret |
+| `supabase/sync` 401 after successful browser sign-in | Backend could not verify access token (JWKS miss + Auth `/user` reject) | Confirm `SUPABASE_URL` + `SUPABASE_ANON_KEY` (publishable) match the same project as the SPA; redeploy frontend so assets match backend |
+| JWKS ES256 token fails audience check | `aud` missing or list-shaped | Backend accepts missing/`authenticated` aud on both HS256 and JWKS paths |
+
+Verification order in code: header `alg` → HS256 secret **or** JWKS (never both for a known asymmetric alg) → `GET /auth/v1/user` with publishable/anon `apikey`.
+
 
 ## Mandatory isolation model (2026-09-17)
 

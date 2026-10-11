@@ -231,20 +231,50 @@ def _decode_supabase_hs256(token: str):
 
 
 def _decode_supabase_jwks(token: str):
-    """Verify asymmetric Supabase tokens via project JWKS (RS256/ES256)."""
+    """Verify asymmetric Supabase tokens via project JWKS (RS256/ES256).
+
+    Audience handling mirrors the HS256 path: prefer strict ``authenticated``,
+    then accept missing aud or aud that includes ``authenticated``.
+    """
     url = (settings.SUPABASE_URL or "").strip()
     if not url:
         return None
     jwks_url = f"{url.rstrip('/')}/auth/v1/.well-known/jwks.json"
     try:
         signing_key = _jwks_client_for(jwks_url).get_signing_key_from_jwt(token)
+    except Exception as e:
+        logger.debug("[auth] Supabase JWKS key lookup failed: %s", type(e).__name__)
+        return None
+
+    key = signing_key.key
+    try:
         return jwt.decode(
             token,
-            signing_key.key,
+            key,
             algorithms=["RS256", "ES256"],
             audience="authenticated",
             options={"require": ["exp", "sub"]},
         )
+    except (jwt.InvalidAudienceError, jwt.MissingRequiredClaimError):
+        try:
+            payload = jwt.decode(
+                token,
+                key,
+                algorithms=["RS256", "ES256"],
+                options={"require": ["exp", "sub"], "verify_aud": False},
+            )
+            aud = payload.get("aud")
+            if aud is None:
+                return payload
+            if isinstance(aud, str) and aud == "authenticated":
+                return payload
+            if isinstance(aud, (list, tuple)) and "authenticated" in aud:
+                return payload
+            logger.debug("[auth] Supabase JWKS aud rejected: %s", type(aud).__name__)
+            return None
+        except Exception as e:
+            logger.debug("[auth] Supabase JWKS verification failed: %s", type(e).__name__)
+            return None
     except Exception as e:
         logger.debug("[auth] Supabase JWKS verification failed: %s", type(e).__name__)
         return None
@@ -255,9 +285,13 @@ def decode_supabase_token(token: str):
 
     Ordering is driven by the token header ``alg``:
     - HS256 → verify with ``SUPABASE_JWT_SECRET`` when configured.
-      DevOS ``JWT_SECRET`` is never used.
-    - RS256/ES256 (or unknown) → verify against project JWKS, then HS256
-      fallback if ``SUPABASE_JWT_SECRET`` is set.
+      DevOS ``JWT_SECRET`` is never used. No JWKS attempt (asymmetric keys
+      cannot verify HS256).
+    - RS256/ES256 → verify against project JWKS only. Do **not** fall through
+      to HS256: after the Signing Keys migration JWKS publishes only
+      asymmetric keys, and a failed HS256 attempt only produces noisy
+      InvalidSignatureError logs without ever succeeding.
+    - Unknown/missing alg → try JWKS first, then HS256 if secret is set.
 
     Returns the payload dict, or None if local verification fails.
 
@@ -276,15 +310,15 @@ def decode_supabase_token(token: str):
     alg = (_supabase_token_alg(token) or "").upper()
 
     if alg == "HS256":
-        payload = _decode_supabase_hs256(token)
-        if payload is not None:
-            return payload
-        return None
+        return _decode_supabase_hs256(token)
 
+    if alg in ("RS256", "ES256"):
+        return _decode_supabase_jwks(token)
+
+    # Unknown alg: try JWKS then optional legacy HS256 secret.
     payload = _decode_supabase_jwks(token)
     if payload is not None:
         return payload
-
     return _decode_supabase_hs256(token)
 
 
@@ -328,8 +362,18 @@ async def _verify_supabase_via_auth_user(token: str) -> dict | None:
         )
         return None
     if r.status_code != 200:
-        logger.debug(
-            "[auth] Auth-server token verify rejected status=%s", r.status_code
+        # Surface error_code without body secrets — helps diagnose bad_jwt vs
+        # key mismatch after Signing Keys / publishable-key migration.
+        err_code = ""
+        try:
+            body = r.json()
+            err_code = str(body.get("error_code") or body.get("msg") or body.get("message") or "")[:120]
+        except Exception:
+            err_code = ""
+        logger.info(
+            "[auth] Auth-server token verify rejected status=%s error=%s",
+            r.status_code,
+            err_code or "unknown",
         )
         return None
     try:
@@ -507,7 +551,13 @@ async def get_current_user(request: Request = None, db: AsyncSession = Depends(g
             return user
         raise HTTPException(401, "Not authenticated")
 
-    if settings.AUTH_MODE != "supabase":
+    # Dual mode: skip local HS256 attempt when the token header already
+    # advertises an asymmetric alg (ES256/RS256). Local JWTs are always
+    # HS256; trying them first on a Supabase access token is wasted work and
+    # previously contributed to noisy signature-failure logs.
+    token_alg = (_supabase_token_alg(token) or "").upper()
+    try_local = settings.AUTH_MODE != "supabase" and token_alg not in ("ES256", "RS256")
+    if try_local:
         payload = decode_local_token(token)
         if payload is not None:
             r = await db.execute(select(User).where(User.id == payload["sub"]))

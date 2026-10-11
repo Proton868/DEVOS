@@ -111,3 +111,56 @@ def test_hs256_accepts_missing_aud_when_signature_valid():
     out = auth_mod.decode_supabase_token(token)
     assert out is not None
     assert out["sub"] == "user-no-aud"
+
+
+def test_es256_does_not_fall_through_to_hs256():
+    """After Signing Keys migration, ES256 tokens must not attempt HS256
+    verification (which only produces InvalidSignatureError noise)."""
+    settings.SUPABASE_URL = "https://example.supabase.co"
+    settings.SUPABASE_JWT_SECRET = "should-not-be-used-for-es256"
+    import base64, json
+
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+    header = b64(json.dumps({"alg": "ES256", "typ": "JWT", "kid": "test"}).encode())
+    body = b64(json.dumps({"sub": "es-user", "aud": "authenticated", "exp": int(time.time()) + 60}).encode())
+    token = f"{header}.{body}.sig"
+
+    with patch.object(auth_mod, "_decode_supabase_jwks", return_value=None) as jwks:
+        with patch.object(auth_mod, "_decode_supabase_hs256") as hs:
+            payload = auth_mod.decode_supabase_token(token)
+            assert payload is None
+            jwks.assert_called_once()
+            hs.assert_not_called()
+
+
+def test_jwks_accepts_missing_aud_when_signature_valid():
+    """JWKS path must tolerate missing aud the same way HS256 does."""
+    settings.SUPABASE_URL = "https://example.supabase.co"
+    settings.SUPABASE_JWT_SECRET = ""
+    import base64, json
+
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+    header = b64(json.dumps({"alg": "ES256", "typ": "JWT", "kid": "k1"}).encode())
+    body = b64(json.dumps({"sub": "no-aud-user", "exp": int(time.time()) + 60}).encode())
+    token = f"{header}.{body}.sig"
+
+    # Simulate successful key lookup + decode without audience claim
+    class _Key:
+        key = "unused"
+
+    class _Client:
+        def get_signing_key_from_jwt(self, t):
+            return _Key()
+
+    with patch.object(auth_mod, "_jwks_client_for", return_value=_Client()):
+        with patch.object(jwt, "decode", side_effect=[
+            jwt.InvalidAudienceError("aud"),
+            {"sub": "no-aud-user", "exp": int(time.time()) + 60},
+        ]):
+            out = auth_mod._decode_supabase_jwks(token)
+    assert out is not None
+    assert out["sub"] == "no-aud-user"
