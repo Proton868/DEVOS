@@ -362,3 +362,35 @@ def test_planner_cannot_access_filesystem_module_directly_in_capability():
             _contract(CAP_ARTIFACT_READ),
             _req(CAP_ARTIFACT_READ, {"path": "../../../../../etc/passwd"}),
         ))
+
+
+def test_delegate_agent_task_binds_personal_world_when_tenant_omitted():
+    """Regression: unbound tenant_id made CapabilitySubstrate deny invokes (WORLD_REQUIRED)."""
+    ensure_workspace_capabilities_registered()
+    t = delegate_agent_task(
+        owner_id="owner_world_reg",
+        requested_capabilities=[CAP_ARTIFACT_WRITE],
+        task_input={"project_id": "proj_w", "objective": "world bind"},
+    )
+    assert t.tenant_id == "user:owner_world_reg"
+
+
+def test_request_capability_executes_when_world_bound():
+    """World-bound task can write artifacts through request_capability."""
+    ensure_workspace_capabilities_registered()
+    t = delegate_agent_task(
+        owner_id="owner_rc",
+        tenant_id="world_rc",
+        requested_capabilities=[CAP_ARTIFACT_WRITE],
+        task_input={"project_id": "proj_rc"},
+    )
+    assert t.tenant_id == "world_rc"
+    rec = _run(request_capability(
+        t,
+        capability_id=CAP_ARTIFACT_WRITE,
+        inputs={"path": "rc.txt", "content": "via-request"},
+        execute=True,
+    ))
+    assert rec.status == "executed", (rec.status, rec.error)
+    fs = FileService("owner_rc", "proj_rc")
+    assert (fs.root / "rc.txt").read_text() == "via-request"

@@ -141,6 +141,7 @@ def test_work_history_records_nuha_provenance(user_id, tmp_path, monkeypatch):
     result = _run(
         run_delegated_mission(
             user_id=user_id,
+            world_id=f"user:{user_id}",
             goal="Create a 1 page website for identity test brand",
             max_rounds=2,
         )

@@ -398,8 +398,12 @@ async def send(req: ChatReq, request: Request, db=Depends(get_db)):
                             try:
                                 _tctx = await _gtc(request, db, user, trust=_TL.OPERATOR)
                                 _wid = _tctx.world.world_id
-                            except Exception:
-                                _wid = None
+                            except Exception as _world_exc:
+                                raise RuntimeError(
+                                    f"WORLD_REQUIRED: cannot resolve world for chat mission ({type(_world_exc).__name__})"
+                                ) from _world_exc
+                            if not _wid:
+                                raise RuntimeError("WORLD_REQUIRED: empty world_id for chat mission")
                             result = await run_delegated_mission(
                                 user_id=user.id,
                                 goal=req.message,

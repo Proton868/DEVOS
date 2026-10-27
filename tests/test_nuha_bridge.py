@@ -22,9 +22,11 @@ def test_build_site_orchestrates():
 
 
 def test_research_orchestrates():
-    assert should_auto_orchestrate(
+    # Research/reporting is not auto-delegated specialist work.
+    assert not should_auto_orchestrate(
         "Research Python web framework trends and summarize them."
     )
+    assert should_auto_orchestrate("Build me a simple shoe landing page.")
 
 
 def test_synthesize_does_not_claim_false_success():
@@ -51,10 +53,12 @@ async def test_create_plan_for_build_without_execute():
             goal="Build me a simple shoe landing page.",
             workspace_id="default",
             execute=False,
+            world_id="user:test-user-bridge",
         )
         assert r.get("orchestrated") is True
         assert r.get("plan_id")
-        assert r.get("ok") is True
+        assert r.get("ok") is False
+        assert r.get("execution_path") == "PLAN_ONLY"
         return r
 
     r = await _run()

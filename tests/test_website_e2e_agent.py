@@ -76,6 +76,7 @@ def test_e2e_website_full_architecture(user_id, tmp_path, monkeypatch):
     result = _run(
         run_delegated_mission(
             user_id=user_id,
+            world_id=f"user:{user_id}",
             goal=goal,
             workspace_id="default",
             persona_key="web",

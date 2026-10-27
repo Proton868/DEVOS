@@ -138,6 +138,7 @@ def test_nuha_delegates_agent_executes_ponytail_accepts(tmp_path, monkeypatch, _
     result = _run(
         run_delegated_mission(
             user_id=uid,
+            world_id=f"user:{uid}",
             goal=goal,
             workspace_id="default",
             max_rounds=2,
@@ -193,6 +194,7 @@ def test_completion_rejected_before_ponytail(tmp_path, monkeypatch, _db_ready):
     result = _run(
         run_delegated_mission(
             user_id=uid,
+            world_id=f"user:{uid}",
             goal="Create a website for test brand",
             max_rounds=2,
         )
@@ -238,6 +240,7 @@ def test_validation_failure_creates_correction_delegation(tmp_path, monkeypatch,
     result = _run(
         run_delegated_mission(
             user_id=uid,
+            world_id=f"user:{uid}",
             goal="Create a website for correction test",
             max_rounds=3,
         )

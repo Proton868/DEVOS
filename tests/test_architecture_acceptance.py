@@ -76,6 +76,7 @@ def test_01_nuha_delegates_website_to_web_agent(user_id, tmp_path, monkeypatch):
     result = _run(
         run_delegated_mission(
             user_id=user_id,
+            world_id=f"user:{user_id}",
             goal=goal,
             workspace_id="default",
             persona_key="web",
@@ -121,6 +122,7 @@ def test_02_every_persona_executes(user_id, tmp_path, monkeypatch):
             res = _run(
                 run_delegated_mission(
                     user_id=user_id,
+            world_id=f"user:{user_id}",
                     goal=goal,
                     workspace_id=f"ws-{key}",
                     persona_key=key,
@@ -155,6 +157,7 @@ def test_03_a2a_messages_durable(user_id, tmp_path, monkeypatch):
     res = _run(
         run_delegated_mission(
             user_id=user_id,
+            world_id=f"user:{user_id}",
             goal="Create a website landing page for AcceptCo",
             persona_key="web",
             max_rounds=2,
@@ -191,6 +194,7 @@ def test_04_agent_runtime_tool_execution(user_id, tmp_path, monkeypatch):
     res = _run(
         run_delegated_mission(
             user_id=user_id,
+            world_id=f"user:{user_id}",
             goal="Create a website for ToolProof store",
             persona_key="web",
             max_rounds=2,
@@ -225,6 +229,7 @@ def test_05_06_provenance_attribution(user_id, tmp_path, monkeypatch):
     res = _run(
         run_delegated_mission(
             user_id=user_id,
+            world_id=f"user:{user_id}",
             goal="Create a website for ProvCo",
             persona_key="web",
             max_rounds=2,
@@ -280,6 +285,7 @@ def test_07_08_persist_and_soul_not_fabricated(user_id, tmp_path, monkeypatch):
     res = _run(
         run_delegated_mission(
             user_id=user_id,
+            world_id=f"user:{user_id}",
             goal="Create a website for SoulCo",
             persona_key="web",
             max_rounds=2,
@@ -366,6 +372,7 @@ def test_09_10_11_ponytail_gate_and_correction(user_id, tmp_path, monkeypatch):
     res = _run(
         run_delegated_mission(
             user_id=user_id,
+            world_id=f"user:{user_id}",
             goal="Add a Python helper module",
             persona_key="code",
             max_rounds=3,
@@ -430,6 +437,7 @@ def test_14_restart_preserves_state(user_id, tmp_path, monkeypatch):
     res = _run(
         run_delegated_mission(
             user_id=user_id,
+            world_id=f"user:{user_id}",
             goal="Create a website for RestartCo",
             persona_key="web",
             max_rounds=2,

@@ -68,6 +68,7 @@ def test_cross_user_mission_isolation(two_users, tmp_path, monkeypatch):
     res = _run(
         run_delegated_mission(
             user_id=user_a,
+            world_id=f"user:{user_a}",
             goal="Create a website for SecCo A",
             persona_key="web",
             max_rounds=2,
@@ -100,6 +101,7 @@ def test_cross_user_work_history_isolation(two_users, tmp_path, monkeypatch):
     res = _run(
         run_delegated_mission(
             user_id=user_a,
+            world_id=f"user:{user_a}",
             goal="Create a website for HistCo",
             persona_key="web",
             max_rounds=2,
@@ -132,6 +134,7 @@ def test_cross_user_a2a_messages(two_users, tmp_path, monkeypatch):
     res = _run(
         run_delegated_mission(
             user_id=user_a,
+            world_id=f"user:{user_a}",
             goal="Create a website for MsgCo",
             persona_key="web",
             max_rounds=2,

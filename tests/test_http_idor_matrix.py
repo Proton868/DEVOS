@@ -153,9 +153,16 @@ def test_files_http_isolation(client, users):
 
 def test_avatar_upload_ownership(client, users):
     ta, tb = users["idor_a"]["token"], users["idor_b"]["token"]
+    import struct, zlib
+    def _chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    _w = _h = 16
+    _raw = b"".join(b"\x00" + (b"\x00\x80\xff" * _w) for _ in range(_h))
     png = (
-        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", struct.pack(">IIBBBBB", _w, _h, 8, 2, 0, 0, 0))
+        + _chunk(b"IDAT", zlib.compress(_raw))
+        + _chunk(b"IEND", b"")
     )
     r = client.post("/api/account/avatar", headers=auth(ta), files={"file": ("a.png", io.BytesIO(png), "image/png")})
     assert r.status_code == 200, r.text

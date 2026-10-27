@@ -162,6 +162,7 @@ def test_e2e_broken_agent_change_not_accepted_by_nuha(user_id, tmp_path, monkeyp
     result = _run(
         run_delegated_mission(
             user_id=user_id,
+            world_id=f"user:{user_id}",
             goal="Add a Python helper module",
             persona_key="code",
             max_rounds=1,  # single attempt — must not accept
@@ -199,6 +200,7 @@ def test_e2e_good_agent_passes_after_ponytail(user_id, tmp_path, monkeypatch):
     result = _run(
         run_delegated_mission(
             user_id=user_id,
+            world_id=f"user:{user_id}",
             goal="Create a website landing page",
             persona_key="web",
             max_rounds=1,

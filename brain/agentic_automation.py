@@ -346,6 +346,12 @@ def delegate_agent_task(
     _reject_client_grants(task_input)
     _reject_client_grants(requested_capabilities)
 
+    # World is mandatory (world_id ≡ tenant_id). Personal default matches
+    # identity_authority: tenant_id or f"user:{user_id}". Never leave unbound —
+    # CapabilitySubstrate.invoke requires a non-empty world and fails closed.
+    if not str(tenant_id or "").strip():
+        tenant_id = f"user:{owner_id}"
+
     store = get_agent_task_store()
     ikey = idempotency_key or agent_task_idempotency_key(
         owner_id=owner_id,
@@ -488,11 +494,20 @@ async def request_capability(
     result = await sub.invoke(req)
     st_val = result.status.value if hasattr(result.status, "value") else str(result.status)
 
+    deny_reason = None
+    if st_val == "denied":
+        deny_reason = (
+            getattr(result, "auth_reason", None)
+            or getattr(result, "error", None)
+            or getattr(result, "reason", None)
+            or getattr(result, "error_class", None)
+            or "denied"
+        )
     rec = CapabilityRequestRecord(
         capability_id=cid,
         inputs=dict(inputs or {}),
         status="denied" if st_val == "denied" else ("authorized" if not execute else "executed"),
-        error=None if st_val != "denied" else (getattr(result, "reason", None) or "denied"),
+        error=deny_reason,
         result=getattr(result, "outputs", None) or getattr(result, "data", None),
     )
     # Link operation if substrate exposed one
