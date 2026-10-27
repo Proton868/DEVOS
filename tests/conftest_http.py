@@ -5,8 +5,13 @@ import os
 
 import pytest
 
-# Ensure JWT secret for tests before app import
+# Ensure JWT secret and CORS allowlist for tests before app import
 os.environ.setdefault("JWT_SECRET", "test-secret-for-idor-matrix-not-production")
+os.environ.setdefault(
+    "ALLOWED_ORIGINS",
+    "http://localhost:8000,http://testserver,http://localhost:3000",
+)
+os.environ.setdefault("AUTH_ENABLED", "false")
 os.environ.setdefault("DEVOS_JOB_WORKER", "0")
 
 

@@ -31,6 +31,15 @@ def _is_postgres_url(url: str) -> bool:
 def _apply_test_db_isolation() -> None:
     """Default test-process DB policy (SQLite) unless Postgres was opted in."""
     Path("data").mkdir(exist_ok=True)
+    # Test-process only: avoid production CORS / auth fail-closed interfering with
+    # TestClient and unit suites. Production code paths remain unchanged.
+    os.environ.setdefault(
+        "ALLOWED_ORIGINS",
+        "http://localhost:8000,http://testserver,http://localhost:3000",
+    )
+    os.environ.setdefault("JWT_SECRET", "test-secret-key-for-ci-only-32chars-long")
+    os.environ.setdefault("AUTH_ENABLED", "false")
+    os.environ.setdefault("DEBUG", "true")
     # Real-runtime suite must never inherit FAKE defaults.
     import sys as _sys
     _argv = " ".join(_sys.argv).lower()

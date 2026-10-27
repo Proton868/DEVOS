@@ -44,6 +44,7 @@ export default function SpatialWorkspace() {
   const spatialFullscreen = useOsStore((s) => s.spatialFullscreenId);
   const setSpatialFullscreen = useOsStore((s) => s.setSpatialFullscreenId);
   const setSpatialMeta = useOsStore((s) => s.setSpatialMeta);
+  const nuhaPreferred = useOsStore((s) => s.nuhaPreferred);
 
   const viewport = useSpatialViewport();
 

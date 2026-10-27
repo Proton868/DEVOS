@@ -23,7 +23,7 @@ ENV CI=true
 RUN npm run build
 
 # ── Stage 1: Micro Profile (SQLite-only, zero external deps) ──────────────────
-FROM python:3.11-slim AS micro
+FROM python:3.12-slim AS micro
 LABEL org.caraios.profile="micro"
 LABEL org.caraios.description="CaraiOS Micro — SQLite-only, no external dependencies"
 
@@ -59,7 +59,7 @@ CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
 
 
 # ── Stage 2: Standard Profile (Supabase + ChromaDB optional) ──────────────────
-FROM python:3.11-slim AS standard
+FROM python:3.12-slim AS standard
 LABEL org.caraios.profile="standard"
 LABEL org.caraios.description="CaraiOS Standard — Supabase optional, ChromaDB optional"
 
@@ -92,7 +92,7 @@ CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port 8000 --workers ${WEB_CON
 
 
 # ── Stage 3: Enterprise Profile (full multi-tenant, Redis, pgvector) ──────────
-FROM python:3.11-slim AS enterprise
+FROM python:3.12-slim AS enterprise
 LABEL org.caraios.profile="enterprise"
 LABEL org.caraios.description="CaraiOS Enterprise — Full multi-tenant with Redis, pgvector, Supabase"
 

@@ -19,8 +19,8 @@ info "verify production=$PRODUCTION"
 
 if [[ -x "$ROOT/.venv/bin/python" ]]; then
   pass "venv"
-  "$ROOT/.venv/bin/python" -c "import sys; assert sys.version_info >= (3, 11)"
-  pass "python>=3.11"
+  "$ROOT/.venv/bin/python" -c "import sys; assert sys.version_info >= (3, 12)"
+  pass "python>=3.12"
 else
   fail "venv"
 fi

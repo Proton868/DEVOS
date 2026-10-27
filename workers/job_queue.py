@@ -321,13 +321,26 @@ async def _claim_sql(db, worker):
     await recover_stale_leases(db)
     now = _utcnow()
     lease_until = now + timedelta(seconds=LEASE_S)
-    dialect = db.bind.dialect.name if db.bind is not None else "sqlite"
+    # AsyncSession.bind may be None until a connection is checked out; fall back
+    # to the process engine dialect so Postgres still gets SKIP LOCKED.
+    dialect = "sqlite"
+    try:
+        bind = db.bind
+        if bind is not None and getattr(bind, "dialect", None) is not None:
+            dialect = (bind.dialect.name or "sqlite").lower()
+        else:
+            from core import database as _dbmod
+            eng = getattr(_dbmod, "engine", None)
+            if eng is not None and getattr(eng, "dialect", None) is not None:
+                dialect = (eng.dialect.name or "sqlite").lower()
+    except Exception:
+        dialect = "sqlite"
     try:
         q = select(ExecutionJob).where(
             ExecutionJob.status == "queued",
             or_(ExecutionJob.scheduled_at.is_(None), ExecutionJob.scheduled_at <= now),
         ).order_by(ExecutionJob.priority.asc(), ExecutionJob.created_at.asc()).limit(1)
-        if dialect == "postgresql":
+        if dialect in ("postgresql", "postgres"):
             q = q.with_for_update(skip_locked=True)
         r = await db.execute(q)
         job = r.scalar_one_or_none()

@@ -1,7 +1,7 @@
 # PRODUCTION PLAN — status banner
 
 > **Docs sync:** See [README.md](README.md) and [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) for the live install path and implemented surfaces.  
-> **Runtime targets:** Python **3.13** (min 3.11), Node **22** for UI rebuilds only. Prebuilt `frontend/` is required for zero-Node run.  
+> **Runtime targets:** Python **3.13** (min 3.12; Docker/CI use 3.12), Node **22** for UI rebuilds only. Prebuilt `frontend/` is required for zero-Node run.  
 > **Research:** Prefer Hermes / `brain/research.py` naming over legacy Odysseus labels.  
 > Historical stage checklists below may lag; do not treat unchecked boxes as “missing install.”
 

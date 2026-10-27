@@ -58,7 +58,7 @@ Open **http://localhost:8000**
 
 | Need | Minimum |
 |------|---------|
-| **Python** | **3.11+** (3.12 / 3.13 recommended) |
+| **Python** | **3.12+** (3.12 / 3.13 recommended; required for NumPy 2.5.x) |
 | **Node** | Install-time only (UI build); not required for `./devos start` |
 | **Postgres / Supabase** | **Required for production** |
 | **SQLite** | Tests only (`REQUIRE_POSTGRES=false` in pytest isolation) |

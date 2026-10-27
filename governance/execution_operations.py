@@ -150,18 +150,25 @@ async def reserve_operation(
             if not input_digest:
                 input_digest = digest_payload(safe_args)
 
+        def _tenant_clause(model):
+            if tenant_id is not None:
+                return model.tenant_id == tenant_id
+            return model.tenant_id.is_(None)
+
+        async def _lookup_existing(session):
+            q = await session.execute(
+                select(ExecutionOperation).where(
+                    ExecutionOperation.owner_id == owner_id,
+                    ExecutionOperation.idempotency_key == idempotency_key,
+                    ExecutionOperation.operation_type == operation_type,
+                    _tenant_clause(ExecutionOperation),
+                )
+            )
+            return q.scalars().first()
+
         async with AsyncSessionLocal() as db:
             if idempotency_key:
-                q = await db.execute(
-                    select(ExecutionOperation).where(
-                        ExecutionOperation.owner_id == owner_id,
-                        ExecutionOperation.idempotency_key == idempotency_key,
-                        ExecutionOperation.operation_type == operation_type,
-                        ExecutionOperation.tenant_id == tenant_id if tenant_id is not None
-                        else ExecutionOperation.tenant_id.is_(None),
-                    )
-                )
-                existing = q.scalars().first()
+                existing = await _lookup_existing(db)
                 if existing:
                     return existing.id
 
@@ -189,23 +196,25 @@ async def reserve_operation(
                 await db.commit()
                 return op_id
             except Exception as ie:
-                # Concurrent insert race under unique index: re-select authoritative op
-                await db.rollback()
+                # Concurrent insert race under unique index: re-select authoritative op.
+                # Use a fresh session — the failed connection may be unusable after
+                # IntegrityError + rollback on some asyncpg/SQLAlchemy combinations.
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
                 from sqlalchemy.exc import IntegrityError
-                is_unique = isinstance(ie, IntegrityError) or "unique" in str(ie).lower() or "duplicate" in str(ie).lower()
+
+                is_unique = (
+                    isinstance(ie, IntegrityError)
+                    or "unique" in str(ie).lower()
+                    or "duplicate" in str(ie).lower()
+                )
                 if idempotency_key and is_unique:
-                    q2 = await db.execute(
-                        select(ExecutionOperation).where(
-                            ExecutionOperation.owner_id == owner_id,
-                            ExecutionOperation.idempotency_key == idempotency_key,
-                            ExecutionOperation.operation_type == operation_type,
-                            ExecutionOperation.tenant_id == tenant_id if tenant_id is not None
-                            else ExecutionOperation.tenant_id.is_(None),
-                        )
-                    )
-                    existing2 = q2.scalars().first()
-                    if existing2:
-                        return existing2.id
+                    async with AsyncSessionLocal() as db2:
+                        existing2 = await _lookup_existing(db2)
+                        if existing2:
+                            return existing2.id
                 logger.exception("reserve_operation insert failed: %s", ie)
                 return None
     except Exception:

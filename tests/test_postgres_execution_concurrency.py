@@ -71,7 +71,19 @@ async def pg_db(monkeypatch):
             "ON execution_operations (owner_id, operation_type, idempotency_key, COALESCE(tenant_id, '')) "
             "WHERE idempotency_key IS NOT NULL"
         ))
-    await dbmod.init_db()  # column/index bootstrap where still applicable
+    # Verify index is present before tests run (fail closed with a clear message)
+    async with engine.connect() as conn:
+        row = (await conn.execute(text(
+            "SELECT indexname FROM pg_indexes "
+            "WHERE tablename = 'execution_operations' "
+            "AND indexname = 'ux_execution_operations_idempotency'"
+        ))).fetchone()
+        if row is None:
+            raise RuntimeError(
+                "ux_execution_operations_idempotency missing after fixture setup — "
+                "cannot run concurrency proofs"
+            )
+    await dbmod.init_db()  # connectivity check only on Postgres
 
     yield dbmod
     await engine.dispose()

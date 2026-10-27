@@ -27,8 +27,8 @@ require_linux() {
 
 require_python() {
   have_cmd python3 || die "python3 is required"
-  python3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" \
-    || die "Python 3.11+ required (found $(python3 --version 2>&1))"
+  python3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)" \
+    || die "Python 3.12+ required (found $(python3 --version 2>&1); matches Docker/CI/NumPy 2.5.x)"
 }
 
 load_dotenv() {

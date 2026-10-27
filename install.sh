@@ -27,13 +27,14 @@ node_major() {
 # Python
 # ---------------------------------------------------------------------------
 if ! have_cmd python3; then
-  echo "ERROR: python3 is required (3.11+)."
+  echo "ERROR: python3 is required (3.12+; NumPy 2.5.x and CI target 3.12)."
   exit 1
 fi
 
-PY_OK="$(python3 -c 'import sys; print("yes" if sys.version_info >= (3, 11) else "no")')"
+PY_OK="$(python3 -c 'import sys; print("yes" if sys.version_info >= (3, 12) else "no")')"
 if [[ "$PY_OK" != "yes" ]]; then
-  echo "ERROR: Python 3.11+ required (3.12/3.13 recommended). Found: $(python3 --version 2>&1)"
+  echo "ERROR: Python 3.12+ required (matches Docker images, CI, and NumPy 2.5.x). Found: $(python3 --version 2>&1)"
+  echo "  On Ubuntu 24.04+: sudo apt install -y python3.12 python3.12-venv"
   exit 1
 fi
 echo "==> Using $(command -v python3) ($(python3 --version 2>&1))"

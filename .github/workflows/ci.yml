@@ -68,24 +68,30 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements-dev.txt
           pip install "asyncpg>=0.29.0" "psycopg[binary]>=3.1.0"
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
 
-      - name: Apply Supabase migrations (incl. operation idempotency unique index)
+      - name: Apply schema + idempotency unique index
         env:
-          DATABASE_URL: "postgresql://devos:devos@localhost:5432/devos_ci"
+          DATABASE_URL: "postgresql+asyncpg://devos:devos@localhost:5432/devos_ci"
+          REQUIRE_POSTGRES: "true"
+          DEVOS_ALLOW_LIVE_POSTGRES: "1"
+          DEVOS_SCHEMA_CREATE_ALL: "1"
         run: |
-          # Create core tables via ORM first so focused migrations can attach indexes
+          # Create core tables via ORM, then ensure the production unique index exists.
+          # Migrations are best-effort (some require pre-existing Supabase roles);
+          # the unique index is required and verified before tests run.
           python - <<'PY'
           import asyncio, os
           os.environ["DATABASE_URL"] = "postgresql+asyncpg://devos:devos@localhost:5432/devos_ci"
           os.environ["REQUIRE_POSTGRES"] = "true"
+          os.environ["DEVOS_ALLOW_LIVE_POSTGRES"] = "1"
           async def main():
               from core import database as dbmod
               from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
               from sqlalchemy import text
-              eng = create_async_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
+              eng = create_async_engine(os.environ["DATABASE_URL"], pool_pre_ping=True, pool_size=5)
               dbmod.engine = eng
               dbmod.AsyncSessionLocal = async_sessionmaker(eng, expire_on_commit=False)
-              # CI harness: create tables then apply unique idempotency index
               async with eng.begin() as conn:
                   await conn.run_sync(dbmod.Base.metadata.create_all)
                   await conn.execute(text(
@@ -93,12 +99,21 @@ jobs:
                       "ON execution_operations (owner_id, operation_type, idempotency_key, COALESCE(tenant_id, '')) "
                       "WHERE idempotency_key IS NOT NULL"
                   ))
+              # Verify index is present (fail closed)
+              async with eng.connect() as conn:
+                  row = (await conn.execute(text(
+                      "SELECT indexname FROM pg_indexes "
+                      "WHERE tablename = 'execution_operations' "
+                      "AND indexname = 'ux_execution_operations_idempotency'"
+                  ))).fetchone()
+                  if not row:
+                      raise SystemExit("FATAL: ux_execution_operations_idempotency missing after setup")
+                  print("ok:", row[0])
               await eng.dispose()
           asyncio.run(main())
           PY
-          # Apply SQL migrations; idempotency unique migration must succeed
+          # Best-effort forward migrations (RLS policies etc.); do not mask index failures above
           python scripts/apply_supabase_migrations.py || true
-          # Explicitly ensure the production unique index (migration may skip if tracking incomplete)
           PGPASSWORD=devos psql -h localhost -U devos -d devos_ci -v ON_ERROR_STOP=1 -c "
             CREATE UNIQUE INDEX IF NOT EXISTS ux_execution_operations_idempotency
             ON public.execution_operations (
