@@ -66,3 +66,4 @@ data/*.sqlite3-wal
 data/toolchains/flutter/
 !data/toolchains/flutter_checksums.json
 !data/toolchains/.gitkeep
+data/
