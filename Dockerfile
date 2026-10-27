@@ -11,6 +11,10 @@
 #   Micro:      SQLite-only, Ollama assumed external, no Supabase, no pgvector
 #   Standard:   SQLite + Supabase optional, pgvector, ChromaDB optional
 #   Enterprise: Supabase required, pgvector, Redis, full multi-tenant, RBAC
+#
+# Python runtime: 3.12 for ALL profiles (micro / standard / enterprise).
+# Required by pinned numpy==2.5.1 (supports Python 3.12–3.14 only; no 3.11 wheels).
+# Matches GitHub Actions (setup-python 3.12) and install.sh (3.12+ gate).
 # =============================================================================
 
 # ── Stage 0: Frontend Build ───────────────────────────────────────────────────
